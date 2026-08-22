@@ -111,6 +111,7 @@ def trellis_mesh(agent, payload):
     for attempt in (1, 2):
         try:
             r = _post(agent, f"{agent.target}/generate", data=img, timeout=900,
+                      params={"seed": payload["seed"]} if payload.get("seed") is not None else None,
                       headers={"Content-Type": "image/png"})
             if r.status_code == 200:
                 # The pod's stdout is unreachable, so the server's own load/generate split rides

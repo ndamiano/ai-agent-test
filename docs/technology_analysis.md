@@ -12,7 +12,7 @@ the ones we reject, because "why we didn't switch" is the expensive thing to rel
 
 | Job | Model | Served by | Defined in |
 |---|---|---|---|
-| Build turns (the LLM) | Qwen3.6 27B, NVFP4 | ninfer on a 5090; llama.cpp elsewhere | `llm.model` in settings.json |
+| Build turns (the LLM) | Qwen3.8 27B, NVFP4 | ninfer on a 5090; llama.cpp elsewhere | `llm.model` in settings.json |
 | Sprites + scenes | NetaYume Lumina v4 | ComfyUI | `workflows/txt2img_item.json` |
 | Tiles | DreamShaperXL Turbo v2.1 → min-cut quilting | ComfyUI + `tools/quilting.py` | `workflows/txt2img_tile.json` |
 | Scene-chain subjects | Qwen-Image 2512 | ComfyUI | `workflows/txt2img_subject.json` |

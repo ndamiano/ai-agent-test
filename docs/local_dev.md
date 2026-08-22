@@ -27,6 +27,20 @@ python -m worker.agent --server http://localhost:8000 --token <workqueue.token> 
 Defaults if omitted: server `localhost:8000`, target `localhost:1234`, queue `llm`. The token is
 `workqueue.token` from settings.json.
 
+**One card, three queues, `auto`** — a world build (`compose_world`, or `worldgen.build.build_world`
+by hand) alternates llm/image/mesh jobs many times and
+blocks until each completes, so there is no point at which the legs can be drained "one at a time
+by hand". `scripts/local_gpu.py auto` runs the control plane's other half instead: it polls all
+three queues, starts (model + worker) whichever has pending work — favoring the queue it already
+holds so a momentary empty doesn't thrash it — and stops what it started on SIGINT/SIGTERM. Run it
+in one terminal alongside `python run.py`; `--idle-exit SECONDS` stops and exits once nothing is
+pending anywhere for that long (default: never). The single-leg (`llm`/`image`/`mesh`) and `all`
+modes still exist for draining one queue by hand.
+
+A build that calls `compose_world` needs `auto` for the same reason: the world's stages and the
+build's own turns share the llm queue, and its art rides the other two while the build keeps
+writing code.
+
 **Tests** — `cd src && python -m pytest ../tests/ -q`, frontend
 `cd frontend && npm test` (vitest).
 
@@ -42,15 +56,21 @@ serves `chat` only.
 ```
 <ninfer>/build/apps/ninfer-serve \
   <model>.ninfer \
-  --model-id qwen3.6_27b \
+  --model-id qwen3.8_27b \
   --host 0.0.0.0 --port 8090 \
   --max-context 131072 \
   --spec mtp --draft-tokens 3 --lm-head-draft \
   --presence-penalty 0 \
   --no-thinking \
-  --cors
+  --cors \
+  --vision
 ```
 
+`--vision` is what lets a worldgen build show the model its own renders — the refine stages send
+images, and a server launched without it refuses every image-bearing turn (`vision_disabled`).
+Its fixed GPU allocations come out of the same card as the weights and KV, and they are the
+margin: `scripts/local_gpu.py` serves exactly `<llm.model>.ninfer` from `NINFER_MODELS` because a
+larger variant artifact of the same model left no room for them and died at launch.
 `--no-thinking` and `--presence-penalty 0` are both load-bearing: ninfer's sampler defaults to
 Qwen3 thinking defaults, penalty 1.0 among them, which degrades long structured output.
 `--model-id` must match `llm.model` in settings.json.
@@ -88,11 +108,22 @@ Local: `comfy-start`. Over the network: run `main.py --listen 0.0.0.0` from the 
 
 ```
 <trellis venv>/bin/python src/tools/trellis_server.py \
-  --repo <trellis repo> --weights <trellis weights>
+  --repo <trellis repo> --weights <trellis weights> --stage-dir ""
 ```
 
 A one-GPU box holds ComfyUI or TRELLIS, not both at once — which is why an asset top-up resumes a
 mesh from its `<id>.src.png` rather than restarting at the image leg.
+
+Two launch flags decide whether the server fits in HOST RAM, and a desktop that runs out of it
+loses the whole user session to the OOM killer, not just the build (measured twice, 2026-08-21:
+a 36 GB python killed at the mesh stage, Chromium and the desktop with it):
+
+- `--stage-dir ""` — by default the server copies its weights into `/dev/shm` (the pod trick
+  against a network filesystem dropping pages). On a local disk that copy is 14 GB of tmpfs that
+  stays resident for as long as the box is up. Empty means load from `--weights`.
+- leave `--ptype` at its `512` default. The server warms `{ptype, "512"}`, so `1024_cascade`
+  loads TWO pipelines and the process peaks near 36 GB of host RAM. `scripts/local_gpu.py`
+  launches with both settings.
 
 ---
 

@@ -49,24 +49,24 @@ from huggingface_hub import hf_hub_download, snapshot_download
 
 VOL = sys.argv[1]
 
-# dest dir, repo id, filename in repo, expected bytes (0 = skip the size check), revision
+# dest dir, repo id, filename in repo, expected bytes (0 = skip the size check), revision,
+# and optionally the name it is stored under
 #
 # The LLM is pinned to a commit, not `main`. It is the DENSE 27B, not the 35B-A3B MoE this volume
 # was first provisioned with: the MoE is faster per token, but the window is what a build lives or
 # dies on and the 27B's is what the box was moved to.
 #
-# The SAME model ships twice, in two containers, because a pod's card decides which engine can run
-# it: ninfer serves ~60% more tok/s but is compiled for sm_120a and reads only its own artifact,
-# while llama.cpp reads only the GGUF and runs anywhere. Both live here so one image can pick at
-# boot — the volume holds ~34 GiB for one model, which is the price of not caring which card
-# RunPod hands out.
+# The SAME model ships twice, one artifact per engine: ninfer (sm_120a, a 5090 on an r580+ driver)
+# reads only its own artifact; llama.cpp reads only the GGUF and runs on any card. The GGUF is
+# stored under the model id because llama.cpp's router names a model by its file stem, and
+# LLM_MODEL is what every request carries.
 FILES = [
-    (f"{VOL}/models/LLM", "unsloth/Qwen3.6-27B-GGUF",
-     "Qwen3.6-27B-UD-Q4_K_XL.gguf", 17612564704,
-     "82d411acf4a06cfb8d9b073a5211bf410bfc29bf"),
-    (f"{VOL}/models/ninfer", "neroued/Qwen3.6-27B-nvfp4-NInfer",
-     "qwen3_6_27b_nvfp4.ninfer", 18324064000,
-     "610abfadfd8102791f1a7317d243463843e14758"),
+    (f"{VOL}/models/LLM", "unsloth/Qwen3.8-27B-GGUF",
+     "Qwen3.8-27B-UD-Q4_K_XL.gguf", 17559178144,
+     "4ca720788d1e01f1bff70c033e0d0028fd02e502", "qwen3.8_27b.gguf"),
+    (f"{VOL}/models/ninfer", "neroued/Qwen3.8-27B-nvfp4-NInfer",
+     "qwen3_8_27b_nvfp4.ninfer", 21492695040,
+     "d6d0b3b61a38262e57217e64e7f44cf4ce98bda1"),
     # The image queue's four checkpoints, one per kind (see maestro/codegen: sprites/scenes ->
     # NetaYume, tiles + scene-chain terrain -> DreamShaperXL Turbo, scene-chain subjects ->
     # Qwen-Image-2512, the scene embed -> Qwen-Image-Edit-2511). The two Qwen graphs share the
@@ -90,10 +90,10 @@ FILES = [
     (f"{VOL}/comfy/models/RMBG/BiRefNet", "1038lab/BiRefNet", "config.json", 0, None),
 ]
 
-for dest, repo, name, want, rev in FILES:
+for dest, repo, name, want, rev, *stored in FILES:
     # ComfyUI resolves weights by folder, so a repo that nests its files (Comfy-Org's
     # split_files/) lands FLAT here — the name in the workflow is the basename.
-    path = os.path.join(dest, os.path.basename(name))
+    path = os.path.join(dest, stored[0] if stored else os.path.basename(name))
     if os.path.exists(path) and (want == 0 or os.path.getsize(path) == want):
         print(f"ok (present)  {name}")
         continue

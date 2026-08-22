@@ -109,6 +109,8 @@ def stage_weights(weights: str, names, stage_root: str, streams: int = 8):
     Returns (path_to_load_from, seconds). Falls back to the volume when the copy will not fit or
     fails — per part: a slow pod beats a dead one.
     """
+    if not stage_root:
+        return weights, 0.0
     import shutil
     from concurrent.futures import ThreadPoolExecutor
 
@@ -359,7 +361,7 @@ class TrellisEngine:
             # entrypoint's gate, where it would serve nothing and bill anyway.
             self.warmed = True
 
-    def generate(self, png_bytes: bytes, ptype: str, texture: int) -> bytes:
+    def generate(self, png_bytes: bytes, ptype: str, texture: int, seed: int = 42) -> bytes:
         from PIL import Image
         self._ensure()
         img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
@@ -369,7 +371,7 @@ class TrellisEngine:
         # off-budget entirely). 50k gives it a clean source: measured across character/foliage/
         # building, postprocess 4-13s -> ~2s, upload 17-22MB -> 2-3MB, final mesh equal-or-better.
         try:
-            return self._generate(img, ptype, texture, decimation=50000)
+            return self._generate(img, ptype, texture, decimation=50000, seed=seed)
         except Exception as e:
             if "out of memory" not in str(e).lower():
                 raise
@@ -378,9 +380,9 @@ class TrellisEngine:
             # small texture — instead of failing it outright.
             print(f"[trellis] OOM at ptype={ptype} texture={texture}; retrying degraded",
                   flush=True)
-            return self._generate(img, "512", min(texture, 512), decimation=25000)
+            return self._generate(img, "512", min(texture, 512), decimation=25000, seed=seed)
 
-    def _generate(self, img, ptype: str, texture: int, decimation: int) -> bytes:
+    def _generate(self, img, ptype: str, texture: int, decimation: int, seed: int = 42) -> bytes:
         import gc
 
         import o_voxel
@@ -389,7 +391,7 @@ class TrellisEngine:
         try:
             with torch.inference_mode():
                 t0 = time.time()
-                mesh = self._pipe.run(img, pipeline_type=ptype)[0]
+                mesh = self._pipe.run(img, pipeline_type=ptype, seed=seed)[0]
                 ts = time.time()
                 mesh.simplify(16777216)
                 t1 = time.time()
@@ -446,9 +448,12 @@ def build_app(engine: TrellisEngine):
                                 detail=f"ptype {ptype} is not loaded by this process "
                                        f"(serving {sorted(engine.tiers)})")
         texture = int(request.query_params.get("texture", engine.texture))
+        # The caller's seed, because a caller asking for the same image AGAIN wants a
+        # different mesh — a fixed seed would hand back the one it rejected.
+        seed = int(request.query_params.get("seed", 42))
         try:
             t = time.time()
-            glb = engine.generate(png, ptype, texture)
+            glb = engine.generate(png, ptype, texture, seed)
             gen = time.time() - t
             print(f"[trellis] ok {len(glb)} bytes {gen:.1f}s", flush=True)
             return Response(content=glb, media_type="model/gltf-binary",
@@ -476,7 +481,8 @@ def main():
     ap.add_argument("--texture", type=int, default=1024)
     # tmpfs by default: RAM the pod already has, and the one place the network filesystem cannot
     # decide to drop our pages. Point it at a disk path (or a dir that won't fit) to opt out.
-    ap.add_argument("--stage-dir", default="/dev/shm/trellis-weights")
+    ap.add_argument("--stage-dir", default="/dev/shm/trellis-weights",
+                    help="empty string: load straight from --weights (a local disk)")
     ap.add_argument("--no-warmup", dest="warmup", action="store_false",
                     help="skip the throwaway boot mesh (the first real job then pays ~40s of "
                          "lazy encoder load + kernel compile)")

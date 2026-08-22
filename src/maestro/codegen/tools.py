@@ -1,5 +1,5 @@
 """The tools the build dispatches: list_files, read_file, write_file, edit_file, generate_media,
-compose_scene.
+compose_scene, compose_world.
 
 Two invariants. A path is resolved and must land inside the game folder, so no write can escape it.
 And every failure is REPORTED to the model rather than guessed at — see `_reported`.
@@ -167,6 +167,19 @@ def build_tools(state) -> dict:
         from scenegen.bake import bake_scene
         return bake_scene(root, id, archetype, style, seed, width_cells, height_cells)
 
+    def compose_world(description=None, seed=None, **_) -> dict:
+        # One world per game: a second one would replace the ground under a game already
+        # written against the first one's metres and regions.
+        from maestro.worldgen.compose import compose, world_dir
+        if not description:
+            raise KeyError("description")
+        if (world_dir(root) / "world.json").exists():
+            return {"ok": False,
+                    "error": "this game already has its world — read world/world.json for its "
+                             "size and regions instead of building another."}
+        return compose(root, state.run_dir, state.run_id, description,
+                       int(seed) if seed is not None else None)
+
     def _reported(fn):
         """A tool result is a BOUNDARY: anything the call raises comes back as text the model can
         act on. Never substitute a default for a bad argument — the report is what lets it retry."""
@@ -180,4 +193,5 @@ def build_tools(state) -> dict:
     return {name: _reported(fn) for name, fn in
             {"list_files": list_files, "read_file": read_file,
              "write_file": write_file, "edit_file": edit_file,
-             "generate_media": generate_media, "compose_scene": compose_scene}.items()}
+             "generate_media": generate_media, "compose_scene": compose_scene,
+             "compose_world": compose_world}.items()}

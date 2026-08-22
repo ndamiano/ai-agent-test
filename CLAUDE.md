@@ -35,8 +35,9 @@ step, no engine of ours between it and the screen. Two stages:
    approving one text and building another. Pressing **Build** stores the edit and starts the build,
    so there is one action and one writer. Staged construction holds this stage by stage — the boxes'
    contents ARE what builds.
-2. **Build:** a non-LLM **driver** (`maestro/codegen/build_chain.py`) hands the model seven tools —
-   `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `compose_scene`, `done` —
+2. **Build:** a non-LLM **driver** (`maestro/codegen/build_chain.py`) hands the model eight tools —
+   `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `compose_scene`,
+   `compose_world`, `done` —
    and a running transcript, and lets it write the game. It decides the file layout, the data shapes,
    the systems, and what art gets drawn. It calls `done` when the game is playable. The build is not
    a resident loop: each llm turn is a job on the `llm` queue and its completion drives the next

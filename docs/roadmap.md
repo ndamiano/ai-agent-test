@@ -45,6 +45,10 @@ between us and the bar:
 - **Art is on trial and unsettled.** `generate_media` entered unmeasured. What settles it is
   coverage — how much of what the player sees got art — not whether the tool is called. An unused
   schema costs every turn of every build, so a tool that fails that comes back out.
+- **A generated 3D world is something a build can now ask for, and unproven at scale.**
+  `compose_world` puts a whole worldgen pipeline behind one tool call — ground, regions and the
+  scenery standing on them — and a game written on its loader is a game nobody has built at
+  volume yet. Same bar as the tool below it: coverage across a battery, not one world.
 - **Scene composition is new and unproven at scale.** `compose_scene` and the asset store landed
   against a validated recipe and one real build. One build is an existence proof, not a measurement.
 

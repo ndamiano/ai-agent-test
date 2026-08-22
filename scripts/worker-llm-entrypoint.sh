@@ -35,8 +35,9 @@ wait_engine() {
 
 start_ninfer() {
     # --spec mtp + --lm-head-draft are speculative decode; --no-thinking is the floor the
-    # llama.cpp branch gets from enable_thinking=false. Residency is frozen at start, so what is
-    # NOT passed (vision, dflash) is weights this process never allocates.
+    # llama.cpp branch gets from enable_thinking=false. --vision is required: world refinement
+    # sends the model renders of the world. Residency is frozen at start, so what is NOT passed
+    # (dflash) is weights this process never allocates.
     #
     # --presence-penalty 0 is load-bearing, not tidying: ninfer's sampler defaults to Qwen3
     # THINKING defaults, presence-penalty 1.0 among them, and a penalty on repeated tokens
@@ -49,7 +50,7 @@ start_ninfer() {
         --max-context 131072 \
         --spec mtp --draft-tokens 3 --lm-head-draft \
         --presence-penalty 0 \
-        --no-thinking &
+        --no-thinking --vision &
     engine_pid=$!
     target="http://127.0.0.1:$NINFER_PORT"
     # ninfer answers nothing until the whole artifact is resident, so this waits on a 17 GiB pull

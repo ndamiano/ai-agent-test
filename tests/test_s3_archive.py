@@ -99,6 +99,22 @@ def test_archive_uploads_the_whole_run_dir(bucket):
     assert "r1/game/index.html" in names
 
 
+def test_archive_leaves_a_worlds_build_folder_behind(bucket):
+    """The world a game plays was published into the game folder; the stages' working material is
+    hundreds of megabytes nothing reads back."""
+    fake, runs, _ = bucket
+    run_dir = _make_run(runs)
+    (run_dir / "world_build").mkdir()
+    (run_dir / "world_build" / "concept.png").write_bytes(b"x" * 64)
+    (run_dir / "game" / "world").mkdir()
+    (run_dir / "game" / "world" / "world.json").write_text("{}")
+    archive.archive("r1")
+    with tarfile.open(fileobj=io.BytesIO(fake.objects["runs/r1.tar.gz"])) as tar:
+        names = tar.getnames()
+    assert "r1/game/world/world.json" in names
+    assert not [n for n in names if "world_build" in n]
+
+
 def test_evict_removes_local_copies_only_after_verifying_remote(bucket):
     fake, runs, runtime_games = bucket
     run_dir = _make_run(runs)

@@ -64,6 +64,6 @@ ENV PYTHONPATH=/opt/maestro/src \
     LLAMA_PORT=8080 \
     NINFER_PORT=8090 \
     MODELS_DIR=/workspace/models/LLM \
-    NINFER_MODEL=/workspace/models/ninfer/qwen3_6_27b_nvfp4.ninfer
+    NINFER_MODEL=/workspace/models/ninfer/qwen3_8_27b_nvfp4.ninfer
 
 ENTRYPOINT ["/opt/maestro/entrypoint.sh"]

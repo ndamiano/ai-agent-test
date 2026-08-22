@@ -88,7 +88,7 @@ def test_the_first_turn_sends_the_request_and_nothing_else(tmp_path, tools):
     assert out.messages[-1]["content"] == "a card game"
     assert {t["function"]["name"] for t in out.schemas} == {
         "list_files", "read_file", "write_file", "edit_file", "generate_media", "compose_scene",
-        "done"}
+        "compose_world", "done"}
 
 
 def test_the_system_prompt_stays_the_measured_one(tmp_path, tools):
@@ -98,7 +98,7 @@ def test_the_system_prompt_stays_the_measured_one(tmp_path, tools):
     cursor = _cursor()
     out = build_steps.step({"request": "a card game"}, tmp_path, tools, cursor, {})
     system = out.messages[0]["content"]
-    assert system.count("\n- ") == 12
+    assert system.count("\n- ") == 13
     assert "three.module.js" in system and "generate_media" in system
     assert "seeded generator" in system
     # Pinned to its measurement: 2/2 games sized the canvas with this line, 0/2 without.
@@ -523,6 +523,19 @@ def test_seed_places_the_renderer_and_leaves_edits_alone(tmp_path, monkeypatch):
     staging.seed_vendor(tmp_path)
     assert (tmp_path / "game" / "index.html").read_text() == "<h1>hi</h1>"
     assert sorted(p.name for p in (tmp_path / "game").iterdir()) == ["index.html", "three.module.js"]
+
+
+def test_seed_places_the_world_loader(tmp_path):
+    """The world loader rides along with three.js, from the real vendor folder: a game fetches
+    nothing at runtime, and the terrain shader is not something a build should be writing. The
+    page the pipeline renders worlds with is not a game's, and does not go."""
+    from maestro.codegen import staging
+    staging.seed_vendor(tmp_path)
+    game = tmp_path / "game"
+    for name in ("world.js", "GLTFLoader.js", "BufferGeometryUtils.js"):
+        assert (game / name).is_file()
+    assert "export async function loadWorld" in (game / "world.js").read_text()
+    assert not (game / "world_render.html").exists()
 
 
 def test_stage_copies_the_folder(tmp_path, monkeypatch):

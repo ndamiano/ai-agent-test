@@ -89,8 +89,10 @@ src/
       archive.py         the run dir's OFF-BOX copy. tools/s3.py is a minimal SigV4 client over
                          `requests` — a wrong signature is a loud 403 and the payload hash rides
                          the request, so a signing bug cannot silently succeed. A settled finalize
-                         (no gate fix kicked, no stage left) uploads the whole run dir as one
-                         tar.gz. `evict` reclaims local disk and REFUSES without a verified remote
+                         (no gate fix kicked, no stage left) uploads the run dir as one tar.gz,
+                         minus a world's `world_build/` — the world a game plays was published
+                         into the game folder, and the stages' working material is hundreds of
+                         megabytes nothing reads back. `evict` reclaims local disk and REFUSES without a verified remote
                          copy or under an active build; `rehydrate` pulls it back and re-stages;
                          `ensure_local` hooks play-session/build/fix so an evicted game is a
                          download away. A boundary like snapshots: an unconfigured bucket logs and
@@ -105,7 +107,10 @@ src/
                          BOUNDARY — a snapshot that cannot be taken is logged and the build carries
                          on, since losing history is not a reason to lose a game.
       tools.py           list_files / read_file / write_file / edit_file / generate_media /
-                         compose_scene — the smallest surface that works, and kept that way.
+                         compose_scene / compose_world — the smallest surface that works, and kept
+                         that way. compose_world is worldgen's build face: one 3D world per game,
+                         refused a second time because the game is already written against the
+                         first one's metres and regions.
                          compose_scene is scenegen's build face: it bakes a whole MAP —
                          assets/<id>_ground.png plus <id>_scene.json (walkable grid, door cells,
                          POIs) — and the model reads the json and wires it (verified in a real
@@ -269,6 +274,46 @@ src/
                          tool and carries that tool's required arguments.
     state.py             RunState — durable per-run dir <working_dir>/runs/<run_id>/ (spec.json,
                          game/ folder). Ownership + charge state live in db/, not the run dir.
+  worldgen/              the 3D world behind the compose_world build tool: the worldclaw pipeline
+                         (ported 2026-08-21), stage for stage, with every GPU call on maestro's
+                         queues. build.py runs the nine stages in order — scene, terrain-plan,
+                         terrain-assets, construct, terrain-refine, regional-plan, objects,
+                         scene-refine, final-render — and `start_at`/`stop_after` make any run of
+                         them resumable, which is what lets one world be built in legs. planning/
+                         and terrain/ and objects/ are the stages themselves; llm.py, backends/
+                         images.py and backends/meshes.py are the only ways out to a card, each a
+                         job on the llm, image or mesh queue. Each stage names its own sampling
+                         temperature (the grounding pass is greedy, the planners are not) and its
+                         own mesh seed, and both ride the job all the way to the server.
+                         terrain/render.py is both the refinement loop's eyes and the contract:
+                         it writes world.json and draws it in headless chromium through
+                         runtime/vendor/world.js — the SAME loader the game imports, so the agent
+                         never judges a picture the game cannot reproduce. Every path in
+                         world.json is relative to the folder it sits in, which is what makes the
+                         folder copyable into a game.
+                         compose.py is the build face. The tool BLOCKS through `construct` — the
+                         first stage at which a world exists to write at all, since world.json
+                         names the height field, the region materials and the scatter — and
+                         answers with size_m and the regions in metres, because the model places
+                         gameplay by region the turn it hears back. The rest runs on one thread
+                         for that run, in three legs (terrain-refine / regional-plan..objects /
+                         scene-refine..final-render), and PUBLISHES after each.
+                         The publish contract: `<run_dir>/world_build/` holds the intermediates
+                         (~275 MB of concept images, region compositions and refinement views) and
+                         no game ever reads it; `<game>/world/` holds only what world.json names —
+                         the json, heightmap.f32, the weight textures, each region's albedo and
+                         normal, and the GLBs — at the same relative paths, so staging, archiving
+                         and playing carry the world with the game and the game fetches nothing
+                         outside its folder. world.json is rewritten from the world as it stands
+                         at every publish and replaced by rename, so a browser never reads one
+                         naming a file that is not there yet. A world with no meshes yet still
+                         COLLIDES: the loader reads collision from stated heights, never from a
+                         GLB. Nothing here blocks `done` — a build finalizes on a game whose
+                         ground already loads while the scenery is still rendering — and a leg
+                         that fails is logged and left, because the pipeline resumes by stage.
+                         Locally the three queues are drained by `scripts/local_gpu.py auto`
+                         (`docs/local_dev.md`).
+
   scenegen/              scene composition behind the compose_scene build tool. bake.py is the
                          synchronous face (interiors/dungeons); blockout.py is the SOLVER behind
                          the scene chain: the llm plans relations — counts, kinds, no positions —

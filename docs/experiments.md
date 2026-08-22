@@ -430,3 +430,94 @@ only argument-less tool, and the first one a fix build reaches for — was repor
 "no tool call landed", followed by a nudge telling it to write `index.html` over a game that already
 existed. Three fix builds in a row died at step 4 before this was found. `_usable` already rejects a
 name that is not an offered tool, so the guard bought nothing.
+
+---
+
+## Worldclaw pipeline through the queues (2026-08-21, local 5090, qwen3.8_27b via ninfer)
+
+### The question
+The worldclaw spike built its eleven stages against models it dialed directly. Does the whole
+pipeline still run end to end when every GPU call is a job on maestro's queues, on one card that
+holds one model at a time?
+
+### What it did
+One prompt — a fishing village on a rocky coast — to a finished world, `scripts/local_gpu.py auto`
+switching the card between the three queues as the stages asked for them.
+
+| stage | seconds |
+|---|---|
+| scene | 34 |
+| terrain-plan | 101 |
+| terrain-assets | 767 |
+| construct | 1 |
+| terrain-refine | 2039 |
+| regional-plan | 36 |
+| objects | 3257 |
+| scene-refine | 173 |
+| final-render | 48 |
+
+≈107 minutes in total. terrain-refine's 2039 s is mostly not work: ~26 minutes of it was an unserved
+queue while the local ninfer was crashing on launch — the stage itself is about 7 minutes. Jobs: llm
+72 done / 1 failed, image 58, mesh 45 done / 1 failed, across 39 model swaps (28 of them into a
+queue that already had work waiting).
+
+### The three migration defects
+- **Image and mesh results land as FILES, not base64.** Both backends read a worker result as an
+  inline payload; the worker deposits a blob and reports its path (`entry["file"]`, `glb_file`).
+- **TRELLIS answers `/health` before it is warm.** A job sent into the warmup killed the server. The
+  switcher now waits for `"warm": true` rather than for the port to answer.
+- **ninfer needs `--vision` for the refine stages** — they judge renders. With `--vision` the NVFP4
+  artifact no longer fits on a 5090 at 98304 ctx; the plain `qwen3_8_27b.ninfer` (18.2 GB) does, at
+  29.5 GB resident.
+
+### What the world looks like
+The terrain reads as a coastal headland. The "village" is about six small meshes clustered mid-plain
+and does not read as a village; the rocky coast reads as sand; the water is a flat plane. Honest
+verdict: a place, not yet the place that was asked for.
+
+### Open, and not migration defects
+- **The scattered pine prototype reconstructed as a flat billboard slab**, and every scatter copy
+  inherits it, so the pine forest is a field of slabs. One bad TRELLIS reconstruction, upstream of
+  anything the port changed.
+- **One mesh regeneration 500'd** with `Input type (float) and bias type (c10::Half)`.
+
+### A game built in it (run 9c3c07df4201, same day, same box)
+
+Request: a third-person exploration game in a fishing village — collect five lost floats, return
+them to the harbourmaster's hut, show a counter. The model called `compose_world` once in its
+first reply (a 120 m world, seed 7), alongside two `generate_media` calls, and the tool answered
+after 16.6 min (scene + terrain plan 1.3 min of llm, terrain assets 14 min of image jobs on one
+card, construct + six scatter meshes 2 min) with six regions it then placed the game by: spawn at
+the village centre, floats by the boats, on the beach and at the shore. The rest of the build was
+2m20s of llm across turns 1–19; `built` at 19 steps, 0 compactions, error gate clean at round 0,
+zero console errors once the sprites had landed. The background legs finished 32 min after
+`built` (terrain-refine 736 s, regional-plan + objects 1261 s, scene-refine + final render 51 s)
+and re-published into `game/world/` (71 MB) without the game noticing. Jobs: llm 67, image 36,
+mesh 16, none failed. Played headless: the player walks the generated ground on `heightAt`, is
+stopped by `blocking`, a float beacon and the hut stand where the regions said.
+
+What was wrong is the game's, not the world's: the player is a rotated plane rather than a
+billboard, so it vanishes edge-on after a sideways step; the objects leg dropped all five
+harbour-cove objects (no ground under them) and the village got benches and stones, no boats;
+the pines are the same billboard prototype as the first world (this build predates the
+one-specimen schema line, so it is the next world that measures that fix).
+
+### The control: the lab's own prompt through the fixed queue path (same day, same box)
+
+Auditing the migration against the lab found five regressions, all in the seams and none in the
+stage code: the local switcher served the groupwise-int ninfer artifact instead of the nvfp4 one
+the lab measured on (nvfp4 + `--vision` fits at 65535 ctx, not 98304); the llm shim swallowed every
+stage's `temperature` so planners and judges ran at 0.7 (the object-grounding pass lost its 0.0);
+a path off by one meant `decimate.mjs` never ran; the per-image TRELLIS seed was dropped, so
+regenerating a rejected mesh returned the same mesh; and `max_tokens: 50000` rode against a 65535
+window. With those fixed, the lab's medieval-village prompt verbatim: layout read-back within 7
+points of plan on every region (the broken runs were 8% against 30% and 49% against 15%), 1934
+scatter placements over an 800 m world (lab: 977 over 600 m), 52/52 objects reconstructed and
+placed across three regions (lab: 17 in one), terrain-refine 162 s, 78.9 min from the
+terrain-assets resume. The village close-up reads as the lab's did: half-timbered houses, a tower,
+trees, cattle. What differs is the planner's taste on this seed — dry yellow grass and a sea level
+set below the lake basin, so no water plane — not the pipeline.
+
+Two things killed the desktop on the way and are now launch rules in docs/local_dev.md: the TRELLIS
+server's `/dev/shm` weight staging (14 GB resident) and the `1024_cascade` tier (two pipelines
+warmed, ~36 GB host RSS). Host RAM, not the card, is the local ceiling.

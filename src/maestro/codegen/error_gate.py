@@ -32,13 +32,15 @@ import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from maestro.codegen.staging import RUNTIME_DIR
+
 logger = logging.getLogger(__name__)
 
 MAX_ROUNDS = 8            # measured convergence was <= 6 rounds on the worst cell
 PROBE_SECONDS = 6.0       # settle time after load + pokes; boot errors land well inside it
 STATE_FILE = "error_gate.json"
 
-VENDORED = {"three.module.js", "GLTFLoader.js", "BufferGeometryUtils.js"}
+VENDORED = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
 
 _NOTE = (Path(__file__).parent / "prompts" / "error_gate_note.txt")
 

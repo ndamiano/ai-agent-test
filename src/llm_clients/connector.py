@@ -40,7 +40,7 @@ def _resolve_effort(value):
 
 
 class LLMConnector:
-    def __init__(self, model: str = "default", max_tokens: int = 50000,
+    def __init__(self, model: str = "default", max_tokens: Optional[int] = 50000,
                  reasoning: Optional[str] = None,
                  queue: str = "llm", job_timeout_seconds: float = 900):
         self.model_name = model
@@ -62,7 +62,8 @@ class LLMConnector:
 
     def generate_with_tools(self, messages: list, tools: list = None,
                             response_format: dict = None, max_tokens: int = None,
-                            reasoning=_REASONING_UNSET, model: str = None) -> dict:
+                            reasoning=_REASONING_UNSET, model: str = None,
+                            temperature: float = None) -> dict:
         rate_limiter = get_llm_rate_limiter()
         if not rate_limiter.acquire(blocking=True, timeout=10):
             error_msg = "Rate limit exceeded: too many LLM requests"
@@ -70,7 +71,7 @@ class LLMConnector:
             return {"error": error_msg}
 
         payload = self._payload(messages, tools, response_format, max_tokens,
-                                reasoning=reasoning, model=model)
+                                reasoning=reasoning, model=model, temperature=temperature)
         t0 = time.perf_counter()
         job = self._run_job(payload)
         if job["status"] == "done":
@@ -110,7 +111,8 @@ class LLMConnector:
                "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}
 
     def _payload(self, messages: list, tools: list, response_format, max_tokens,
-                 reasoning=_REASONING_UNSET, model: str = None) -> dict:
+                 reasoning=_REASONING_UNSET, model: str = None,
+                 temperature: float = None) -> dict:
         """The CANONICAL request body — OpenAI chat shape, plus `reasoning` as a plain effort string.
 
         Sampling is the SERVER's: penalties and template switches are launch flags, so a default
@@ -118,9 +120,13 @@ class LLMConnector:
         payload = {
             "model": model or self.model_name,
             "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": max_tokens if max_tokens is not None else self.max_tokens,
+            "temperature": 0.7 if temperature is None else temperature,
         }
+        # An unset cap is sent as no cap at all: a number here is subtracted from the window the
+        # INPUT may use, so a caller whose prompt is the long half must be able to decline one.
+        cap = max_tokens if max_tokens is not None else self.max_tokens
+        if cap is not None:
+            payload["max_tokens"] = cap
         effort = self.reasoning if reasoning is _REASONING_UNSET else _resolve_effort(reasoning)
         if effort:
             payload["reasoning"] = effort

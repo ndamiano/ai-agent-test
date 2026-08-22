@@ -197,6 +197,27 @@ COMPOSE_SCHEMA = {"type": "function", "function": {
                                   "width_cells": {"type": "integer"},
                                   "height_cells": {"type": "integer"}},
                    "required": ["id", "archetype", "style"]}}}
+WORLD_SCHEMA = {"type": "function", "function": {
+    "name": "compose_world",
+    "description": ("Have a whole 3D WORLD built into the project: ground with hills and valleys, "
+                    "regions of different kinds of land, and the trees, rocks and buildings "
+                    "standing on them. Answers with the world's size and its regions in metres, "
+                    "and the ground loads from that moment; the scenery keeps rendering into the "
+                    "same files while you write the game. Load it with world.js. One world per "
+                    "game, and only for a 3D game — a flat 2D map is compose_scene."),
+    "parameters": {"type": "object",
+                   "properties": {"description": {"type": "string",
+                                                  "description":
+                                                      "What the landscape IS, in a sentence or "
+                                                      "two: the kinds of land in it and what "
+                                                      "stands on them. Never a size, a distance "
+                                                      "or a count — the world chooses its own "
+                                                      "scale. Describe the place, not the game "
+                                                      "played on it."},
+                                  "seed": {"type": "integer",
+                                           "description": "A different seed is a different "
+                                                          "world."}},
+                   "required": ["description"]}}}
 DONE_SCHEMA = {"type": "function", "function": {
     "name": "done",
     "description": "Call when the project is finished and playable.",
@@ -205,7 +226,7 @@ DONE_SCHEMA = {"type": "function", "function": {
                    "required": ["summary"]}}}
 
 SCHEMAS = [LIST_SCHEMA, READ_SCHEMA, WRITE_SCHEMA, EDIT_SCHEMA, MEDIA_SCHEMA,
-           COMPOSE_SCHEMA, DONE_SCHEMA]
+           COMPOSE_SCHEMA, WORLD_SCHEMA, DONE_SCHEMA]
 
 
 def _n_ctx() -> int:
@@ -321,6 +342,7 @@ def _action_of(tc, res) -> str:
     target = args.get("path") or args.get("id") or ""
     verb = {"write_file": "wrote", "edit_file": "edited", "read_file": "read",
             "generate_media": "asked for art", "compose_scene": "built a scene",
+            "compose_world": "built a world",
             "list_files": "listed files"}.get(name, name)
     line = f"{verb} {target}".strip()
     if res.get("ok", True):
@@ -411,6 +433,8 @@ def _dispatch(tools, cursor, tc) -> dict:
         res = fn(id=args.get("id"), archetype=args.get("archetype"), style=args.get("style"),
                  seed=args.get("seed"), width_cells=args.get("width_cells"),
                  height_cells=args.get("height_cells"))
+    elif name == "compose_world":
+        res = fn(description=args.get("description"), seed=args.get("seed"))
     else:
         res = fn()
     return res

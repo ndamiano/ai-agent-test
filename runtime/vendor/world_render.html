@@ -1,0 +1,98 @@
+<!doctype html>
+<!-- The pipeline's own view of a world: loads world.json through the same loader a
+     game does, and hands back one PNG per camera. Opened headless over http by
+     terrain/render.py; nothing about a particular world is written here.
+
+     A second mode photographs a lone GLB against a neutral card, which is how a
+     reconstruction is looked at rather than measured. -->
+<html>
+<head><meta charset="utf-8"><style>html,body{margin:0;background:#000;overflow:hidden}</style></head>
+<body>
+<script type="module">
+import * as THREE from './three.module.js';
+import { GLTFLoader } from './GLTFLoader.js';
+import { loadWorld } from './world.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+// Straight down is where look_at cannot build a basis from UP, so the up axis
+// falls back the way the camera model this pipeline casts rays with does.
+function aim(camera, from, at) {
+  camera.position.set(from[0], from[1], from[2]);
+  const target = new THREE.Vector3(at[0], at[1], at[2]);
+  const direction = target.clone().sub(camera.position).normalize();
+  camera.up.set(0, 1, 0);
+  if (Math.abs(direction.y) > 0.999) camera.up.set(0, 0, -1);
+  camera.lookAt(target);
+}
+
+function shoot(scene, camera, width, height) {
+  renderer.setSize(width, height, false);
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+  renderer.render(scene, camera);
+  return renderer.domElement.toDataURL('image/png');
+}
+
+async function world(url, width, height) {
+  const built = await loadWorld(url);
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xbfd4e6);
+  scene.add(built.group);
+  const shots = [];
+  for (const shot of built.job.cameras) {
+    const camera = new THREE.PerspectiveCamera(
+      shot.fov || 55.0, width / height, Math.max(built.job.size_m * 0.001, 0.1),
+      built.job.size_m * 4.0,
+    );
+    aim(camera, shot.position, shot.look_at);
+    shots.push({ name: shot.name, png: shoot(scene, camera, width, height) });
+  }
+  return shots;
+}
+
+async function meshes(items, width, height) {
+  const gltf = new GLTFLoader();
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x2e2e31);
+  const sun = new THREE.DirectionalLight(0xfff2e0, 2.4);
+  sun.position.set(0.6, 0.8, 0.5);
+  const fill = new THREE.DirectionalLight(0xdfe6f0, 0.8);
+  fill.position.set(-0.5, 0.3, -0.6);
+  scene.add(sun, fill, new THREE.AmbientLight(0x9fa4ad, 1.4));
+
+  const shots = [];
+  for (const item of items) {
+    const loaded = await new Promise((resolve) => gltf.load(
+      item.mesh, (g) => resolve(g.scene), undefined, () => resolve(null),
+    ));
+    if (!loaded) continue;
+    scene.add(loaded);
+    const box = new THREE.Box3().setFromObject(loaded);
+    const span = new THREE.Vector3();
+    box.getSize(span);
+    const longest = Math.max(span.x, span.y, span.z, 0.001);
+    const centre = box.getCenter(new THREE.Vector3());
+    const camera = new THREE.PerspectiveCamera(
+      45.0, width / height, longest * 0.01, longest * 12.0,
+    );
+    const direction = new THREE.Vector3(0.85, 0.55, 0.95).normalize();
+    aim(camera, centre.clone().addScaledVector(direction, longest * 2.1).toArray(),
+        centre.toArray());
+    shots.push({ name: item.name, png: shoot(scene, camera, width, height) });
+    scene.remove(loaded);
+  }
+  return shots;
+}
+
+window.renderWorld = world;
+window.renderMeshes = meshes;
+window.rendererReady = true;
+</script>
+</body>
+</html>

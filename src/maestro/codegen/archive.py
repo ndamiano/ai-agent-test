@@ -1,7 +1,8 @@
 """The run dir's off-box copy, and the disk-pressure valve it enables.
 
-Every settled finalize uploads the whole run dir as one tar.gz — game, art, game.git history,
-turn logs — so a finished game exists off-box the moment it exists at all. `evict` then reclaims
+Every settled finalize uploads the run dir as one tar.gz — game, art, game.git history, turn
+logs, minus a world's build folder — so a finished game exists off-box the moment it exists at
+all. `evict` then reclaims
 local disk, and it REFUSES unless the remote copy is verified first: an eviction that trusts a
 write it never checked is a deletion. `rehydrate` pulls the archive back and re-stages, so an
 evicted game is a download away from playable or fixable again.
@@ -17,7 +18,9 @@ import logging
 import shutil
 import tarfile
 from pathlib import Path
+from typing import Optional
 
+from maestro.worldgen import compose
 from tools import s3
 
 logger = logging.getLogger(__name__)
@@ -27,8 +30,17 @@ def _key(run_id: str) -> str:
     return f"runs/{run_id}.tar.gz"
 
 
+def _shipped(entry: tarfile.TarInfo) -> Optional[tarfile.TarInfo]:
+    """A world's build folder is a quarter of a gigabyte of concept images and refinement views
+    that nothing reads back — the world a game plays was published into the game folder, and that
+    is what a rehydrated run needs."""
+    parts = Path(entry.name).parts
+    return None if len(parts) > 1 and parts[1] == compose.BUILD_DIR else entry
+
+
 def archive(run_id: str) -> bool:
-    """Upload the run dir as one object. True when the remote copy is in place."""
+    """Upload the run dir as one object, minus the working material no game reads. True when the
+    remote copy is in place."""
     if not s3.configured():
         logger.info("archive %s skipped: s3 not configured", run_id)
         return False
@@ -36,7 +48,7 @@ def archive(run_id: str) -> bool:
     run_dir = RunState(run_id).run_dir
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        tar.add(run_dir, arcname=run_id)
+        tar.add(run_dir, arcname=run_id, filter=_shipped)
     data = buf.getvalue()
     try:
         s3.put(_key(run_id), data)

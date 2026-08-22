@@ -120,7 +120,7 @@ def test_the_archive_reads_back_exactly_as_the_row_did(run, cleared, headers, ap
     assert view["system"] and view["messages"][0]["text"] == "make a game"
     assert [t["name"] for t in view["tools"]] == [
         "list_files", "read_file", "write_file", "edit_file", "generate_media", "compose_scene",
-        "done"]
+        "compose_world", "done"]
     assert view["response"]["tool_calls"][0]["name"] == "write_file"
 
 

@@ -208,7 +208,7 @@ What the volume holds, by queue (`scripts/provision_volume.sh` is the authority)
 
 | queue | weights | GB |
 |---|---|---|
-| llm | `models/ninfer/qwen3_6_27b_nvfp4.ninfer` + `models/LLM/*.gguf` — the same model twice, one per engine | 36 |
+| llm | `models/ninfer/qwen3_8_27b_nvfp4.ninfer` (ninfer, a 5090 on r580+) + `models/LLM/qwen3.8_27b.gguf` (llama.cpp, any other card; stored under the model id because the router names a model by its file stem) | 37 |
 | image | `checkpoints/NetaYume_v4_all_in_one` (sprites, scenes), `checkpoints/DreamShaperXL_Turbo_v2_1` (tiles, scene-chain terrain), `diffusion_models/qwen_image_2512_fp8_e4m3fn` (scene-chain subjects), `diffusion_models/qwen_image_edit_2511_fp8mixed` (the scene embed) + the `text_encoders/qwen_2.5_vl_7b_fp8_scaled` and `vae/qwen_image_vae` both Qwen graphs share, `RMBG/BiRefNet` (the matte) | 69 |
 | mesh | `trellis2-weights` + `encoders/` (dinov3 mirror, BiRefNet) + the `hf-cache` pre-seed | 21 |
 | image (safety) | `comfy/models/safety/` — the NSFW classifier | 0.02 |
@@ -224,7 +224,7 @@ retired artifact is a `cp`/`rm` from the home box:
 aws s3 ls --profile runpod --region eu-ro-1 \
     --endpoint-url https://s3api-eu-ro-1.runpod.io s3://<volume-id>/ --recursive --human-readable
 aws s3 cp --profile runpod --region eu-ro-1 --endpoint-url https://s3api-eu-ro-1.runpod.io \
-    /var/tmp/ninfer-models/qwen3_6_27b_nvfp4.ninfer s3://<volume-id>/models/ninfer/
+    /var/tmp/ninfer-models/qwen3_8_27b_nvfp4.ninfer s3://<volume-id>/models/ninfer/
 ```
 
 The bucket name IS the network volume id, and the region/endpoint pair is the datacenter the volume
@@ -235,13 +235,15 @@ lives in — a volume in another datacenter answers on its own endpoint or not a
 VOL=/workspace bash scripts/provision_volume.sh
 
 # 2. build + push the three worker images (one Docker Hub repo, queue-version tags)
-docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v6 .
+docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v9 .
 docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v8 .
 docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v17 .
 docker push ndamiano100/maestro-worker:mesh-v17   # etc.
 ```
 
 Deployed tags (what the TEMPLATES name, checked live 2026-08-08): `llm-v8`, `image-v8`, `mesh-v17`.
+`llm-v9` (Qwen3.8-27B NVFP4) is pushed to Docker Hub as of 2026-08-21 but the RunPod template still
+names `llm-v8` until someone points it at the new tag — see "roll the volume forward first" above.
 An image tag and the volume's weights go live in LOCKSTEP: the entrypoint stages and warms up on
 the checkpoints the workflows name, so a pod predating a model swap dies at boot on a weight that
 is no longer there. Roll the volume forward first, the template second, and retire the old weight
@@ -261,9 +263,8 @@ create-time CUDA floor: `queues.<name>.allowed_cuda_versions` (prod llm: `["13.0
 "13.0" means an r580+ host, which runs the CUDA 13.1 ninfer via minor-version compatibility). The
 floor rides only the HEAD gpu ask and is dropped when the create widens to fallback cards — those
 serve the GGUF on any driver, and a slow pod beats no pod. The entrypoint driver gate stays as the
-belt to this suspender. That is why
-the volume holds the model twice (`models/ninfer/*.ninfer` and `models/LLM/*.gguf`, ~34 GiB
-together) and why an llm pod needs `LLM_MODEL` in its env: ninfer refuses any request whose `model`
+belt to this suspender. That is why the volume holds the model twice (`models/ninfer/*.ninfer` and
+`models/LLM/*.gguf`, ~37 GiB together) and why an llm pod needs `LLM_MODEL` in its env: ninfer refuses any request whose `model`
 is not its `--model-id`, and the autoscaler delivers the control plane's `llm.model` at create.
 The ninfer build stage compiles a pinned commit of github.com/Neroued/ninfer — it needs CUDA 13.1
 (the base image ships 12.8 for llama.cpp; only `libcudart.so.13` is added).

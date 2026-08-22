@@ -1,4 +1,4 @@
-"""Terrain asset prototypes: I_asset, then O_asset (§2.2.2).
+"""Terrain asset prototypes: I_asset, then O_asset.
 
 "For environmental elements that are repeatedly instantiated across the global
 terrain, this stage generates reusable 3D asset prototypes without determining

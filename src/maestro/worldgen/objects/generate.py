@@ -1,8 +1,6 @@
-"""Run stage 3b end to end: O_r for every selected region (§2.3.2).
+"""Run object generation end to end for every selected region.
 
     objects = generate_objects(scene, terrain, regional, out_dir)
-
-    O_r = { (M_i, U_i, T_place^i) }                                 [eq. 8]
 
 Terrain rendering runs on the engine alone; composition and subject redraws are
 jobs on the image queue; finding and describing objects is a queued llm call;
@@ -56,7 +54,7 @@ def region_objects(
     comp_png = out_dir / f"region_{region}_comp.png"
     instances_path = out_dir / f"instances_{region}.json"
 
-    # -- I_r^terrain and kappa_r ---------------------------------------------
+    # -- terrain render and camera --------------------------------------------
     if overwrite or not (terrain_png.exists() and camera_path.exists()):
         terrain_png, camera, frame_m = terrain_view(plan, spec, out_dir, height=height)
         camera_path.write_text(json.dumps({**camera.to_dict(), "frame_m": frame_m}, indent=1))
@@ -72,7 +70,7 @@ def region_objects(
     if verbose:
         print(f"[objects] {region}: {frame_m:.0f} m of ground in frame")
 
-    # -- I_r^comp, then the instances in it ----------------------------------
+    # -- composition, then the instances in it ---------------------------------
     if overwrite or not instances_path.exists():
         if overwrite or not comp_png.exists():
             compose(
@@ -139,7 +137,7 @@ def region_objects(
         if verbose:
             print(f"[objects] {region}: redrew {sum(1 for r in rows if r.get('drawn'))}/{len(rows)} subjects")
 
-    # -- M_i -----------------------------------------------------------------
+    # -- reconstructed meshes --------------------------------------------------
     # redrawn subjects go in their own directory: the GLB is named after its
     # source image, and a redrawn subject keeps the crop's filename, so sharing
     # a directory means every rerun silently reuses the crop-derived mesh it was
@@ -162,7 +160,7 @@ def region_objects(
     if verbose:
         print(f"[objects] {region}: {len(meshes)}/{len(rows)} meshes reconstructed")
 
-    # -- T_place^i -----------------------------------------------------------
+    # -- placement ---------------------------------------------------------
     placed = place(rows, camera, height, plan.world.size_m, meshes)
     for item in placed:
         mesh = meshes.get(item["index"])

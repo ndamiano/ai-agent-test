@@ -1,7 +1,6 @@
 """Tool definition helpers: decorate a plain function, get a JSON-Schema tool.
 
-Copied from ai_harness/tools.py — the schema-inference surface worldgen's
-`@tool`-decorated functions are written against. Stdlib plus pydantic only.
+Stdlib plus pydantic only.
 """
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Rendering T in three.js (§2.2.3).
+"""Rendering T in three.js.
 
 The refinement loop needs to look at the world, and until now the only view of
 it was a numpy hillshade — which shows geometry honestly and says nothing about

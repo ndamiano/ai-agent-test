@@ -1,14 +1,15 @@
-"""The tools the regional planning agent calls (§2.3.1).
+"""The tools the regional planning agent calls.
 
     builder = RegionalPlanBuilder(scene, terrain)
     harness = LLMHarness(..., tools=builder.tools)
     harness.send_message_with_tools(prompt)
-    regional = builder.finish()          # P_regional
+    regional = builder.finish()
 
 Every region in the scene plan must be either developed or skipped before this
 will finish. Selecting a subset is the point of the stage, but a region that
-falls out of R+ because the agent forgot about it is not a selection, and the
-difference is invisible in the result unless the stage insists on it.
+falls out of the selection because the agent forgot about it is not a
+selection, and the difference is invisible in the result unless the stage
+insists on it.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ from .models import RegionalPlan, RegionalSpec
 
 
 class RegionalPlanBuilder:
-    """Accumulates P_regional against the scene plan and the terrain it got."""
+    """Accumulates the regional plan against the scene plan and the terrain it got."""
 
     def __init__(self, scene: ScenePlan, terrain: TerrainPlan) -> None:
         self.scene = scene
@@ -73,8 +74,8 @@ class RegionalPlanBuilder:
             """Record that a region is deliberately left as terrain.
 
             A region the terrain already delivers — a backdrop ridge, an empty
-            approach — belongs here. This is not a failure state; it is how R+
-            ends up smaller than R.
+            approach — belongs here. This is not a failure state; it is how the
+            selection ends up smaller than the full set of regions.
 
             Args:
                 region_id: Id of the region, from the scene plan.
@@ -125,7 +126,7 @@ class RegionalPlanBuilder:
         )
 
     def finish(self) -> RegionalPlan:
-        """Validate what was recorded and return P_regional.
+        """Validate what was recorded and return the regional plan.
 
         Raises `ValueError` if nothing was selected — a run that develops no
         region at all has not planned anything, whatever its reasons were.

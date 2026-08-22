@@ -1,24 +1,21 @@
-"""Object generation, first half: instances out of the composition (§2.3.2).
+"""Object generation, first half: instances out of the composition.
 
 The objects are located by `ground.locate`, which asks a vision model where
-everything is. This module turns each box into the object-centric image I_i the
-rest of the stage works from, with the affine A_i that produced it and the
-equivalent intrinsics
+everything is. This module turns each box into an object-centric crop the rest
+of the stage works from, with the affine that produced it and the equivalent
+intrinsics recorded alongside. Cropping and enlarging changes only the image
+coordinate system, so the extrinsics are untouched and a pixel in the crop maps
+back to the composition through the affine's inverse. That is what lets a small
+object be reconstructed at high resolution without giving up any placement
+accuracy.
 
-    K_hat_i = A_i K_t                                              [eq. 10]
-
-recorded alongside. Cropping and enlarging changes only the image coordinate
-system, so the extrinsics are untouched and a pixel in the crop maps back to the
-composition through A_i^-1. That is what lets a small object be reconstructed at
-high resolution without giving up any placement accuracy.
-
-There is no mask. The paper segments; this does not, and the reason is that
-nothing downstream still needs a silhouette. Reconstruction stopped using the
-cutout when subjects began being redrawn from a description rather than cut out
-(see subject.py), and placement anchors on the bottom of the box, which sits
-within 0.28 m of the bottom of a mask at these framings -- measured over every
-instance of the cliff city. What a mask would buy is a tighter box on large
-irregular objects, and it would cost a second model in the pipeline for it.
+There is no mask. Nothing downstream needs a silhouette: reconstruction stopped
+using the cutout when subjects began being redrawn from a description rather
+than cut out (see subject.py), and placement anchors on the bottom of the box,
+which sits within 0.28 m of the bottom of a mask at these framings -- measured
+over every instance of the cliff city. What a mask would buy is a tighter box
+on large irregular objects, and it would cost a second model in the pipeline
+for it.
 """
 from __future__ import annotations
 
@@ -77,7 +74,7 @@ def crops(
     crop_px: int = CROP_PX,
     pad: float = CROP_PAD,
 ) -> list[dict]:
-    """Write I_i for each instance and record A_i and K_hat_i.
+    """Write the object-centric crop for each instance and record its affine and intrinsics.
 
     The crop is square and the object is centred in it. Both are on purpose: an
     object sitting in the middle of a square reconstructs better than the same
@@ -95,7 +92,7 @@ def crops(
         side = half * 2.0
         scale = crop_px / side
 
-        # A_i: composition coordinates -> object-centric image coordinates
+        # composition coordinates -> object-centric image coordinates
         affine = np.array([
             [scale, 0.0, -scale * left],
             [0.0, scale, -scale * top],

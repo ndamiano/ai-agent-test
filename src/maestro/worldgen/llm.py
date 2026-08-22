@@ -1,14 +1,9 @@
 """LLM calls for worldgen, routed through maestro's `llm` queue.
 
-worldgen was written against `ai_harness` — `LLMHarness`, `Message`, `@tool` —
-which ran its own tool loop against a provider it dialed directly. Maestro has
-one path to an inference server: `llm_clients.connector.get_connector()`. This
-module reproduces the ai_harness call surface worldgen uses so call sites
-needed only their harness-construction lines changed, and runs the tool loop
-here instead, against the queue.
-
-`endpoint` is gone: the queue's worker decides which server answers a call, so
-a per-harness endpoint would be a parameter nothing reads.
+Maestro has one path to an inference server: `llm_clients.connector.get_connector()`.
+This module runs worldgen's tool loop against that queue rather than a directly-dialed
+provider; there is no per-harness endpoint because the queue's worker decides which
+server answers a call.
 """
 from __future__ import annotations
 
@@ -84,7 +79,7 @@ class Response:
     finish_reason: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
-    def __str__(self) -> str:  # convenience: str(resp) == resp.text
+    def __str__(self) -> str:
         return self.text
 
 

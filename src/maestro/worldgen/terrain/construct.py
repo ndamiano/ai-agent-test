@@ -1,15 +1,16 @@
-"""Terrain generation: from A_terrain to T (§2.2.3).
+"""Terrain generation: from the terrain plan to T.
 
     T = (geometry, regional semantics, surface materials, scattered assets)
 
 The height field is built from the plan's numbers and the masks read out of the
-layout map, the assets are scattered on it, and the result is written out as data: a height array in metres, the shared
-region weights, an instance list, and the material assignment.
+layout map, the assets are scattered on it, and the result is written out as
+data: a height array in metres, the shared region weights, an instance list,
+and the material assignment.
 
 Data, not a scene file, and that is the whole design. Nothing here opens an
-engine. The refinement loop of §2.2.3 edits terrain parameters and rebuilds —
-which is only possible if rebuilding is a pure function of the plan — and the
-engine reads the result. A pipeline that edited geometry directly could not be
+engine. The refinement loop edits terrain parameters and rebuilds — which is
+only possible if rebuilding is a pure function of the plan — and the engine
+reads the result. A pipeline that edited geometry directly could not be
 re-derived from its own specification.
 """
 from __future__ import annotations

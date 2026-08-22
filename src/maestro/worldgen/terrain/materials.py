@@ -1,6 +1,6 @@
-"""M_terrain: the surfaces the regions are covered in (§2.2.2).
+"""M_terrain: the surfaces the regions are covered in.
 
-The paper builds materials two ways. "The generative pathway produces texture
+Materials are built two ways. "The generative pathway produces texture
 channels such as albedo, normal, and roughness maps for local surfaces with
 complex appearance or irregular details. The procedural pathway programmatically
 assembles Blender material nodes to create tileable and parameter-adjustable

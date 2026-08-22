@@ -1,10 +1,10 @@
-"""Stage 2b — terrain asset generation (§2.2.2).
+"""Stage 2b — terrain asset generation.
 
-    A_terrain = (I_layout, I_asset, O_asset, M_terrain)                 (eq. 5)
+    A_terrain = (I_layout, I_asset, O_asset, M_terrain)
 
 The layout map and the region masks, a reference image and a mesh per scattered
-category, and a material per region. Everything §2.2.3 needs in order to build
-geometry, and nothing it has to invent.
+category, and a material per region. Everything terrain construction needs in
+order to build geometry, and nothing it has to invent.
 
 The layout redraw, the asset references and the material albedos are each their
 own job on the image queue; the mesh queue then reconstructs every prototype.

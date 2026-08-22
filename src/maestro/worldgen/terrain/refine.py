@@ -1,4 +1,4 @@
-"""Terrain refinement (§2.2.3).
+"""Terrain refinement.
 
 "The terrain refinement agent re-renders the scene from predefined viewpoints,
 inspects its geometry, materials, scattering results, and rendering

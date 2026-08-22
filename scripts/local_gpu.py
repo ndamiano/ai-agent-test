@@ -16,7 +16,7 @@ the same thing that lets a pod come up late in production.
 `auto` is the one to run for a world build: worldgen alternates llm/image/mesh jobs many
 times and blocks in `db.queue_client.run_job` until each completes, so there is no point at
 which the legs can be drained by hand one at a time. `auto` watches all three queues' pending
-counts and swaps the card to whichever queue needs it, favoring the tenant it already holds so
+counts and swaps the card to whichever queue needs it, favoring the queue it already holds so
 a tie doesn't thrash it every poll.
 
 The control plane (`python run.py`) is NOT started here: it owns the queue this

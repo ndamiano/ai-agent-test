@@ -1,4 +1,4 @@
-"""Compositing the region materials into one terrain surface (§2.2.2 -> §2.2.3).
+"""Compositing the region materials into one terrain surface.
 
 "The same regional weights are subsequently used to assign and blend materials
 from M_terrain over the corresponding surfaces."

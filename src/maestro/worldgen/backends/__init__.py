@@ -1,10 +1,7 @@
 """How this pipeline talks to the two generative models it does not host itself.
 
-The paper calls GPT-Image-2 for every image it needs and Hunyuan3D for image-to-3D.
-Neither runs here, so:
-
-    GPT-Image-2  ->  Qwen Image (2512) and Qwen Image Edit (2511), through the image queue
-    Hunyuan3D    ->  TRELLIS2, through the mesh queue
+    ImageModel  ->  Qwen Image (2512) and Qwen Image Edit (2511), through the image queue
+    MeshModel   ->  TRELLIS2, through the mesh queue
 
 Both are wrapped as a single object with a couple of methods, because everything
 upstream of them should be able to say "draw this" or "reconstruct this" without

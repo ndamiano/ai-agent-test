@@ -1,9 +1,8 @@
-"""Image-to-3D, through the worker-pull queue.
+"""Image-to-3D, through the worker-pull queue, via TRELLIS2.
 
-The paper turns each reference image into a mesh with Hunyuan3D; TRELLIS2 stands
-in for it. Both halves of the pipeline want the same thing — terrain asset
-prototypes in Stage 2, recovered objects in Stage 3 — so the surface is one
-method that takes images and gives back GLBs.
+Both halves of the pipeline want the same thing — terrain asset prototypes in
+Stage 2, recovered objects in Stage 3 — so the surface is one method that takes
+images and gives back GLBs.
 
     meshes = MeshModel()
     made = meshes.reconstruct(["rock.png", "shrub.png"], out_dir="meshes")

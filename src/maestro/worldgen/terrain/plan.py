@@ -1,4 +1,4 @@
-"""Run stage 2a: the terrain planning agent (§2.2.1).
+"""Run stage 2a: the terrain planning agent.
 
     plan = plan_terrain(scene)                 # P_terrain
     concept = render_concept(plan, "concept.png")   # I_concept
@@ -8,9 +8,8 @@ text; the concept image is a separate call on the image queue, so a completed
 plan is written to disk before it is asked for and losing that call costs
 nothing already done. `render_concept` can be run later, or not at all.
 
-The paper's terrain planner also has a search tool for external references. This
-one does not: nothing here reaches the network, so the concept image carries the
-reference load alone. That is a known divergence, not an oversight.
+Nothing here reaches the network: the concept image carries the whole
+reference load alone.
 """
 from __future__ import annotations
 

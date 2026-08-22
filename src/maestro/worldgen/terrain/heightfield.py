@@ -1,4 +1,4 @@
-"""The composite height field (§2.2.3, eq. 6).
+"""The composite height field (eq. 6).
 
     H(x) = sum_r m~_r(x) [ h_r + sum_k w_rk N_rk(x) + sum_j alpha_rj G_rj(x) ]
 

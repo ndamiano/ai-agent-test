@@ -1,10 +1,9 @@
-"""Status reports for the scene refinement agent (§2.3.3).
+"""Status reports for the scene refinement agent.
 
-The paper's refinement agent works from "diagnostic renders and status reports",
-checking pose, mesh quality and scale, then object-terrain contact -- floating,
-excessive penetration, unstable support. A render alone cannot answer any of
-those: half a metre of penetration and perfect seating look identical from most
-angles, and the agent would be guessing.
+The agent checks pose, mesh quality and scale, then object-terrain contact --
+floating, excessive penetration, unstable support. A render alone cannot answer
+any of those: half a metre of penetration and perfect seating look identical
+from most angles, and the agent would be guessing.
 
 So every check here is a measurement against the height field and the mesh, and
 the agent is given numbers next to the pictures. Each returns a defect or

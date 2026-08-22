@@ -1,14 +1,13 @@
-"""P_regional — what the regional planning agent decides (§2.3.1).
-
-    P_regional = { (r, phi_r, C_r^object, p_r^spatial, p_r^appearance) | r in R+ }   [eq. 7]
+"""What the regional planning agent decides for each region it develops.
 
 The scene plan already says what regions exist and, roughly, what should be in
 them. What it does not say is which regions are worth developing, or anything an
 image generator and a segmenter can actually act on. This stage completes only
-that: it picks R+ and turns the scene-level requirements into per-region ones.
+that: it picks which regions to develop and turns the scene-level requirements
+into per-region ones.
 
-Two fields here are not in the paper's tuple, and both earn their place from
-what the pipeline downstream can and cannot do:
+Two fields here earn their place from what the pipeline downstream can and
+cannot do:
 
   * `typical_size_m` on every category. Everything after this is monocular —
     an object's size in the composition image is the only evidence of its size
@@ -16,8 +15,8 @@ what the pipeline downstream can and cannot do:
     is what decides whether a category is reconstructible at all. A planner that
     says "boulder" without saying whether it means a kerbstone or a house has
     not specified anything.
-  * `reason` on the region. R+ is a subset, and a run that quietly drops half
-    the world should say why it did.
+  * `reason` on the region. The selection is a subset, and a run that quietly
+    drops half the world should say why it did.
 
 Sizes are metres, and counts are per region, not per world.
 """
@@ -33,7 +32,7 @@ class Strict(BaseModel):
 
 
 class RegionalObject(Strict):
-    """One category to introduce into one region — part of C_r^object.
+    """One category to introduce into one region.
 
     Give either `approx_count` or `density_per_100m2`, never both. A count is
     what you want for anything the region is built around, where the number is
@@ -77,7 +76,7 @@ class RegionalObject(Strict):
 
 
 class SpatialRule(Strict):
-    """One relationship the region's objects have to hold — part of p_r^spatial.
+    """One relationship the region's objects have to hold.
 
     Object-object and object-terrain both, which is why `target` is free text: a
     rule may point at another category or at the ground itself.
@@ -95,7 +94,7 @@ class SpatialRule(Strict):
 
 
 class RegionalSpec(Strict):
-    """P_r — everything one selected region needs, and nothing it can infer."""
+    """Everything one selected region needs, and nothing it can infer."""
 
     region_id: str = Field(description="Id of the region, from the scene plan.")
     reason: str = Field(
@@ -138,7 +137,7 @@ class RegionalSpec(Strict):
 
 
 class RegionalPlan(Strict):
-    """P_regional — the selected regions and their specifications (eq. 7).
+    """The selected regions and their specifications.
 
     A subset, deliberately. Developing every region is the thing this stage
     exists to avoid.

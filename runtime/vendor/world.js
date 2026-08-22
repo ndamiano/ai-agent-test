@@ -52,11 +52,9 @@ const MACRO_SCALE = 8.0;
 /* The splat, as a patch on MeshStandardMaterial rather than a shader of its own.
  *
  * A raw shader is outside everything three does for a material: no shadow map,
- * no fog, no tone mapping, no environment. That is why the terrain used to be
- * the one surface in the world the sun did not cast onto — the meshes were
- * casting shadows into a material that had no code to receive them. Everything
- * here is injected into the standard chain, so the ground is lit by the same
- * lights, in the same units, as the GLBs standing on it.
+ * no fog, no tone mapping, no environment. Everything here is injected into the
+ * standard chain, so the ground is lit by the same lights, in the same units,
+ * as the GLBs standing on it.
  */
 function terrainChunks(count) {
   // Unrolled per region: GLSL ES 3.00 will not index a sampler array with a

@@ -1,13 +1,12 @@
-"""Run stage 3a: the regional planning agent (§2.3.1).
+"""Run the regional planning agent.
 
-    regional = plan_regions(scene, terrain, views)   # P_regional
+    regional = plan_regions(scene, terrain, views)
 
-The paper's agent "jointly examines P and T" — the scene specification and the
-generated terrain. Here that means the plan as text and the world as pictures:
-the terrain plan says what was asked for, and the renders say what arrived. They
-disagree often enough that giving only one of them would be a mistake. The
-terrain refinement loop already established that this model reads renders and
-acts on what it sees, so the same views serve here.
+The agent is given both the scene specification as text and the world as
+pictures: the terrain plan says what was asked for, and the renders say what
+arrived. They disagree often enough that giving only one of them would be a
+mistake. The terrain refinement loop already established that this model reads
+renders and acts on what it sees, so the same views serve here.
 
 The output is a selection and a specification, not geometry. Nothing is
 generated at this stage and nothing touches the image model.
@@ -73,7 +72,7 @@ def plan_regions(
     model: str = DEFAULT_MODEL,
     temperature: float = 0.5,
 ) -> RegionalPlan:
-    """Turn the scene plan and the built terrain into P_regional.
+    """Turn the scene plan and the built terrain into a regional plan.
 
     Cooler than terrain planning. This stage is mostly judgement about what is
     already there, and the numbers it does invent — sizes and counts — are ones
@@ -101,7 +100,7 @@ def regional_stage(
     *,
     model: str = DEFAULT_MODEL,
 ) -> RegionalPlan:
-    """Plan the regions and write P_regional to `out_dir`."""
+    """Plan the regions and write the regional plan to `out_dir`."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 

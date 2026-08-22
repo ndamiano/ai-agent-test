@@ -1,9 +1,8 @@
-"""The regional terrain camera, kappa_r = (K_t, E_t) (§2.3.2).
+"""The regional terrain camera: intrinsics and extrinsics for a region view.
 
 Everything in this stage rests on one fact: the composition image is generated
 FROM a render of terrain we built, so its camera is not estimated, it is chosen.
-Every pixel of the composition is a known ray into a known world, and that is
-what makes eq. 13 recoverable at all.
+Every pixel of the composition is a known ray into a known world.
 
 Which means this module has exactly one job it cannot get wrong: the rays it
 casts must be the rays the renderer drew. The three.js conventions are therefore
@@ -45,15 +44,13 @@ MAX_FRAME_M = 160.0
 
 @dataclass(frozen=True)
 class Camera:
-    """kappa_r: where the camera is, what it looks at, and how it projects."""
+    """Where the camera is, what it looks at, and how it projects."""
 
     position: tuple[float, float, float]
     target: tuple[float, float, float]
     fov_deg: float
     width: int
     height: int
-
-    # -- E_t -----------------------------------------------------------------
 
     @property
     def basis(self) -> np.ndarray:
@@ -76,8 +73,6 @@ class Camera:
         x /= np.linalg.norm(x)
         y = np.cross(z, x)
         return np.stack([x, y, z], axis=1)
-
-    # -- K_t -----------------------------------------------------------------
 
     @property
     def focal_px(self) -> float:

@@ -1,4 +1,4 @@
-"""Regional object generation and placement (§2.3)."""
+"""Regional object generation and placement."""
 from .models import RegionalObject, RegionalPlan, RegionalSpec, SpatialRule
 from .diagnose import summarise, survey
 from .generate import generate_objects, region_objects

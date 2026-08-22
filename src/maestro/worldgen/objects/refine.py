@@ -1,22 +1,19 @@
-"""Scene refinement — the agent that fixes what placement got wrong (§2.3.3).
+"""Scene refinement — the agent that fixes what placement got wrong.
 
-The paper's agent maintains a queue of diagnostic renders and status reports and
-works through object refinement, then terrain refinement. Objects with wrong
-scale or implausible pose are corrected by editing their placement transform;
-objects whose reconstruction is too poor are regenerated from the coarse mesh
-and the object-centric image; and then object-terrain contact is fixed by
-co-deforming the two, moving the object or locally displacing the ground under
-its footprint, with every edit confined to the support region so the landform
-survives.
+The agent works through object refinement, then terrain refinement, in that
+order: reseating an object onto terrain you are about to flatten is wasted
+work, and flattening ground under an object whose scale is wrong deforms the
+wrong footprint. Objects with wrong scale or implausible pose are corrected by
+editing their placement transform; objects whose reconstruction is too poor are
+regenerated from the coarse mesh and the object-centric image; and then
+object-terrain contact is fixed by co-deforming the two, moving the object or
+locally displacing the ground under its footprint, with every edit confined to
+the support region so the landform survives.
 
-That order is kept here, and so is the reason for it: reseating an object onto
-terrain you are about to flatten is wasted work, and flattening ground under an
-object whose scale is wrong deforms the wrong footprint.
-
-What is different is that the agent is given measurements as well as pictures.
-Penetration and perfect seating look identical from most viewpoints, and an
-agent working from renders alone would be guessing at exactly the defects this
-stage exists to remove. `diagnose` measures, the agent decides.
+The agent is given measurements as well as pictures. Penetration and perfect
+seating look identical from most viewpoints, and an agent working from renders
+alone would be guessing at exactly the defects this stage exists to remove.
+`diagnose` measures, the agent decides.
 
 Terrain edits write the height field back, so a refined scene is a different
 world and not merely a different set of transforms.
@@ -191,11 +188,10 @@ class SceneEditor:
         def flatten_under(index: int, strength: float = 1.0) -> str:
             """Deform the ground under one object so it has something to stand on.
 
-            The paper's object-terrain co-deformation, and the tool of last
-            resort for contact: the ground within the object's footprint is
-            pulled towards the plane it sits on, falling off smoothly to nothing
-            just outside it. Everything beyond the support region is untouched,
-            so the landform survives.
+            The tool of last resort for contact: the ground within the object's
+            footprint is pulled towards the plane it sits on, falling off
+            smoothly to nothing just outside it. Everything beyond the support
+            region is untouched, so the landform survives.
 
             Use it when an object genuinely belongs where it is and the ground
             there cannot hold it. Do not use it to fix an object that is the
@@ -438,16 +434,11 @@ def apply_regenerations(
 ) -> int:
     """Rebuild the meshes the agent queued, keeping their placements.
 
-    The paper re-conditions Hunyuan3D on the scale-calibrated coarse mesh AND
-    the object-centric image, so the coarse geometry constrains the structure
-    while the image supplies shape and appearance. TRELLIS2 takes an image and
-    nothing else, so the mesh cannot constrain anything here and this is a
-    re-roll at a new seed rather than a refinement.
-
-    That distinction is worth keeping in view: a re-roll fixes a slab that came
-    from an unlucky sample and does nothing at all for one that came from a crop
-    too small or too dark to carry geometry. Which of those we have is not yet
-    established.
+    TRELLIS2 takes only an image, with no coarse mesh to constrain the rebuild,
+    so this is a re-roll at a new seed rather than a refinement: it fixes a slab
+    that came from an unlucky sample and does nothing at all for one that came
+    from a crop too small or too dark to carry geometry. Which of those we have
+    is not yet established.
     """
     from ..backends import MeshModel
 

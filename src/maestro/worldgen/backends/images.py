@@ -1,9 +1,6 @@
 """Text-to-image and image-editing, through the worker-pull queue.
 
-The paper generates every image it needs — the concept image, the semantic layout
-map, asset reference images, region compositions — with GPT-Image-2, which both
-draws from text and edits an image you hand it. Neither half runs locally, so
-this builds a ComfyUI graph and drives two Qwen Image checkpoints in its place:
+This builds a ComfyUI graph and drives two Qwen Image checkpoints:
 
     generate()  Qwen Image 2512        text -> image
     edit()      Qwen Image Edit 2511   text + up to three images -> image
@@ -44,8 +41,8 @@ from maestro.codegen.assets import render_verdict
 from tools.execution_context import get_run_id
 from tools.safety import SafetyViolation, log_violation, screen_image_prompt
 
-# The two halves of the GPT-Image-2 substitution. They share a text encoder and a
-# VAE and differ only in the diffusion model, which is why one class covers both.
+# The two checkpoints share a text encoder and a VAE and differ only in the
+# diffusion model, which is why one class covers both.
 TXT2IMG_UNET = "qwen_image_2512_fp8_e4m3fn.safetensors"
 EDIT_UNET = "qwen_image_edit_2511_fp8mixed.safetensors"
 CLIP = "qwen_2.5_vl_7b_fp8_scaled.safetensors"
@@ -59,10 +56,9 @@ SAMPLER = "euler"
 SCHEDULER = "simple"
 SHIFT = 3.1  # ModelSamplingAuraFlow; Qwen Image is a flow model, not epsilon
 
-# TextEncodeQwenImageEditPlus takes image1..image3. The paper conditions later
-# stages on more than one reference at once — a composition on both its terrain
-# render and the concept image — so the ceiling is worth stating rather than
-# discovering.
+# TextEncodeQwenImageEditPlus takes image1..image3. Later stages condition on
+# more than one reference at once — a composition on both a terrain render and
+# the concept image — so the ceiling is worth stating rather than discovering.
 MAX_EDIT_IMAGES = 3
 
 LATENT_MULTIPLE = 16  # the VAE downsamples by 8 and the patchifier pairs pixels

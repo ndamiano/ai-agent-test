@@ -1,4 +1,4 @@
-"""The semantic layout map I_layout, and the region masks read back from it (§2.2.2).
+"""The semantic layout map I_layout, and the region masks read back from it.
 
 "We instead generate a global semantic layout map I_layout from p_layout, using
 distinct colors to encode predefined terrain categories. The layout map converts
@@ -11,18 +11,17 @@ Everything downstream reads region membership from this image. Not from the
 discs in p_layout — from the image. That is the point of the stage: circles are
 an arrangement, and a world whose regions are circles looks like one.
 
-The paper generates the map from p_layout — text to image — and that is what
-`draw()` does. It matters more than it sounds. Editing an analytic disc map
-instead, which is the obvious way to keep control of where things are, makes the
-discs the structure: at any denoise the model bends their edges and returns one
-contiguous blob per region, because one blob per region is what it was shown.
-The paper's own maps are nothing like that. They interleave — several disjoint
-patches of the same category scattered across the frame, the way real ground
-cover actually falls.
+`draw()` generates the map from p_layout as text to image, rather than editing
+an analytic disc map — the obvious way to keep control of where things are.
+Editing the disc map makes the discs the structure: at any denoise the model
+bends their edges and returns one contiguous blob per region, because one blob
+per region is what it was shown. Real ground cover interleaves — several
+disjoint patches of the same category scattered across the frame — which a
+disc-edit can't produce.
 
 So the arrangement is described rather than drawn, and the disc map survives
-only as a spatial prior for reading membership back out. `draw_by_redraw()`
-keeps the older behaviour for a world whose regions genuinely are one blob each.
+only as a spatial prior for reading membership back out. `draw_by_redraw()` is
+kept for a world whose regions genuinely are one blob each.
 
 Reading membership back out is the hard half. The model does not hold a palette
 exactly: asked for four colours it returns ten, drifted in hue and lightness,
@@ -285,7 +284,7 @@ def draw(
     seed: int = 17,
     overwrite: bool = False,
 ) -> Path:
-    """Generate I_layout from p_layout, as §2.2.2 specifies. Returns its path.
+    """Generate I_layout from p_layout. Returns its path.
 
     An existing map is kept unless `overwrite`. Every later stage indexes by the
     partition read out of this image, so redrawing it silently would invalidate

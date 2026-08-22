@@ -1,41 +1,28 @@
-"""Object placement — T_place^i (§2.3.2, eq. 11-13).
+"""Object placement: recover each instance's world position, scale and yaw.
 
 The composition was generated from a render of terrain we built, so the camera
 that took it is known exactly and every instance pixel is a ray into the world.
 Placement is recovering, for each instance, where along its ray the object sits
 and how big it is.
 
-The paper pairs two rays: one from the object reconstruction camera into the
-reconstructed mesh, one from the terrain camera into the terrain, and takes the
-scale from their focal lengths and depths,
+Scale could come from pairing the object reconstruction camera's focal length
+and depth against the terrain camera's, but TRELLIS2 returns a mesh normalised
+into a unit box with no camera and no pose, so that ratio is not available and
+pretending otherwise would mean inventing a focal length. Instead, scale is read
+off the one camera available: an instance subtending w pixels at depth Z through
+focal f spans `w * Z / f` metres, and the mesh is scaled so its own longest
+horizontal dimension matches. It keeps the property that matters, which is that
+the object ends up the size it looks.
 
-    s_i = (Z_t / Z_o) * (f_i^o / f_hat_i)                          [eq. 12]
+The anchor is the bottom of the box rather than its centre: a centre ray through
+a tall object lands on terrain well behind where the object stands, without a
+mesh-side intersection to correct it. The bottom of the box is where the object
+meets the ground, which is the point we actually want.
 
-SAM3D reports its own reconstruction camera, which is what makes that ratio
-computable. TRELLIS2 does not: it returns a mesh normalised into a unit box with
-no camera and no pose. The ratio is therefore not available, and pretending
-otherwise would mean inventing f_i^o.
-
-What replaces it is the same quantity measured on the other side. An instance
-subtending w pixels at depth Z_t through focal f spans
-
-    width_world = w * Z_t / f
-
-metres, and the mesh is scaled so its own longest horizontal dimension matches.
-Where the paper transfers apparent size between two cameras, this reads apparent
-size off the one camera it has. Same answer, one less camera — and it keeps the
-property that matters, which is that the object ends up the size it looks.
-
-The anchor is the bottom of the box rather than its centre. The paper's centre
-ray works because it intersects the reconstructed mesh to find P_o at the same
-pixel; without that mesh-side intersection, a centre ray through a tall object
-lands on terrain well behind where the object stands. The bottom of the box is
-where the object meets the ground, which is the point we actually want.
-
-Then the contact search from the paper, kept as-is in spirit: slide the anchor
-along the camera ray and rescale together so the 2D projection is preserved --
-the object stays exactly where the image put it -- and keep the depth at which
-the object sits on the ground rather than through it or above it.
+The contact search then slides the anchor along the camera ray and rescales
+together so the 2D projection is preserved -- the object stays exactly where the
+image put it -- and keeps the depth at which the object sits on the ground
+rather than through it or above it.
 """
 from __future__ import annotations
 
@@ -100,9 +87,9 @@ def glb_bounds(path: Path | str) -> tuple[np.ndarray, np.ndarray]:
 def anchor_pixel(bbox: tuple[int, int, int, int]) -> tuple[float, float]:
     """Where the object meets the ground, in image coordinates.
 
-    The bottom edge of the box, at its horizontal centre. This was the bottom of
-    the segmentation mask until §2.3 stopped segmenting; over every instance of
-    the cliff city the two definitions sat 0.28 m apart in the median, which is
+    The bottom edge of the box, at its horizontal centre. A segmentation mask's
+    bottom edge would give nearly the same answer -- over every instance of the
+    cliff city the two definitions sat 0.28 m apart in the median, which is
     below what the size blend below is doing to the object anyway.
     """
     x0, y0, x1, y1 = bbox

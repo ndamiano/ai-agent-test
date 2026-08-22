@@ -1,6 +1,6 @@
 """Looking at a terrain before there is an engine to look at it in.
 
-The refinement loop of §2.2.3 renders the world and inspects it. Before any of
+The refinement loop renders the world and inspects it. Before any of
 that exists there is still a question worth answering cheaply — did the height
 field come out as the plan described? — and a hillshade answers it. Relief,
 region boundaries, channels and scattered instances, in one image, from numpy.

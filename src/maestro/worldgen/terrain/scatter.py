@@ -1,4 +1,4 @@
-"""Global terrain asset scattering (§2.2.3).
+"""Global terrain asset scattering.
 
 "For each terrain-asset category, the agent samples candidate locations within
 the corresponding layout masks according to the regional affinities and target

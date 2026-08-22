@@ -1,21 +1,6 @@
-"""One prompt to a finished world — every stage of the paper, in order.
+"""One prompt to a finished world.
 
     world = build_world("A small town in the middle of a jungle.", "output/town")
-
-Until now each stage has been run by hand, which is fine while a stage is being
-written and useless for answering the only question that matters about a
-pipeline: does it work from end to end on a scene it has never seen.
-
-The order is the paper's:
-
-    2.1  intent, then the scene plan                    P
-    2.2  terrain plan, concept image                    P_terrain, I_concept
-         layout map, asset and material generation      A_terrain
-         height field, scattering                       T
-         terrain refinement
-    2.3  regional planning                              P_regional
-         composition, extraction, reconstruction        O_r
-         scene refinement, regeneration
 
 Every stage writes into `out_dir` before the next begins, and every stage is
 skippable by `start_at`, so a run that fails in reconstruction can be resumed
@@ -128,7 +113,6 @@ def build_world(
         print(f"[build] === {stage} ===", flush=True)
         return True
 
-    # -- 2.1 ----------------------------------------------------------------
     scene_path = out_dir / "plan.json"
     if running("scene"):
         scene = generate_spec(prompt)
@@ -138,7 +122,6 @@ def build_world(
         scene = ScenePlan.model_validate_json(scene_path.read_text())
     print(f"[build] scene {scene.name!r}: {[r.id for r in scene.regions]}", flush=True)
 
-    # -- 2.2.1 --------------------------------------------------------------
     plan_path = out_dir / "terrain_plan.json"
     if running("terrain-plan"):
         plan = terrain_stage(scene, out_dir)
@@ -146,7 +129,6 @@ def build_world(
     else:
         plan = TerrainPlan.model_validate_json(plan_path.read_text())
 
-    # -- 2.2.2 --------------------------------------------------------------
     if running("terrain-assets"):
         generate_module.generate_terrain_assets(plan, out_dir)
         clock.mark("terrain-assets")
@@ -162,7 +144,6 @@ def build_world(
         )
         clock.mark("construct")
 
-    # -- 2.2.3 --------------------------------------------------------------
     if running("terrain-refine"):
         plan = terrain_refine.refine(plan, out_dir, rounds=terrain_rounds)
         clock.mark("terrain-refine")
@@ -177,7 +158,6 @@ def build_world(
     if not (out_dir / "view_top.png").exists():
         render(plan, out_dir)
 
-    # -- 2.3.1 --------------------------------------------------------------
     regional_path = out_dir / "regional_plan.json"
     if running("regional-plan"):
         regional = regional_stage(scene, plan, out_dir)
@@ -194,7 +174,6 @@ def build_world(
         return _summary(scene, out_dir, clock, started,
                         developed=[r.region_id for r in regional.regions])
 
-    # -- 2.3.2 --------------------------------------------------------------
     if running("objects"):
         placed = generate_objects(
             scene, plan, regional, out_dir,
@@ -205,7 +184,6 @@ def build_world(
         placed = json.loads((out_dir / "objects.json").read_text())
     print(f"[build] {len(placed)} objects placed", flush=True)
 
-    # -- 2.3.3 --------------------------------------------------------------
     if running("scene-refine") and placed:
         editor = refine_scene(out_dir, plan, rounds=scene_rounds)
         if regenerate and editor.regenerate:

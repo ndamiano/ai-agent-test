@@ -1,4 +1,4 @@
-"""Schemas for stage 2a — the terrain planning agent (§2.2.1).
+"""Schemas for stage 2a — the terrain planning agent.
 
 Stage 1 says what the world is. It does not say where anything sits, how high,
 how rough, or what one repeat of a surface measures. The paper puts a second

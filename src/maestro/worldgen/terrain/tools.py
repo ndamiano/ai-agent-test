@@ -1,4 +1,4 @@
-"""The tools the terrain planning agent calls (§2.2.1).
+"""The tools the terrain planning agent calls.
 
     builder = TerrainPlanBuilder(scene_plan)
     harness = LLMHarness(..., tools=builder.tools)

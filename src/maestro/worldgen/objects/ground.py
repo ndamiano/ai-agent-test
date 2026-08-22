@@ -2,10 +2,10 @@
 
     found = locate(composition)          # [(label, bbox, size_m, prompt), ...]
 
-This replaces text-prompted segmentation. The paper's §2.3.2 hands the regional
-plan's categories to a segmenter and asks, of each in turn, where it is. That
-gives the plan authority it has not earned: the composition is the thing being
-reconstructed, and the plan is a brief the image model was free to ignore.
+This deliberately does not hand the regional plan's categories to a segmenter
+and ask, of each in turn, where it is: that gives the plan authority it has not
+earned. The composition is the thing being reconstructed, and the plan is a
+brief the image model was free to ignore.
 
 It did ignore it. One region of the cliff city was briefed for fifteen objects
 and painted four, and across three regions a third of what was actually in the

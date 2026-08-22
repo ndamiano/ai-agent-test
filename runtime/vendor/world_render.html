@@ -15,8 +15,9 @@ import { loadWorld } from './world.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(1);
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// Shadows, tone mapping and the output colour space are the loader's to set for
+// a world, so that the frames the refinement loop judges are lit the same way
+// the game a player opens is. Only the mesh card below configures its own.
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 document.body.appendChild(renderer.domElement);
 
@@ -40,9 +41,9 @@ function shoot(scene, camera, width, height) {
 }
 
 async function world(url, width, height) {
-  const built = await loadWorld(url);
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0xbfd4e6);
+  const built = await loadWorld(url, { renderer, scene });
   scene.add(built.group);
   const shots = [];
   for (const shot of built.job.cameras) {
@@ -57,6 +58,8 @@ async function world(url, width, height) {
 }
 
 async function meshes(items, width, height) {
+  renderer.toneMapping = THREE.NoToneMapping;
+  renderer.shadowMap.enabled = false;
   const gltf = new GLTFLoader();
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x2e2e31);

@@ -58,12 +58,14 @@ def fbm(
         # np.kron-free bicubic: PIL is already a dependency and does it properly
         from PIL import Image
 
-        upsampled = np.asarray(
-            Image.fromarray((lattice * 255).astype(np.uint8)).resize(
+        # mode "F" keeps the lattice float: through uint8 it has 256 levels, and bicubic
+        # over 256 levels leaves flat shelves the whole slope then shows as contour rings
+        upsampled = np.clip(np.asarray(
+            Image.fromarray(lattice, mode="F").resize(
                 (resolution, resolution), Image.BICUBIC
             ),
             np.float32,
-        ) / 255.0
+        ), 0.0, 1.0)
         total += (upsampled - 0.5) * 2.0 * amplitude
         norm += amplitude
         amplitude *= 0.5

@@ -11,8 +11,8 @@ Rules:
 - For things the player should see call generate_media with an id, a description and the kind of thing it is. It will give you a path for a file, use that path exactly.
 - For a whole map — a town, a forest clearing, a building's inside, a dungeon floor — call compose_scene instead of drawing tiles. It writes the map image and a scene.json beside it; read the scene.json and wire its walkable grid, doors and points of interest into the game.
 - For a 3D game played outdoors call compose_world once, with a sentence saying what the landscape IS — the kinds of land and what stands on them, never a size or a count: the world chooses its own scale and answers with its size and its regions, and you load it:
-  `import { loadWorld } from './world.js';` then `const world = await loadWorld('world/world.json');`
-  world.group — everything the world draws; add it to your scene. It draws and lights its own ground, water and scenery.
+  `import { loadWorld } from './world.js';` then `const world = await loadWorld('world/world.json', { renderer, scene });`
+  world.group — everything the world draws; add it to your scene. Hand it your renderer and scene as shown and it sets its own sun, shadows, haze and exposure; it draws and lights its own ground, water and scenery.
   world.sizeM — x and z run from 0 to that many metres, y is up, one unit is one metre.
   world.heightAt(x, z) — the ground height there. Anything standing on the ground sits at that y.
   world.blocking(x, z, radius) — what a circle there hits, or null. Use it so the player cannot walk through a tree, a rock or a building.

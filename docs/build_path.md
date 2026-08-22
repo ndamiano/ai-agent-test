@@ -291,6 +291,23 @@ src/
                          never judges a picture the game cannot reproduce. Every path in
                          world.json is relative to the folder it sits in, which is what makes the
                          folder copyable into a game.
+                         The ground is a MeshStandardMaterial with the region splat injected into
+                         its shader, not a shader of its own: a raw shader receives no shadow map,
+                         no fog and no tone mapping, so the terrain used to be the one surface the
+                         sun did not cast onto. On top of the per-region blend the material reads
+                         three things off the ground itself — a face steeper than about 35 degrees
+                         blends toward a desaturated, darkened rock of its own material; the top
+                         quarter of the world's OWN relief, in regions the plan called high
+                         ground and only where the slope is shallow enough to hold it, blends
+                         toward snow; and every region's albedo is sampled at both its stated
+                         scale and eight times it, mixed by low-frequency world noise under a
+                         gentle hue drift, which is what stops one tile reading as one tile over
+                         eight hundred metres. All three are functions of the height field and the
+                         material already there, so they need no asset and no plan field. The
+                         stochastic tiling's taps are textureGrad on the unbroken UV's gradients:
+                         the offsets jump per triangular cell, and the implicit derivative of a
+                         jump picks the smallest mip, which drew a dashed lattice over every close
+                         view.
                          compose.py is the build face. The tool BLOCKS through `construct` — the
                          first stage at which a world exists to write at all, since world.json
                          names the height field, the region materials and the scatter — and

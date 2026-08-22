@@ -521,3 +521,69 @@ set below the lake basin, so no water plane — not the pipeline.
 Two things killed the desktop on the way and are now launch rules in docs/local_dev.md: the TRELLIS
 server's `/dev/shm` weight staging (14 GB resident) and the `1024_cascade` tier (two pipelines
 warmed, ~36 GB host RSS). Host RAM, not the card, is the local ceiling.
+
+## The terrain renderer as a lit surface (2026-08-22, three worlds already built, CPU/SwiftShader)
+
+### The question
+
+The ring views the refinement judges look at — and the ground a generated game draws — read as flat
+paint buckets: no shadows anywhere, no snow on the "snow-capped" mountains, contour rings on every
+gentle slope, one tile smeared over hundreds of metres, and a dashed white lattice over every close
+view. How much of that is the material and how much is the terrain being outside three's lighting?
+
+### What changed, in `runtime/vendor/world.js` only
+
+The splat moved from a `RawShaderMaterial` onto `MeshStandardMaterial` through `onBeforeCompile`, so
+the ground is lit by the same lights, in the same units, and receives the same shadow map as the
+GLBs standing on it. The terrain now casts as well as receives. Sun 3.1, hemisphere 0.45, ambient
+0.9, ACES at exposure 1.25. On top of the blend: the slope rule, the snow rule off the world's own
+relief, and the two-scale albedo with a hue drift — all described in `docs/build_path.md`.
+
+Two defects were found on the way and are the larger half of the result. Every stochastic tap became
+a `textureGrad` on the gradients of the UNBROKEN uv: the per-cell offsets jump, and the implicit
+derivative of a jump reads as "this fragment covers the whole texture", which is what drew the
+dashed lattice. And `loadWorld` now awaits its textures before it hands back a world — three binds an
+empty 1x1 for a texture still in flight, which draws the whole ground BLACK, and a world with no
+meshes to wait for renders its first frame straight into that gap.
+
+### The contour rings are the pipeline's, not the renderer's
+
+`ctrl_medieval` has no terrace operator and its `heightmap.npy` holds 927,015 distinct float32
+values over a million samples, so the height field is not quantised as a whole. `heightfield.fbm`
+is: it round-trips each noise lattice through a uint8 PIL image before the bicubic upsample, and
+`fbm(10.0, 1024, 2)` returns 1504 distinct values with every large gap exactly 2/255 of the band's
+amplitude. Bicubic over quantised levels leaves flat shelves, which a hillshade of the raw numpy
+draws as concentric contour lines around every hill — visible in the data before any renderer
+touches it. Fixed in the same change: the lattice now rides PIL's float mode through the bicubic
+(clamped, since a float resize overshoots where uint8 saturated), and `fbm(10.0, 1024, 2)` returns
+over a hundred thousand distinct values. The renderer change had already hidden the rings in the
+frames — a 2 cm shelf that the raw shader's bare lambert turned into a hard line disappears under
+the standard BRDF's fill and ACES — but a hidden shelf is still a shelf a player walks on.
+
+### Before and after
+
+Same three worlds, same cameras, 960x600. The mountains gain shape: a cast shadow off the range onto
+the plain, dark rock on the steep faces and snow on the shallow high ground, where before the whole
+massif was one white paint bucket. The plains lose their contour rings entirely and gain visible
+patchiness instead of one flat yellow. The close view of a peak loses the dashed lattice completely.
+The village world gains tree shadows on the ground, which is the first thing in it that says the
+sun has a direction.
+
+What did NOT improve: the desert's diagonal repeat striping is still there (2 m tiles over 800 m is
+400 repeats and the macro tap does not hide the moiré); the shaded side of a peak reads cool
+blue-grey and darker than the ambient doctrine wants; the medieval lake basin is still a blotchy
+teal bed, and that is `sea_level_m: -500.0` in a world whose lowest ground is -2.3 m — the loader
+correctly refuses a water plane hung below the terrain, so the basin is a dry lakebed texture. That
+is the planner's number, not the renderer's, and no per-basin plane was invented here.
+
+### Frame times (SwiftShader, one CPU render per camera)
+
+| world | before | after |
+|---|---|---|
+| ctrl_medieval, 800 m, 5 regions | 13.7 s | 16.5 s |
+| e2e_village, 400 m, 4 regions | 9.0 s | 10.3 s |
+| run 9c3c07df4201, 120 m | 1.5 s | 3.5 s |
+
+Roughly 20% on the big worlds — two albedo taps instead of one, plus a shadow map pass — and more
+than double on the small one, where the shadow pass is most of a cheap frame. On a GPU none of this
+is a budget question; it matters only because the refinement loop renders its ring on CPU.

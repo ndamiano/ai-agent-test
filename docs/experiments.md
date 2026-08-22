@@ -23,7 +23,7 @@ the three ledger numbers against a control arm with neither the files nor the li
 Four plain-JS modules in `runtime/vendor/lib/`, each header comment its API: `input.js` (`keys`
 with WASD and the arrows both aliased to up/down/left/right, `justPressed`, mouse, touch),
 `audio.js` (WebAudio `sfx(name)`, `tone`, seeded `music`, self-unlocking on the first gesture),
-`canvas.js` (`createCanvas` — the FIXED CANVAS line as code, with camera follow and world↔screen),
+`canvas.js` (`createCanvas` — the FIXED CANVAS line as code on the model's own `<canvas>`, with camera follow and world↔screen),
 `lights.js` (`lightScene(renderer, scene)` — sun with shadows, hemisphere, ACES exposure; its doc
 says to stay out of a `world.js` world). `seed_vendor` copies them to `<game>/lib/`, and ONE line
 in `build.txt` says they are there and to `read_file` the one you use before importing. The
@@ -51,6 +51,36 @@ API misuse: none. Every imported name exists, every `view.*` member and `sfx` na
 every build read each lib it later imported BEFORE importing it, as the line asked. The
 doc-at-the-moment-of-use result (RepoCoder, DocPrompting) holds on a 27B in a build loop.
 
+### Played (2026-08-22, by hand, every build both arms)
+
+| request | control | lib |
+|---|---|---|
+| arcade | plays as asked: aim, shoot, enemies die, pickups score | dead: blank page |
+| indoor3d | broken: every direction walks into the screen, nothing visible | broken but better: lit, playable, camera yaw inverted, hero faces backwards, damage from nowhere |
+| cards | plays, with bugs | dead: a selected creature cannot be placed — `handleClick` has no board-placement branch |
+| npcs | plays, rough | dead: no key does anything |
+| rhythm | plays, badly | dead: the title overlay never leaves — CSS `#title .hidden` (descendant) for a class added to `#title` itself |
+| platformer | plays; enemies embedded in platforms | plays; better — reachable platforms, stomps, coins |
+
+Feature-present counts above were 6/6; the games that PLAY were control 4/6, lib 1/6. Two of the
+four lib deaths were one lib defect: `canvas.js` created its own `position:fixed` canvas and
+appended it to body AFTER the page the model wrote, so the model's HTML title screens and HUDs
+(every build writes them as DOM overlays, control arm too) sat under the canvas — arcade's
+"blank" was the canvas over its LAUNCH button, and npcs' Begin button was unreachable so the game
+never left title mode and ignored keys. No lib call in either game was wrong. The other two were
+the model's own logic bugs, one each, in games that never called the part of the lib near them.
+
+A helper that owns the DOM collides with the page the model owns. `createCanvas` now takes the
+model's own `<canvas>` element and creates and styles nothing — sizing, letterbox, camera and
+world↔screen only. Rebuilt arcade and npcs on the lib arm with the new header: both used
+`createCanvas(document.getElementById('game'), …)` with a `<canvas id="game">` in their HTML,
+and both play — arcade at once better than its control; npcs spawned the player on an unwalkable
+tile (game logic). Rhythm's and cards' bugs are not lib bugs, and were left alone.
+
+One more header effect: every lib game, 11 of 11 call sites, plays `music.start(7, …)` — the
+`7` copied from the header's example. An example value in an API doc is the value the model
+ships; the header now says `music.start(seed)` and that every integer is its own tune.
+
 ### Cost, and what did not improve
 
 | request | control steps / wall | lib steps / wall |
@@ -67,7 +97,7 @@ where the control did not, because the reads plus the game no longer fit one win
 games built on `createCanvas` took fewer, writing less code. Wall-clock was roughly equal; the lib
 arm's includes two one-round error-gate fixes of the games' own bugs. The next measurement is
 whether terser headers — the signature, not the prose — buy the steps back. Not measured: staged
-builds, `compose_world` games, and whether a human prefers the games.
+builds and `compose_world` games.
 
 The indoor3d lib build reached a lit, complete game and then sent eighteen byte-identical failing
 `edit_file` calls against its own comment block, editing from memory after a compaction; it was

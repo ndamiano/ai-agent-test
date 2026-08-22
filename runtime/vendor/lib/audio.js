@@ -4,8 +4,8 @@
 //   sfx('hit');                       // names: hit  pickup  jump  select  fail  win  shoot  explode
 //   tone(440, 200);                   // a beep: frequency in Hz, length in ms; optional third arg 'square'|'sawtooth'|'triangle'|'sine'
 //   tone(440, 200, 'square', 0.3);    // fourth arg is volume 0..1
-//   music.start(7);                   // a looping chiptune melody generated from the seed (any integer); call once
-//   music.start(7, 140);              // second arg is tempo in BPM (default 120)
+//   music.start(seed);                // a looping chiptune melody generated from the seed; every integer is a different tune, so pick one for THIS game; call once
+//   music.start(seed, 140);           // second arg is tempo in BPM (default 120)
 //   music.stop();
 //   music.playing                     // true while the loop runs
 //   setVolume(0.5);                   // master volume 0..1

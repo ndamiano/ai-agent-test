@@ -127,6 +127,7 @@ def published_files(job: Dict) -> List[str]:
     files = [job["heightmap"], *job["weight_textures"]]
     for region in job["regions"]:
         files += [region["albedo"], region["normal"]]
+        files += [region[key] for key in ("variant_albedo", "variant_normal") if region.get(key)]
     files += [group["mesh"] for group in job["instances"].values() if group.get("mesh")]
     return list(dict.fromkeys(files))
 

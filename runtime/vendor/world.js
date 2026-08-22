@@ -63,10 +63,14 @@ function terrainChunks(count) {
     `  if (i == ${i}) { return textureGrad(u${name}[${i}], uv, dx, dy).rgb; }`).join('\n');
   return {
     common: `
+uniform float uWorldSize;
 uniform sampler2D uWeightsA;
 uniform sampler2D uWeightsB;
 uniform sampler2D uAlbedo[${count}];
 uniform sampler2D uNormal[${count}];
+uniform sampler2D uVariantAlbedo[${count}];
+uniform sampler2D uVariantNormal[${count}];
+uniform float uHasVariant[${count}];
 uniform float uRepeats[${count}];
 uniform float uHigh[${count}];
 uniform float uSnowLow;
@@ -100,6 +104,22 @@ float valueNoise(vec2 p) {
     mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
     mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x),
     f.y);
+}
+
+// Four octaves of the same value noise, for the world-space fields that decide
+// where a region's ground has worn through to its variant. Metres in, not UVs:
+// a patch of bare earth is forty metres across in any world, and tying it to the
+// world's own size would make it forty metres in one and four hundred in another.
+float fbm(vec2 p) {
+  mat2 rot = mat2(vec2(0.8, 0.6), vec2(-0.6, 0.8));
+  float sum = 0.0;
+  float amp = 0.5;
+  for (int i = 0; i < 4; i++) {
+    sum += amp * valueNoise(p);
+    p = rot * p * 2.07 + 17.3;
+    amp *= 0.5;
+  }
+  return sum;
 }
 
 void triangleGrid(vec2 uv, out vec3 w, out vec2 v1, out vec2 v2, out vec2 v3) {
@@ -140,13 +160,23 @@ ${taps('Normal')}
   return vec3(0.5, 0.5, 1.0);
 }
 
+vec3 variantAlbedoFor(int i, vec2 uv, vec2 dx, vec2 dy) {
+${taps('VariantAlbedo')}
+  return vec3(0.5);
+}
+
+vec3 variantNormalFor(int i, vec2 uv, vec2 dx, vec2 dy) {
+${taps('VariantNormal')}
+  return vec3(0.5, 0.5, 1.0);
+}
+
 // The tiling offsets jump from one triangular cell to the next, so the implicit
 // derivative of the offset UV is garbage exactly on the cell edges — which the
 // hardware reads as "this fragment covers the whole texture" and answers with
 // the smallest mip. That is what drew a dashed white lattice over every close
 // view. The gradients of the UNBROKEN uv are the true footprint, so they are
 // carried through and every tap is a textureGrad.
-void splat(int i, vec2 uv, vec2 dx, vec2 dy, out vec3 albedo, out vec3 surface) {
+void splat(int i, vec2 uv, vec2 dx, vec2 dy, float wear, out vec3 albedo, out vec3 surface) {
   vec3 w; vec2 c1; vec2 c2; vec2 c3;
   triangleGrid(uv, w, c1, c2, c3);
   vec2 u1 = uv + hash22(c1);
@@ -156,6 +186,16 @@ void splat(int i, vec2 uv, vec2 dx, vec2 dy, out vec3 albedo, out vec3 surface) 
     + albedoFor(i, u3, dx, dy) * w.z;
   surface = normalFor(i, u1, dx, dy) * w.x + normalFor(i, u2, dx, dy) * w.y
     + normalFor(i, u3, dx, dy) * w.z;
+  // A region that has no variant on disk binds its base in the variant's place,
+  // so this branch is the only thing between such a world and a mix of a
+  // material with itself. It draws with the base alone, as it always did.
+  if (uHasVariant[i] < 0.5 || wear < 0.004) return;
+  vec3 va = variantAlbedoFor(i, u1, dx, dy) * w.x + variantAlbedoFor(i, u2, dx, dy) * w.y
+    + variantAlbedoFor(i, u3, dx, dy) * w.z;
+  vec3 vn = variantNormalFor(i, u1, dx, dy) * w.x + variantNormalFor(i, u2, dx, dy) * w.y
+    + variantNormalFor(i, u3, dx, dy) * w.z;
+  albedo = mix(albedo, va, wear);
+  surface = mix(surface, vn, wear);
 }
 `,
     vertex: `
@@ -178,7 +218,25 @@ void splat(int i, vec2 uv, vec2 dx, vec2 dy, out vec3 albedo, out vec3 surface) 
   gTerrainDetail = 1.0 - smoothstep(uDetailNear, uDetailFar, length(vViewPosition));
   // Never all of one scale: the wide tap alone is a field of soft blobs and the
   // fine tap alone is the smear it was brought in to break.
-  float macroMix = clamp(valueNoise(uvw * 3.0), 0.18, 0.68);
+  // Up close the wide tap is a blur over the grain the fine tap carries, so it
+  // only takes over as the detail is dropped.
+  float macroMix = clamp(valueNoise(uvw * 3.0), 0.18, 0.68) * (1.0 - 0.75 * gTerrainDetail);
+
+  // Where a region shows its second surface instead of its first. Ground wears
+  // through on the slopes and in patches, and both are facts about the world in
+  // metres rather than about the region: the low-frequency field puts the bare
+  // ground where the land already is, the fine one keeps its edge from reading as
+  // an isoline, and the slope term is why a bank is earth and the field above it
+  // is not.
+  vec2 metres = uvw * uWorldSize;
+  float patches = fbm(metres * 0.025);
+  float detail = fbm(metres * 0.6 + 31.0);
+  float wearSlope = 1.0 - clamp(vGroundY, 0.0, 1.0);
+  // The threshold sits above the noise's own mean on purpose: these fields
+  // average about a half, so a threshold at a half is a region that is its
+  // variant as much as it is itself, and a green pasture rendered as bare earth
+  // with green in it. The base is the region; the variant is where it has gone.
+  float wear = smoothstep(0.62, 0.85, patches * 0.7 + detail * 0.3 + wearSlope * 1.2);
 
   vec3 colour = vec3(0.0);
   vec3 surface = vec3(0.0);
@@ -189,10 +247,10 @@ void splat(int i, vec2 uv, vec2 dx, vec2 dy, out vec3 albedo, out vec3 surface) 
     if (w <= 0.002) continue;
     float repeat = uRepeats[i];
     vec3 fineA; vec3 fineN;
-    splat(i, uvw * repeat, dxw * repeat, dyw * repeat, fineA, fineN);
+    splat(i, uvw * repeat, dxw * repeat, dyw * repeat, wear, fineA, fineN);
     float macro = repeat / ${MACRO_SCALE.toFixed(1)};
     vec3 wideA; vec3 wideN;
-    splat(i, uvw * macro, dxw * macro, dyw * macro, wideA, wideN);
+    splat(i, uvw * macro, dxw * macro, dyw * macro, wear, wideA, wideN);
     colour += mix(fineA, wideA, macroMix) * w;
     surface += mix(fineN, wideN, macroMix) * w;
     total += w;
@@ -532,6 +590,22 @@ export async function loadWorld(url, { meshes = true, renderer = null, scene = n
         (r) => loadTexture(loader, pending, base + r.normal, { data: true, repeat: true }),
       ),
     },
+    // A world whose materials stage predates the pair, or whose variant render was
+    // refused, names no variant. Its base stands in the variant's sampler — an
+    // unbound sampler draws the ground BLACK — and uHasVariant turns the mix off.
+    uVariantAlbedo: {
+      value: job.regions.map(
+        (r) => loadTexture(loader, pending, base + (r.variant_albedo || r.albedo), { repeat: true }),
+      ),
+    },
+    uVariantNormal: {
+      value: job.regions.map(
+        (r) => loadTexture(
+          loader, pending, base + (r.variant_normal || r.normal), { data: true, repeat: true },
+        ),
+      ),
+    },
+    uHasVariant: { value: job.regions.map((r) => (r.variant_albedo ? 1.0 : 0.0)) },
     uRepeats: { value: job.regions.map((r) => job.size_m / Math.max(r.scale_m, 0.01)) },
     // Which regions are high ground at all. Snow on the top of a lakebed is not
     // a threshold that was tuned wrong, it is snow in the wrong place.

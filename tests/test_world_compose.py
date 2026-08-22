@@ -21,6 +21,7 @@ PLAN = {
                 "radius": 0.5, "falloff": 0.5, "coverage": 1.0}],
     "terrain": [{"region_id": "meadow", "base_elevation_m": 1.0}],
     "materials": [{"region_id": "meadow", "surface": "grass", "appearance": "green",
+                   "variant": "bare brown earth",
                    "scale_m": 2.0, "pathway": "procedural"}],
     "concept": "A small green meadow under a clear sky.",
 }

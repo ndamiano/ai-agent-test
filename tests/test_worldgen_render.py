@@ -23,6 +23,7 @@ PLAN = {
                 "radius": 0.5, "falloff": 0.5, "coverage": 1.0}],
     "terrain": [{"region_id": "meadow", "base_elevation_m": 1.0}],
     "materials": [{"region_id": "meadow", "surface": "grass", "appearance": "green",
+                   "variant": "bare brown earth",
                    "scale_m": 2.0, "pathway": "procedural"}],
     "concept": "A small green meadow under a clear sky.",
 }
@@ -37,12 +38,17 @@ def world(tmp_path):
 
     materials = tmp_path / "materials"
     materials.mkdir()
-    for channel, colour in (("albedo", (90, 140, 60)), ("normal", (128, 128, 255))):
+    for channel, colour in (
+        ("albedo", (90, 140, 60)), ("normal", (128, 128, 255)),
+        ("variant_albedo", (150, 100, 60)), ("variant_normal", (128, 128, 255)),
+    ):
         Image.new("RGB", (8, 8), colour).save(materials / f"meadow_{channel}.png")
     (materials / "materials.json").write_text(json.dumps([{
         "region_id": "meadow",
         "albedo": "/gone/meadow_albedo.png",
         "normal": "/gone/meadow_normal.png",
+        "variant_albedo": "/gone/meadow_variant_albedo.png",
+        "variant_normal": "/gone/meadow_variant_normal.png",
     }]))
     (tmp_path / "prototypes.json").write_text(json.dumps([{"category": "rock", "mesh": None}]))
     (tmp_path / "scatter.json").write_text(json.dumps({"instances": [{
@@ -64,7 +70,9 @@ def test_write_job_writes_a_relative_world(world):
         "cameras",
     }
     paths = [job["heightmap"], *job["weight_textures"],
-             *(p for r in job["regions"] for p in (r["albedo"], r["normal"]))]
+             *(p for r in job["regions"]
+               for p in (r["albedo"], r["normal"],
+                         r["variant_albedo"], r["variant_normal"]))]
     for relative in paths:
         assert not relative.startswith((".", "/"))
         assert (out_dir / relative).exists()
@@ -91,6 +99,18 @@ def test_write_job_rewrites_paths_that_moved(world):
     out_dir, plan = world
     job = json.loads(write_job(plan, out_dir).read_text())
     assert job["regions"][0]["albedo"] == "materials/meadow_albedo.png"
+    assert job["regions"][0]["variant_albedo"] == "materials/meadow_variant_albedo.png"
+
+
+def test_a_world_with_no_variant_names_none(world):
+    """Older worlds, and regions whose second render was refused, still render."""
+    out_dir, plan = world
+    manifest = out_dir / "materials" / "materials.json"
+    rows = [{k: v for k, v in row.items() if not k.startswith("variant")}
+            for row in json.loads(manifest.read_text())]
+    manifest.write_text(json.dumps(rows))
+    job = json.loads(write_job(plan, out_dir).read_text())
+    assert "variant_albedo" not in job["regions"][0]
 
 
 def test_heightmap_is_the_float_buffer_the_loader_reads(world):
@@ -175,12 +195,17 @@ def ridge_world(tmp_path):
 
     materials = tmp_path / "materials"
     materials.mkdir()
-    for channel, colour in (("albedo", (120, 150, 70)), ("normal", (128, 128, 255))):
+    for channel, colour in (
+        ("albedo", (60, 200, 60)), ("normal", (128, 128, 255)),
+        ("variant_albedo", (200, 40, 40)), ("variant_normal", (128, 128, 255)),
+    ):
         Image.new("RGB", (8, 8), colour).save(materials / f"meadow_{channel}.png")
     (materials / "materials.json").write_text(json.dumps([{
         "region_id": "meadow",
         "albedo": "meadow_albedo.png",
         "normal": "meadow_normal.png",
+        "variant_albedo": "meadow_variant_albedo.png",
+        "variant_normal": "meadow_variant_normal.png",
     }]))
     (tmp_path / "prototypes.json").write_text(json.dumps([]))
     (tmp_path / "scatter.json").write_text(json.dumps({"instances": []}))
@@ -253,3 +278,26 @@ def test_a_tall_thing_casts_a_shadow_on_the_ground(ridge_world, monkeypatch):
     shaded = image[190:240, 70:115]
     lit = image[20:80, 70:115]
     assert shaded.mean() < lit.mean() * 0.75, (shaded.mean(), lit.mean())
+
+
+def test_the_ground_wears_through_to_its_variant_on_a_slope(ridge_world):
+    """The pair, in the one place the recipe is not a matter of taste.
+
+    Base green, variant red, seen from straight above so that nothing is being
+    measured but which of the two textures the shader chose. The slope term of
+    the mix is a whole unit of wear on its own, so the steep face is the variant
+    wherever the patches put it or not; the flat ground is the base except where
+    they do.
+    """
+    _browser_or_skip()
+    out_dir, plan = ridge_world
+    shot = {"name": "wear.png", "position": [20.0, 40.0, 20.0],
+            "look_at": [20.0, 0.0, 20.0], "fov": 80.0}
+    written = render(plan, out_dir, cameras=[shot], resolution="256x256", mesh_resolution=64)
+    image = np.asarray(Image.open(written[0]).convert("RGB"), np.float32)
+
+    flat = image[64:192, 40:80]
+    steep = image[64:192, 128:168]
+    red = lambda patch: patch[..., 0] > patch[..., 1]
+    assert red(steep).mean() > 0.9, red(steep).mean()
+    assert red(flat).mean() < 0.5, red(flat).mean()

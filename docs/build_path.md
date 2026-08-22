@@ -291,6 +291,24 @@ src/
                          never judges a picture the game cannot reproduce. Every path in
                          world.json is relative to the folder it sits in, which is what makes the
                          folder copyable into a game.
+                         Each region is covered in a PAIR of squares, not one: the surface the
+                         plan names and the variant it wears through to — grass to bare earth,
+                         sand to cracked clay, a lakebed to wet mud — both drawn as a metre or two
+                         of ground seen straight down (the prompt says so three ways, because
+                         asked for a lakebed a diffusion model draws a lake, far bank and all,
+                         and that photograph then tiles across the ground as a lattice of little
+                         lakes) and both quilted onto a torus by `tools.quilting.quilt_tile`, so
+                         the tile is seamless by construction rather than by luck. The shader
+                         mixes them by a fixed recipe in world metres — a 40 m low-frequency fbm
+                         for the patches, a fine one to break the isoline, and the slope, which
+                         carries a steep face over on its own, so a bank is earth and the field
+                         above it is not. The threshold sits ABOVE the noise's own mean: these
+                         fields average about a half, and a threshold at a half makes a region its
+                         variant as much as itself — a green pasture rendered as bare earth with
+                         green in it. Nothing about the recipe is per-world; world.json
+                         carries only the two paths and the one scale both repeat at, and a region
+                         that names no variant (an older world, a refused render) draws its base
+                         alone.
                          The ground is a MeshStandardMaterial with the region splat injected into
                          its shader, not a shader of its own: a raw shader receives no shadow map,
                          no fog and no tone mapping, so the terrain used to be the one surface the
@@ -318,8 +336,8 @@ src/
                          The publish contract: `<run_dir>/world_build/` holds the intermediates
                          (~275 MB of concept images, region compositions and refinement views) and
                          no game ever reads it; `<game>/world/` holds only what world.json names —
-                         the json, heightmap.f32, the weight textures, each region's albedo and
-                         normal, and the GLBs — at the same relative paths, so staging, archiving
+                         the json, heightmap.f32, the weight textures, each region's two albedos
+                         and their normals, and the GLBs — at the same relative paths, so staging, archiving
                          and playing carry the world with the game and the game fetches nothing
                          outside its folder. world.json is rewritten from the world as it stands
                          at every publish and replaced by rename, so a browser never reads one

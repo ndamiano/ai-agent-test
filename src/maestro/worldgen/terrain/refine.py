@@ -208,7 +208,9 @@ class PlanEditor:
             return self._apply(data, f"boundary blend {was:g} -> {boundary_blend_m:g} m")
 
         @tool
-        def regenerate_material(region_id: str, surface: str, appearance: str) -> str:
+        def regenerate_material(
+            region_id: str, surface: str, appearance: str, variant: str
+        ) -> str:
             """Ask for a region's surface texture to be generated again. Expensive.
 
             Only when the surface is the wrong thing entirely — sand where there
@@ -222,12 +224,15 @@ class PlanEditor:
                 surface: What the ground should be.
                 appearance: Colour, roughness and fine structure, in a sentence
                     or two. Describe a uniform surface with no large features.
+                variant: The worn second surface of the same ground, in a phrase —
+                    what shows through where the first has gone.
             """
             data = self.plan.model_dump()
             for row in data["materials"]:
                 if row["region_id"] == region_id:
                     row["surface"] = surface
                     row["appearance"] = appearance
+                    row["variant"] = variant
                     result = self._apply(data, f"{region_id} material -> {surface!r}")
                     if result.startswith("applied"):
                         self.queued_materials.append({"region_id": region_id})
@@ -338,8 +343,10 @@ def refine(
         remade = materials_module.albedo(
             editor.plan, out_dir / "materials", images=images, overwrite=True
         )
-        for path in remade.values():
-            materials_module.derive_channels(path)
+        for pair in remade.values():
+            for path in pair.values():
+                if path.exists():
+                    materials_module.derive_channels(path)
 
     construct(editor.plan, out_dir)
     render(editor.plan, out_dir)

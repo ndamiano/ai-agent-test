@@ -125,11 +125,15 @@ class TerrainPlanBuilder:
 
         @tool
         def set_region_material(material: RegionMaterial) -> str:
-            """Set one region's surface: what it is, how it looks, how big it repeats.
+            """Set one region's surface: what it is, its worn variant, how big it repeats.
 
-            Call once per region. `scale_m` is the number the rest of the
-            pipeline cannot recover on its own — how wide one repeat of this
-            surface is in metres.
+            Call once per region. A region has two grounds, not one: the base
+            surface and the variant it wears through to. The renderer blends
+            them by slope and by patches, so a region given the same thing twice
+            is a region with one ground.
+
+            `scale_m` is the number the rest of the pipeline cannot recover on
+            its own — how wide one repeat of this surface is in metres.
             """
             if material.region_id not in self.known:
                 return f"error: no region {material.region_id!r} in the scene plan"
@@ -138,7 +142,8 @@ class TerrainPlanBuilder:
             self.materials.append(material)
             waiting = sorted(self.known - {m.region_id for m in self.materials})
             return (
-                f"{material.region_id!r}: {material.surface!r} via {material.pathway}, "
+                f"{material.region_id!r}: {material.surface!r} worn to "
+                f"{material.variant!r} via {material.pathway}, "
                 f"repeating every {material.scale_m:g} m; "
                 f"still missing materials: {waiting or ['<none>']}"
             )

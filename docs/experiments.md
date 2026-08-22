@@ -587,3 +587,110 @@ is the planner's number, not the renderer's, and no per-basin plane was invented
 Roughly 20% on the big worlds — two albedo taps instead of one, plus a shadow map pass — and more
 than double on the small one, where the shadow pass is most of a cheap frame. On a GPU none of this
 is a budget question; it matters only because the refinement loop renders its ring on CPU.
+
+---
+
+## A pair of ground textures per region (2026-08-22, local 5090, one 120 m world A/B)
+
+### The question
+
+Every region was covered in ONE generated square. Two things were wrong with that at once and it
+was not obvious which mattered: the square was often not a material at all — asked for a lakebed the
+model draws a lake, asked for a pine forest it draws a canopy from the air — and even a good square
+is the same square metre everywhere in a region however cleverly it is sampled. Does asking for the
+ground straight down, and asking for TWO of them, produce a ground that reads as ground?
+
+### What changed
+
+Three things, in one arm because none of them is separable from the frames:
+
+1. **The plan carries two surfaces.** `RegionMaterial` gained `variant` — the worn second ground of
+   the same region — and both it and `surface` now say what they are: "the ground underfoot in this
+   region, as a square of surface seen straight down: soil, needle litter, sand, shingle, turf,
+   bare rock, pavers". The old `surface` description asked what the ground *is*, and one planner
+   answered "forest", which is why a region came back carpeted in an aerial photograph of tree
+   canopy. `scale_m` covers both.
+2. **The prompt asks for a surface, not a picture.** `TEXTURE_TEMPLATE` now opens and closes on the
+   same law: a square of ground filling the frame, camera at knee height pointing straight down,
+   one or two metres across, no horizon, no sky, no water's edge, no view of a place. The negative
+   gained `horizon, landscape, scenery, aerial view, shoreline, water's edge, far bank`. Every
+   render is then quilted onto a torus by `tools.quilting.quilt_tile` (1536 render → 768 tile), so
+   the tile is seamless by construction rather than by luck.
+3. **The shader blends the pair** by a fixed recipe in world metres — `patches = fbm(m * 0.025)`,
+   `detail = fbm(m * 0.6)`, `wear = smoothstep(0.62, 0.85, patches*0.7 + detail*0.3 + slope*1.2)` —
+   under the macro mix, hue drift, slope-rock and snow rules that were already there. Nothing is
+   per-world; a region naming no variant draws its base alone.
+
+### The run
+
+Run `9c3c07df4201`'s world (120 m coastal village, 6 regions), copied to a lab folder and rendered
+with its existing materials as the BEFORE. Then `terrain-plan` re-run so the planner filled the new
+field, and `terrain-assets` regenerated: **12 material renders, 17.3 min wall-clock** for plan +
+materials + subjects + reconstruction on one card, materials at roughly 75 s each including the
+quilt.
+
+The planner filled `variant` for all six regions with no coaxing, and every one of them is the
+intended thing: harbour sand → "wet dark sand at the waterline with thin pebbles showing through",
+pine humus → "exposed grey bedrock and scree where the humus has thinned", village stone → "bare
+grey gravel and worn stone where the grass has thinned".
+
+### What it measured
+
+**The prompt change is the big half, and it is not subtle.** Of the six BEFORE albedos, three were
+pictures of places rather than materials: the pine forest was an aerial photograph of tree canopy,
+the village was a road with kerb stones and grass verges running down it, the pebble beach was a
+shoreline with a wet strip and a dry band. All three tiled as those shapes. The six AFTER bases are
+uniform surfaces at grain scale — needle humus with cones, gravel with grass tufts, dense shingle —
+with nothing in the frame large enough to be picked out.
+
+**The pair shows at walking distance and not much above it.** In the close view the hillsides carry
+a legible grain and change material across the slope where before they were one smeared grey-brown
+with directional streaks. In the ring views, 60 m up, the wear field reads as ordinary patchiness
+and could be mistaken for the hue drift that was already there — which is the honest limit of this
+measurement: the recipe earns its cost at the camera a player uses, not at the camera the refinement
+loop judges from.
+
+**What did not improve.** The quilt leaves faint horizontal banding in some tiles — the block rows
+of the synthesis, visible on close inspection of a flat wet-pebble variant, invisible in a frame.
+One variant (wet pebbles) came back near-black, which is what the phrase asked for but darker than
+the ground wants.
+
+### The threshold is the whole of the recipe (one iteration, and it was needed)
+
+The demo's numbers — `smoothstep(0.42, 0.62, ...)` with the slope at 1.5 — were ported as they
+stood and are WRONG on a real world, for a reason worth writing down: an fbm of four octaves at
+amplitude 0.5 averages about 0.47, so a threshold centred on 0.5 makes the average patch of flat
+ground *half variant*. On the medieval world that rendered the village as unbroken red-orange earth
+at eye level, its grass-and-flagstone base nowhere in the frame, and the ring views as orange
+blotching. Raised to `smoothstep(0.55, 0.75, ...)` with the slope at 1.2 — above the noise's own
+mean, so the base is the region and the variant is where it has gone — the same frames show dry
+grass with earth showing through it, and the top-down view goes from mottled orange to a ground
+with patches in it. The demo was a flat plane with two textures of the same value; nothing in it
+could show this.
+
+### A second world, for the failure that motivated the prompt
+
+A fresh medieval build (`scene`..`terrain-assets`, 5 regions, 800 m, 16.5 min) as the check on the
+one-world A/B. The planner filled all five variants correctly ("bare tawny earth and short dry
+stubble where the grass has thinned", "loose grey scree where the snow has thinned") and — the
+point of the exercise — described the LAKEBED as "shallow silt and shingle lakebed with reed-lined
+banks" and got back a flat teal surface rather than the photograph of a lake with a far bank that
+this world's previous build produced. At eye level the lake region reads as continuous water-silt
+surface with no repeating shoreline in it.
+
+Two more turns on the same frames (`medieval_after3`, `medieval_after4`): at 0.55/0.75 the
+variant still owned the village and the plains at eye level, so the band moved to 0.62/0.85 and
+the base came back as the region; and the softness of the ground within a few metres of the
+camera was the 8x macro tap mixing in at up to 68% regardless of distance — it now scales with the
+detail fade (`* (1 - 0.75 * gTerrainDetail)`), so the fine tap carries the near ground and the wide
+tap takes over only where the detail is dropped. Not fixed: a village base tile whose flagstones
+are still large enough to read as an arrangement when tiled.
+
+### The checkpoint
+
+Kept on Qwen-Image-2512, NOT switched to the DreamShaper checkpoint the tile bake-off preferred.
+Worldgen's `ImageModel` builds one Qwen graph (`UNETLoader` + the Qwen text encoder); DreamShaperXL
+is an SDXL checkpoint reached through a different graph entirely, so switching is a second arm and
+not a parameter. The failures measured here were the PROMPT drawing a scene instead of a surface and
+the tile not being tileable, and both are fixed without touching the model. The routing question is
+still open and belongs in its own run.

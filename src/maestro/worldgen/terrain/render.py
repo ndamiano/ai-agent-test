@@ -114,7 +114,8 @@ def write_job(
     materials = {}
     for row in json.loads((out_dir / "materials" / "materials.json").read_text()):
         row = dict(row)
-        for channel in ("albedo", "normal", "roughness"):
+        for channel in ("albedo", "normal", "roughness",
+                        "variant_albedo", "variant_normal", "variant_roughness"):
             if row.get(channel):
                 row[channel] = f"materials/{Path(row[channel]).name}"
         materials[row["region_id"]] = row
@@ -194,6 +195,14 @@ def write_job(
                 # that generated them knows where they went
                 "albedo": materials[row.region_id]["albedo"],
                 "normal": materials[row.region_id]["normal"],
+                # the worn second surface, when the materials stage drew one. A
+                # world made before the pair existed, or one whose variant render
+                # was refused, names neither and the loader draws the base alone.
+                **{
+                    key: materials[row.region_id][key]
+                    for key in ("variant_albedo", "variant_normal")
+                    if materials[row.region_id].get(key)
+                },
                 # ...but the scale comes from the plan, which is the thing
                 # refinement edits. Reading it from the manifest instead makes
                 # every scale correction a no-op that still reports success.

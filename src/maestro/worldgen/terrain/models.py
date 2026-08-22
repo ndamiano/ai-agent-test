@@ -327,15 +327,24 @@ class RegionMaterial(Strict):
 
     region_id: str = Field(description="Id of the region, from the scene plan.")
     surface: str = Field(
-        description='What the ground is, e.g. "wind-rippled yellow sand".',
+        description="The ground underfoot in this region, as a square of surface "
+        "seen straight down: soil, needle litter, sand, shingle, turf, bare rock, "
+        'pavers. E.g. "wind-rippled yellow sand".',
     )
     appearance: str = Field(
         description="Colour, roughness and fine structure in one or two "
         "sentences. This is the texture prompt.",
     )
+    variant: str = Field(
+        description="The worn or secondary ground of the same region, as a square "
+        "of surface seen straight down: soil, needle litter, sand, shingle, turf, "
+        "bare rock, pavers. Grass gives way to bare earth, sand to pebbles or "
+        "cracked clay, snow to rock scree, a lakebed to wet mud.",
+    )
     scale_m: float = Field(
         gt=0,
-        description="Width of one repeat of this surface, in metres. Sand ripples "
+        description="Width of one repeat of this surface, in metres — base and "
+        "variant repeat at the same distance. Sand ripples "
         "repeat every metre or two; broken rock every five to ten. Getting this "
         "wrong is the most visible error in a finished terrain.",
     )

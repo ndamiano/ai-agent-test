@@ -5,7 +5,6 @@ Two invariants. A path is resolved and must land inside the game folder, so no w
 And every failure is REPORTED to the model rather than guessed at — see `_reported`.
 """
 
-import json
 import os
 from pathlib import Path
 

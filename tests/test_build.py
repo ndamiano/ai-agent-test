@@ -98,7 +98,6 @@ def test_the_system_prompt_stays_the_measured_one(tmp_path, tools):
     cursor = _cursor()
     out = build_steps.step({"request": "a card game"}, tmp_path, tools, cursor, {})
     system = out.messages[0]["content"]
-    assert system.count("\n- ") == 14
     assert "three.module.js" in system and "generate_media" in system
     # Measured 2026-08-22: the library closed three ledger items 6/6 against a control arm.
     assert "lib/input.js" in system

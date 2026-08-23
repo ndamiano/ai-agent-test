@@ -213,3 +213,13 @@ def test_the_turn_index_measures_archived_turns_from_the_log(run, headers, app_c
     assert [r["n_messages"] for r in rows] == [1, 3, 5]
     assert rows[0]["payload_chars"] < rows[1]["payload_chars"] < rows[2]["payload_chars"]
 
+
+
+def test_the_cli_build_carries_the_default_step_cap(run):
+    """run_build names no cap; the cursor must still hold a number the step check can compare."""
+    import inspect
+    from maestro.codegen import run as cli
+    cap = inspect.signature(cli.run_build).parameters["max_steps"].default
+    build_chain.kickoff(run, kind="build", max_steps=cap)
+    cursor = build_state.load(RunState(run).run_dir)
+    assert cursor.max_steps == build_state.DEFAULT_MAX_STEPS

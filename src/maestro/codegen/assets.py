@@ -136,12 +136,8 @@ def autocrop_image(im: Image.Image, pad_frac: float = 0.06) -> Image.Image:
     return im.crop(box)
 
 
-def autocrop(path: Path, pad_frac: float = 0.06) -> None:
-    save_image(autocrop_image(Image.open(path).convert("RGBA"), pad_frac), path)
-
-
-def _ext(entry: Dict) -> str:
-    return "glb" if entry.get("kind") == "mesh" else "webp"
+def ext_for(kind: str) -> str:
+    return "glb" if kind == "mesh" else "webp"
 
 
 def _pending(run_id: str, run_dir, entries: List[Dict]) -> List[Dict]:
@@ -151,7 +147,7 @@ def _pending(run_id: str, run_dir, entries: List[Dict]) -> List[Dict]:
     for e in entries:
         if e.get("refused"):
             continue
-        if not asset_path(run_id, e["id"], _ext(e)).exists():
+        if not asset_path(run_id, e["id"], ext_for(e.get("kind"))).exists():
             out.append(e)
     return out
 
@@ -250,7 +246,7 @@ def request_media(run_id: str, run_dir, asset_id: str, prompt: str,
                 "error": f"kind must be one of {', '.join(KINDS)} — not {kind!r}"}
 
     mesh = kind == "mesh"
-    ext = "glb" if mesh else "webp"
+    ext = ext_for(kind)
     rel = f"assets/{asset_id}.{ext}"
     existing = next((e for e in read_manifest(run_dir) if e["id"] == asset_id), None)
     if not existing and asset_path(run_id, asset_id, ext).exists():
@@ -367,8 +363,6 @@ def regenerate_asset(run_id: str, asset_id: str, note: str, mode: str = "full") 
     """Re-render ONE asset as a one-job batch, reusing the same finalize. The user's text is a CHANGE
     NOTE, not the finished prompt: it is merged with the entry's ORIGINAL prompt so "give him a red
     cape" keeps the goblin. `img2img` seeds the render from the existing image, keeping composition."""
-    import base64
-
     state = RunState(run_id)
     entry = next((e for e in read_manifest(state.run_dir) if e["id"] == asset_id), None)
     if entry is None:

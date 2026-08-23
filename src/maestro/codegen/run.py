@@ -24,7 +24,7 @@ from typing import Optional
 from auth import store
 from auth.billing import SECONDS_PER_CREDIT
 from db import store as db_store
-from maestro.codegen import build_chain, build_state
+from maestro.codegen import build_chain, build_state, stages
 from maestro.codegen.staging import game_dir, is_staged
 from maestro.state import RunState
 from tools.build_events import _emit
@@ -79,7 +79,7 @@ def set_prompt(run_id: str, text: str, *, event: str = "prompt_updated") -> dict
     return spec
 
 
-def run_build(run_id: str, max_steps: Optional[int] = None) -> BuildResult:
+def run_build(run_id: str, max_steps: int = build_state.DEFAULT_MAX_STEPS) -> BuildResult:
     """Stage 2 (CLI/blocking): kick the build off, then poll the durable cursor to completion. The
     build itself is fire-and-forget — build_chain enqueues each llm turn and the control-plane's
     completion handler drives the next — so this only WAITS."""
@@ -155,7 +155,6 @@ def _cli(request: str) -> int:
 def _cli_staged(request: str) -> int:
     """Plan stages, show the plan, build stage 1 and block through the WHOLE chain — later stages
     auto-advance off each clean finalize, so the CLI just waits for quiet."""
-    from maestro.codegen import build_chain, stages
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
     run_id = _new_run(request)
     if run_id is None:
@@ -199,7 +198,7 @@ def _await_batch(batch_id: str, run_id: str) -> list:
     """Poll a batch to completion and report what landed. CLI-only — a CLI has no socket to report on.
 
     The chain is advanced by the control plane's /worker/complete, so this needs the API server up."""
-    from maestro.codegen.assets import asset_path
+    from maestro.codegen.assets import asset_path, ext_for
     seen = 0
     while True:
         jobs = db_store.batch_jobs(batch_id)
@@ -213,8 +212,7 @@ def _await_batch(batch_id: str, run_id: str) -> list:
     out = []
     for j in jobs:
         aid = j["metadata"].get("asset_id")
-        ext = "glb" if j["metadata"].get("kind") == "mesh" else "png"
-        if aid and asset_path(run_id, aid, ext).exists():
+        if aid and asset_path(run_id, aid, ext_for(j["metadata"].get("kind"))).exists():
             out.append(aid)
     return sorted(set(out))
 
@@ -230,7 +228,7 @@ def _cli_assets(run_id: str) -> int:
     got = _await_batch(out["batch_id"], run_id)
     print(f"\nplanned={out['planned']}  rendered={len(got)} {got}")
     if not got:
-        print("  (nothing rendered — is ComfyUI up? the manifest still stands; re-run to fill)")
+        print("  (nothing rendered — is an image worker up? the manifest still stands; re-run to fill)")
     return 0
 
 

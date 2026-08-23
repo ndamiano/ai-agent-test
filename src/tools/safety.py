@@ -12,8 +12,7 @@ Two shapes of match, both fail-closed (on any hit, refuse):
     half alone, so "a 10-year-old's birthday party" or "a steamy adult romance" pass on their
     own.
 
-This is Phase 1 scope (see tasks/safety_phase1_notes.md): keyword/pattern screening only, no
-classifier or hash-matching infra.
+Keyword/pattern screening only — no classifier or hash-matching infra.
 """
 
 import json
@@ -23,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from tools.execution_context import get_user_id
+from db import store as db_store
 
 logger = logging.getLogger("maestro.safety")
 
@@ -99,14 +98,8 @@ def log_violation(violation: SafetyViolation, *, user_id: Optional[str] = None,
     """Log a blocked request, attributed to the authed user where available, and persist it to
     the violations table for the admin panel. Never records the full input text — only the
     matched term(s), to avoid persisting the flagged content."""
-    if user_id is None:
-        try:
-            user_id = get_user_id()
-        except Exception:
-            user_id = None
     if user_id is None and run_id is not None:
         try:
-            from db import store as db_store
             user_id = db_store.owner_of(run_id)
         except Exception:
             user_id = None
@@ -115,7 +108,6 @@ def log_violation(violation: SafetyViolation, *, user_id: Optional[str] = None,
         violation.category, source, user_id or "unknown", run_id or "-", violation.matched,
     )
     try:
-        from db import store as db_store
         db_store.record_violation(user_id, run_id, source, violation.category, violation.matched)
     except Exception:
         logger.exception("violation row not recorded (source=%s)", source)

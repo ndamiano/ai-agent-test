@@ -147,19 +147,6 @@ _INITIALIZED: set = set()
 _INIT_LOCK = threading.Lock()
 
 
-# `CREATE TABLE IF NOT EXISTS` leaves an existing table alone, so a column added to _SCHEMA never
-# reaches a db that already exists. Prod's holds real games and cannot be recreated to pick one up.
-_ADDED_COLUMNS = [("builds", "maestro_rev", "TEXT")]
-
-
-def _add_missing_columns(conn) -> None:
-    for table, column, decl in _ADDED_COLUMNS:
-        have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
-        if column not in have:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
-            logger.info("added %s.%s", table, column)
-
-
 @contextmanager
 def _db(immediate: bool = False):
     path = _db_path()
@@ -171,7 +158,6 @@ def _db(immediate: bool = False):
         if str(path) not in _INITIALIZED:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
-            _add_missing_columns(conn)
             _INITIALIZED.add(str(path))
     if immediate:
         # A read-then-write decision needs the write lock held across BOTH halves. sqlite's
@@ -248,14 +234,6 @@ def is_charged(game_id: str) -> bool:
     with _db() as conn:
         row = conn.execute("SELECT credits_spent FROM games WHERE id = ?", (game_id,)).fetchone()
     return bool(row and row["credits_spent"] > 0)
-
-
-def add_seconds_used(game_id: str, seconds: float) -> None:
-    with _db() as conn:
-        conn.execute(
-            "UPDATE games SET seconds_used = seconds_used + ?, updated_at = ? WHERE id = ?",
-            (seconds, time.time(), game_id),
-        )
 
 
 def _remaining_locked(conn, game_id: str) -> float:
@@ -653,7 +631,7 @@ def llm_turn_buckets() -> List[Dict]:
         rows = conn.execute(
             "SELECT j.game_id AS game_id, COUNT(*) AS turns, MIN(j.created_at) AS first_at, "
             "MAX(j.created_at) AS last_at, SUM(COALESCE(j.exec_seconds, 0)) AS exec_seconds, "
-            "g.title AS title, g.mode AS mode, g.status AS status, g.user_id AS user_id "
+            "g.title AS title, g.status AS status, g.user_id AS user_id "
             "FROM jobs j LEFT JOIN games g ON g.id = j.game_id "
             "WHERE j.queue = 'llm' GROUP BY j.game_id ORDER BY last_at DESC").fetchall()
     return [dict(r) for r in rows]

@@ -13,17 +13,17 @@ def _backdate_worker(worker_id, seconds):
 
 def test_queue_stats_counts_and_oldest_age():
     src = SqliteStatsSource()
-    assert src.queue_stats("mesh") == (0, 0, None)
+    assert src.queue_stats("mesh") == (0, None)
 
     store.enqueue_job("mesh", {"n": 1})
     store.enqueue_job("mesh", {"n": 2})
     st = src.queue_stats("mesh")
-    assert (st.pending, st.claimed) == (2, 0)
+    assert st.pending == 2
     assert st.oldest_pending_age_seconds >= 0
 
     store.claim_job("mesh", "w1", lease_seconds=60)
     st = src.queue_stats("mesh")
-    assert (st.pending, st.claimed) == (1, 1)
+    assert st.pending == 1
 
 
 def test_queue_stats_ignores_other_queues_and_finished_jobs():
@@ -31,7 +31,7 @@ def test_queue_stats_ignores_other_queues_and_finished_jobs():
     store.enqueue_job("image", {})
     store.claim_job("mesh", "w1", lease_seconds=60)
     store.complete_job(job, "w1", {"ok": 1}, None, 1.0)
-    assert SqliteStatsSource().queue_stats("mesh") == (0, 0, None)
+    assert SqliteStatsSource().queue_stats("mesh") == (0, None)
 
 
 def test_live_and_stale_filtering():

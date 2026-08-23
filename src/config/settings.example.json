@@ -1,5 +1,4 @@
 {
-  "model_category": "small",
   "llm": {
     "model": "local-model",
     "max_tokens": 50000,

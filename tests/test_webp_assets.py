@@ -10,13 +10,9 @@ from maestro.codegen.asset_chain import OPERATIONS
 
 
 def test_new_asks_answer_webp_and_meshes_stay_glb():
-    assert assets._ext({"kind": "sprite"}) == "webp"
-    assert assets._ext({"kind": "mesh"}) == "glb"
-
-
-def test_ext_ignores_whatever_a_manifest_recorded():
     """One format, no compatibility path — webp is what art is, full stop."""
-    assert assets._ext({"kind": "sprite", "file": "assets/goblin.png"}) == "webp"
+    assert assets.ext_for("sprite") == "webp"
+    assert assets.ext_for("mesh") == "glb"
 
 
 def test_save_image_writes_webp_at_pipeline_quality(tmp_path):

@@ -193,7 +193,6 @@ def main(argv=None) -> int:
     parser.add_argument("--api", default="chat", choices=("chat", "responses"),
                         help="wire format the target serves (llm queue only)")
     parser.add_argument("--token", default=os.environ.get("WORKER_TOKEN", ""))
-    parser.add_argument("--worker-id", default=None)
     parser.add_argument("--source", default="local")
     parser.add_argument("--idle-exit-seconds", type=float,
                         default=float(os.environ.get("IDLE_EXIT_SECONDS", "0")),
@@ -207,7 +206,7 @@ def main(argv=None) -> int:
     # Detected here and nowhere else: there is no --gpu-type, because the card is a fact about the
     # box this process woke up on and nothing outside it is entitled to say otherwise.
     agent = Agent(args.server, args.target, args.queue, args.token, api=args.api,
-                  worker_id=args.worker_id, gpu_type=detect_gpu(), source=args.source,
+                  gpu_type=detect_gpu(), source=args.source,
                   idle_exit_seconds=args.idle_exit_seconds)
 
     def _stop(signum, frame):

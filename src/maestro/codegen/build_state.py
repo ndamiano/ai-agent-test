@@ -11,11 +11,14 @@ completion reloads, advances, and rewrites.
 from __future__ import annotations
 
 import json
+import os
+import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
 _STATE_FILE = "build_state.json"
+DEFAULT_MAX_STEPS = 200
 
 
 @dataclass
@@ -24,7 +27,7 @@ class BuildCursor:
     kind: str = "build"                           # "build" | "fix"
     phase: str = "build"                          # "build" | "done"
     step: int = 0
-    max_steps: int = 200
+    max_steps: int = DEFAULT_MAX_STEPS
     paused: bool = False
     t0: float = 0.0
     ok: Optional[bool] = None
@@ -65,8 +68,6 @@ def load(run_dir) -> Optional[BuildCursor]:
 
 def save(run_dir, cursor: BuildCursor) -> None:
     # Atomic like RunState._write: a torn build_state.json would strand a build unrecoverably.
-    import os
-    import uuid
     p = _path(run_dir)
     tmp = p.parent / f".{_STATE_FILE}.{uuid.uuid4().hex}.tmp"
     tmp.write_text(json.dumps(asdict(cursor), indent=2, ensure_ascii=False), encoding="utf-8")

@@ -21,7 +21,8 @@ from tools.execution_context import run_scope
 def _refill_rate_limiter():
     # The global LLM rate limiter is a shared token bucket — earlier suite tests can drain it,
     # turning connector calls into rate-limit errors here. Refill it.
-    get_llm_rate_limiter().reset()
+    lim = get_llm_rate_limiter()
+    lim.tokens = float(lim.capacity)
 
 
 def test_claim_is_fifo_and_exclusive():

@@ -70,19 +70,6 @@ class TestLLMRateLimiter:
         assert limiter.acquire(blocking=True, timeout=0.2) is False
         assert clock.now <= 0.3
 
-    def test_rate_limiter_reset(self):
-        # Contract: reset restores full capacity regardless of prior drain.
-        clock = FakeClock()
-        limiter = LLMRateLimiter(rate=2.0, capacity=2, clock=clock.time, sleep=clock.sleep)
-
-        limiter.acquire(blocking=False)
-        limiter.acquire(blocking=False)
-        assert limiter.acquire(blocking=False) is False
-
-        limiter.reset()
-
-        assert limiter.acquire(blocking=False) is True
-        assert limiter.acquire(blocking=False) is True
 
 
 class TestLLMRateLimiterIntegration:
@@ -94,7 +81,8 @@ class TestLLMRateLimiterIntegration:
         limiter = get_llm_rate_limiter()
         monkeypatch.setattr(limiter, "_clock", clock.time)
         monkeypatch.setattr(limiter, "_sleep", clock.sleep)
-        limiter.reset()
+        limiter.tokens = float(limiter.capacity)
+        limiter.last_update = clock.time()
 
         for _ in range(8):
             assert limiter.acquire(blocking=False) is True

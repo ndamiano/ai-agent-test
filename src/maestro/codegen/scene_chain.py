@@ -43,10 +43,10 @@ from PIL import Image
 from db import store as db_store
 from maestro.codegen import asset_store
 from maestro.codegen.assets import render_verdict
-from maestro.codegen.staging import stage_for_play
+from maestro.codegen.staging import game_dir, stage_for_play
 from maestro.state import RunState
 from scenegen.blockout import solve
-from tools.safety import screen_image_prompt
+from tools.safety import SafetyViolation, log_violation, screen_image_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -162,8 +162,8 @@ def compose(root: Path, run_id: str, scene_id: str, archetype: str, style: str,
 
 
 def _plan(request: str, seed: int, run_id: str) -> Dict:
-    """One small llm call for the relations plan; a plan that fails degrades to one plaza,
-    the same fallback the solver applies to a malformed dict."""
+    """One small llm call for the relations plan; a call that fails yields an empty plan, which
+    the solver reports rather than substitutes for."""
     from llm_clients.connector import get_connector
     from llm_clients.message_builder import MessageBuilder
     from tools.execution_context import run_scope
@@ -272,13 +272,6 @@ def _terrain_payload(state: Dict, ground: Image.Image) -> Dict:
 # ---------------------------------------------------------------------------
 # The async half: continuation, operations, finalizers.
 
-def _first_image(result: Optional[Dict]) -> Optional[Dict]:
-    for img in (result or {}).get("images") or []:
-        if img.get("file"):
-            return img
-    return None
-
-
 def _scene_mesh_from_image(md: Dict, result: Dict) -> Optional[Dict]:
     """Subject landed: safety first, then it enters the STORE (not a game folder) and its
     TRELLIS job goes out. A refused subject releases the claim — the type renders again
@@ -293,7 +286,6 @@ def _scene_mesh_from_image(md: Dict, result: Dict) -> Optional[Dict]:
                        md["run_id"], md["store_key"], reason)
         Path(entry["file"]).unlink(missing_ok=True)
         asset_store.release(md["store_key"])
-        from tools.safety import SafetyViolation, log_violation
         log_violation(SafetyViolation("nsfw_render", reason), run_id=md["run_id"],
                       source="image_render")
         return None
@@ -365,7 +357,7 @@ def _finalize_scene_objects(md: Dict, jobs: List[Dict]) -> None:
     run_id, scene_id = md["run_id"], md["scene_id"]
     state = _read_state(md)
     run_dir = RunState(run_id).run_dir
-    root = _game_root(run_dir)
+    root = game_dir(run_dir)
 
     terrain_p = _scene_state_path(run_dir, scene_id).with_suffix(".terrain.png")
     base = (Image.open(terrain_p).convert("RGBA") if terrain_p.exists()
@@ -473,7 +465,7 @@ def _drift(state: Dict, composed: Image.Image, final: Image.Image) -> List[str]:
 
 
 def _land_ground(run_id: str, state: Dict, img: Image.Image) -> None:
-    root = _game_root(RunState(run_id).run_dir)
+    root = game_dir(RunState(run_id).run_dir)
     img.save(root / state["ground_rel"])
     status = (db_store.game(run_id) or {}).get("status")
     if status == "built":
@@ -481,13 +473,11 @@ def _land_ground(run_id: str, state: Dict, img: Image.Image) -> None:
     logger.info("scene %s/%s: ground landed", run_id, state["scene_id"])
 
 
-def _game_root(run_dir) -> Path:
-    from maestro.codegen.staging import game_dir
-    return game_dir(run_dir)
-
-
 CONTINUATIONS = {"scene_mesh_from_image": _scene_mesh_from_image}
 OPERATIONS = {"scene_mesh": _scene_mesh, "scene_terrain": _scene_terrain,
               "scene_embed": _scene_embed}
 FINALIZERS = {"scene_objects": _finalize_scene_objects,
               "scene_embed": _finalize_scene_embed}
+
+# Bottom import: asset_chain closes the cycle by importing this module after its own registries.
+from maestro.codegen.asset_chain import _first_image  # noqa: E402

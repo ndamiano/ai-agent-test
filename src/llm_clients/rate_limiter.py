@@ -52,11 +52,6 @@ class LLMRateLimiter:
 
             self._sleep(wait_time)
 
-    def reset(self):
-        with self.lock:
-            self.tokens = float(self.capacity)
-            self.last_update = self._clock()
-
 
 # Capacity covers a burst of concurrent calls unthrottled; the rate only paces sustained ones.
 _llm_rate_limiter = LLMRateLimiter(rate=2.0, capacity=8)

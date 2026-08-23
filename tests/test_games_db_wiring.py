@@ -20,6 +20,12 @@ def client(app_client, tmp_runs):
     return app_client
 
 
+def _burn(run_id, seconds):
+    with db_store._db() as conn:
+        conn.execute("UPDATE games SET seconds_used = seconds_used + ? WHERE id = ?",
+                     (seconds, run_id))
+
+
 def _user(handle="alice", credits=10):
     u = auth_store.create_user(handle, "pw-pass1234", email=f"{handle}@example.com")
     if credits:
@@ -162,7 +168,7 @@ def test_a_game_out_of_compute_is_402_on_every_gpu_endpoint(client, monkeypatch)
     monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: "bid")
 
     assert client.post(f"/api/games/{run_id}/build", headers=headers).status_code == 200
-    db_store.add_seconds_used(run_id, SECONDS_PER_CREDIT)
+    _burn(run_id, SECONDS_PER_CREDIT)
 
     for path, body in (("build", None), ("fix", {"note": "a"}), ("assets", None), ("resume", None)):
         r = client.post(f"/api/games/{run_id}/{path}", headers=headers, json=body)
@@ -424,7 +430,7 @@ def test_regenerate_out_of_compute_is_402(client):
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
     db_store.charge_game(run_id, 1, SECONDS_PER_CREDIT)
-    db_store.add_seconds_used(run_id, SECONDS_PER_CREDIT)   # burn the whole grant
+    _burn(run_id, SECONDS_PER_CREDIT)
     r = client.post(f"/api/games/{run_id}/assets/hero/regenerate", headers=headers,
                     json={"prompt": "x"})
     assert r.status_code == 402

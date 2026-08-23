@@ -363,3 +363,16 @@ def test_the_top_up_skips_a_refused_entry(_policy_env):
     assert _pending("g1", tmp_path, read_manifest(tmp_path)) == []
     _update(tmp_path, "goblin", refused=None)
     assert [e["id"] for e in _pending("g1", tmp_path, read_manifest(tmp_path))] == ["goblin"]
+
+
+def test_finalize_reports_an_image_asset_as_rendered(_asset_env):
+    """The asset writers save webp; a finalize that looked for png reported every image as
+    missing, so assets_done never named the art that was in the game."""
+    from maestro.codegen.assets import asset_path, ext_for
+    asset_chain, staged, events = _asset_env
+    _game()
+    store.set_status("g1", "building")
+    asset_path("g1", "goblin", ext_for("sprite")).write_bytes(b"webp")
+    asset_chain._finalize_assets(
+        _md(), [{"metadata": {"asset_id": "goblin", "kind": "sprite"}, "build_id": None}])
+    assert events[0][1]["rendered"] == ["goblin"]

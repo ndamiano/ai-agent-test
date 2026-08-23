@@ -56,23 +56,14 @@ def test_reasoning_aliases_on_off_to_effort_enum():
     assert LLMConnector(reasoning="low").reasoning == "low"
 
 
-def test_json_mode_maps_to_response_format():
-    """Structured output rides the canonical field; the worker maps it per dialect."""
-    c = LLMConnector(model="m")
-    fmt = {"type": "json_object"}
-    body = c._payload([{"role": "user", "content": "x"}], None, fmt, 100)
-    assert body["response_format"] == fmt
-
-
-def test_payload_temperature_override():
-    """A caller that names a temperature gets it; one that does not keeps the default."""
-    c = LLMConnector(model="m")
-    assert c._payload([], None, None, None)["temperature"] == 0.7
-    assert c._payload([], None, None, None, temperature=0.0)["temperature"] == 0.0
-
-
 def test_payload_omits_an_unset_output_cap():
     """A cap is subtracted from what the input may use, so a caller must be able to decline one."""
-    assert "max_tokens" not in LLMConnector(model="m", max_tokens=None)._payload(
-        [], None, None, None)
-    assert LLMConnector(model="m")._payload([], None, None, None)["max_tokens"] == 50000
+    assert "max_tokens" not in LLMConnector(model="m", max_tokens=None)._payload([], None, None)
+    assert LLMConnector(model="m")._payload([], None, None)["max_tokens"] == 50000
+
+
+def test_a_named_temperature_reaches_the_payload():
+    """Worldgen stages pick a temperature per stage; an unnamed one keeps the default."""
+    c = LLMConnector(model="m")
+    assert c._payload([], None, None)["temperature"] == 0.7
+    assert c._payload([], None, None, temperature=0.0)["temperature"] == 0.0

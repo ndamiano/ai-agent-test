@@ -17,7 +17,7 @@ from typing import Dict, List, Optional
 from PIL import Image
 
 from db import store as db_store
-from maestro.codegen.assets import (asset_path, autocrop_image, check_render, render_kind,
+from maestro.codegen.assets import (asset_path, autocrop_image, ext_for, check_render, render_kind,
                                     render_verdict, save_image, set_defect, set_refused)
 from maestro.codegen.staging import stage_for_play
 from maestro.state import RunState
@@ -123,13 +123,13 @@ def _save_flat(md: Dict, result: Dict) -> None:
 
 
 def _decimate(md: Dict, result: Dict) -> None:
-    from tools.comfyui_tools import _decimate_glb
+    from maestro.worldgen.backends.meshes import _decimate
     src = (result or {}).get("glb_file")
     if not src:
         return
     dst = asset_path(md["run_id"], md["asset_id"], "glb")
     Path(dst).write_bytes(Path(src).read_bytes())
-    _decimate_glb(str(dst))
+    _decimate(Path(dst), 20_000)
 
 
 OPERATIONS = {"save_sprite": _save_sprite, "save_flat": _save_flat, "decimate": _decimate}
@@ -151,8 +151,7 @@ def _finalize_assets(md: Dict, jobs: List[Dict]) -> None:
         if not aid or aid in ids:
             continue
         ids.append(aid)
-        ext = "glb" if j["metadata"].get("kind") == "mesh" else "png"
-        if asset_path(run_id, aid, ext).exists():
+        if asset_path(run_id, aid, ext_for(j["metadata"].get("kind"))).exists():
             rendered.append(aid)
 
     # A batch enqueued mid-build must not stage the game out from under the build's own finalize.
@@ -202,12 +201,6 @@ def run_finalize(batch_id: str) -> bool:
     except Exception:
         logger.exception("finalize of batch %s failed", batch_id)
     return True
-
-
-def finalize_now(metadata: Dict, build_id: Optional[str] = None) -> None:
-    """Finalize a stage that enqueued no jobs at all — an empty plan, every prompt blocked, or a
-    budget refusal. There is no batch, so no completion will ever run this."""
-    FINALIZERS[metadata["then"]["finalize"]](metadata, [{"metadata": {}, "build_id": build_id}])
 
 
 def on_completion(metadata: Dict, result: Optional[Dict], batch_id: Optional[str],

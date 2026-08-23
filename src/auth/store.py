@@ -248,17 +248,6 @@ def set_email(user_id: str, email: str) -> str:
     return email
 
 
-def delete_user(user_id: str) -> None:
-    """Remove an account and everything keyed to it in this store. Games live in the platform
-    db and are the caller's to deal with."""
-    with _db() as conn:
-        for table in ("sessions", "password_resets", "credit_transactions", "purchases"):
-            conn.execute(f"DELETE FROM {table} WHERE user_id = ?", (user_id,))
-        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
-    from tools.db_backup import mark_dirty
-    mark_dirty()
-
-
 def get_user_by_handle(handle: str) -> Optional[User]:
     with _db() as conn:
         row = conn.execute("SELECT * FROM users WHERE handle = ?", (handle,)).fetchone()
@@ -517,17 +506,6 @@ def purchase_by_payment_intent(payment_intent: str) -> Optional[Purchase]:
         row = conn.execute("SELECT * FROM purchases WHERE payment_intent = ?",
                            (payment_intent,)).fetchone()
     return _row_to_purchase(row) if row else None
-
-
-def revoke_credits(user_id: str, n: int, reason: str, run_id: Optional[str] = None) -> int:
-    """Subtract credits with NO floor — a refunded purchase takes its credits back even if they
-    were already spent, and a negative balance is what blocks further builds. Returns the new
-    balance."""
-    with _db() as conn:
-        conn.execute("UPDATE users SET credits = credits - ? WHERE id = ?", (n, user_id))
-        _log_txn(conn, user_id, -n, reason, run_id)
-        row = conn.execute("SELECT credits FROM users WHERE id = ?", (user_id,)).fetchone()
-        return row["credits"] if row else 0
 
 
 def refund_purchase(purchase_id: str) -> Optional[int]:

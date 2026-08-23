@@ -5,8 +5,6 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict
 
-from config.settings_schema import DEFAULT_MODEL_CATEGORIES, ModelCategorySettings
-
 logger = logging.getLogger(__name__)
 
 
@@ -41,7 +39,6 @@ class SettingsManager:
         self.defaults = {
             "working_directory": default_working_dir,
             "data_dir": default_data_dir,
-            "model_category": os.getenv("MODEL_CATEGORY", "large"),
             "llm": {
                 "model": os.getenv("LLM_MODEL", "local-model"),
                 # "none" is the floor the fix loop escalates FROM. Absent this key an env-configured
@@ -62,8 +59,8 @@ class SettingsManager:
             # split: origin must be a separate REGISTRABLE domain (cookies are domain-scoped — a
             # subdomain of the app's domain shares the jar and can toss cookies onto it).
             "play": {
-                "origin": os.getenv("MAESTRO_PLAY_ORIGIN", ""),
-                "app_origin": os.getenv("MAESTRO_APP_ORIGIN", ""),
+                "origin": "",
+                "app_origin": "",
             },
             # Games playable by ANYONE from the landing page — the owner's curation, not a flag
             # any build can set. Two tiers: "showcase" is what the machine can achieve, "oneshot"
@@ -73,11 +70,11 @@ class SettingsManager:
             "demo_games": {"showcase": [], "oneshot": []},
             # EXCEPT "queues", which it replaces wholesale: the file must carry complete queue blocks.
             "runpod": {
-                "enabled": os.getenv("RUNPOD_ENABLED", "false").lower() == "true",
-                "api_key": os.getenv("RUNPOD_API_KEY", ""),
-                "network_volume_id": os.getenv("RUNPOD_NETWORK_VOLUME_ID", ""),
+                "enabled": False,
+                "api_key": "",
+                "network_volume_id": "",
                 "cloud_type": "SECURE",
-                "cp_url": os.getenv("RUNPOD_CP_URL", ""),
+                "cp_url": "",
                 "tick_seconds": 15,
                 "stale_worker_seconds": 180,
                 "queues": {}
@@ -118,11 +115,6 @@ class SettingsManager:
     def get_settings(self) -> Dict[str, Any]:
         with self._settings_lock:
             return self._settings.copy()
-
-    def get_category_settings(self):
-        with self._settings_lock:
-            category = self._settings.get("model_category", "large")
-        return DEFAULT_MODEL_CATEGORIES.get(category, ModelCategorySettings())
 
 
 settings_manager = SettingsManager()

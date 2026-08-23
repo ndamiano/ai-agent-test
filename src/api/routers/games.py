@@ -238,7 +238,6 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         "built": built and not staging_on,
         "building": active is not None or staging_on,
         "status": status,
-        "queue_position": None,   # kept for the client shape; builds don't queue behind each other
         "assets_exist": (game_dir(state.run_dir) / "assets.json").exists(),
         # Whether a previous attempt left files behind — what the from-scratch build would discard.
         "has_game": has_authored_files(state.run_dir),
@@ -421,7 +420,7 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
 
     # kickoff seeds the game folder before enqueueing the first llm turn, so it touches disk.
     await asyncio.to_thread(build_chain.kickoff, run_id, kind="build", fresh=body.fresh)
-    return {"status": "building", "run_id": run_id, "queue_position": 0}
+    return {"status": "building", "run_id": run_id}
 
 
 @router.post("/{run_id}/pause", response_model=Dict)
@@ -458,7 +457,7 @@ async def resume_game(run_id: str, user: User = Depends(get_current_user)):
         raise HTTPException(status_code=409, detail="no build to resume for this run")
     # A finished/failed build has no cursor to re-drive: start a fresh one over the on-disk game.
     await asyncio.to_thread(build_chain.kickoff, run_id, kind="build")
-    return {"status": "building", "run_id": run_id, "queue_position": 0}
+    return {"status": "building", "run_id": run_id}
 
 
 @router.post("/{run_id}/fix", response_model=Dict)
@@ -477,7 +476,7 @@ async def fix_game(run_id: str, body: FixBody, user: User = Depends(get_current_
         raise HTTPException(status_code=409, detail="a build or fix is already running for this run")
     await asyncio.to_thread(archive.ensure_local, run_id)
     await asyncio.to_thread(build_chain.kickoff, run_id, kind="fix", note=body.note)
-    return {"status": "fixing", "run_id": run_id, "queue_position": 0}
+    return {"status": "fixing", "run_id": run_id}
 
 
 @router.post("/{run_id}/assets", response_model=Dict)

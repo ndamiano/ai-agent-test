@@ -167,7 +167,8 @@ def test_a_blocked_prompt_tells_the_model_to_draw_it_instead(run_dir, monkeypatc
 def test_an_exhausted_budget_tells_the_model_to_draw_it_instead(run_dir):
     """The compute budget is the only cap on how much art a build may ask for — there is no call
     limit, because a refused enqueue already says so in words the model can act on."""
-    store.add_seconds_used(RUN, 10_000.0)
+    with store._db() as conn:
+        conn.execute("UPDATE games SET seconds_used = 10000 WHERE id = ?", (RUN,))
     out = request_media(RUN, run_dir, "goblin", "a goblin")
     assert out["ok"] is False and "draw this one with code" in out["error"]
     assert _image_jobs() == []

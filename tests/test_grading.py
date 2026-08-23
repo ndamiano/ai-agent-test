@@ -90,7 +90,7 @@ def test_a_grade_round_trips(client, grades_dir):
     assert r.json()["saved"].startswith(run_id)
     assert len(list(grades_dir.glob("*.json"))) == 1
 
-    got = client.get(f"/api/admin/grades/{run_id}/history", headers=_auth(tok)).json()["grades"]
+    got = grading.history(run_id)
     assert len(got) == 1
     assert got[0]["run_id"] == run_id and got[0]["graded_at"]
     assert got[0]["considered"] == 6
@@ -112,7 +112,7 @@ def test_regrading_keeps_the_earlier_grade(client, monkeypatch):
     client.post(f"/api/admin/grades/{run_id}", json=first, headers=_auth(tok))
     client.post(f"/api/admin/grades/{run_id}", json=dict(_filled(), considered=8), headers=_auth(tok))
 
-    got = client.get(f"/api/admin/grades/{run_id}/history", headers=_auth(tok)).json()["grades"]
+    got = grading.history(run_id)
     assert [g["considered"] for g in got] == [4, 8]
 
     assert client.get(f"/api/admin/grades/{run_id}", headers=_auth(tok)).json()["previous"] == 2
@@ -124,7 +124,7 @@ def test_a_corrupt_grade_file_does_not_hide_the_rest(client, grades_dir):
     client.post(f"/api/admin/grades/{run_id}", json=_filled(), headers=_auth(tok))
     (grades_dir / f"{run_id}__20260101T000000Z.json").write_text("{not json", encoding="utf-8")
 
-    got = client.get(f"/api/admin/grades/{run_id}/history", headers=_auth(tok)).json()["grades"]
+    got = grading.history(run_id)
     assert len(got) == 1
 
 
@@ -144,7 +144,7 @@ def test_a_grade_records_the_revision_that_built_the_game(client, monkeypatch):
                                            headers=_auth(tok)).json()
 
     client.post(f"/api/admin/grades/{run_id}", json=_filled(), headers=_auth(tok))
-    got = client.get(f"/api/admin/grades/{run_id}/history", headers=_auth(tok)).json()["grades"]
+    got = grading.history(run_id)
     # The LAST build wins: a fix build is part of what is being graded.
     assert got[0]["maestro_rev"] == "def5678-dirty"
 

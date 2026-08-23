@@ -12,9 +12,11 @@ from auth import store
 # routers proves the whole surface.
 GATED_PATHS = [
     "/api/games",
-    "/api/agents/",
-    "/api/system/status",
-    "/api/chat",
+    "/api/events",
+    "/api/billing",
+    "/api/admin",
+    "/api/admin/prompts/games",
+    "/api/admin/grades",
 ]
 
 

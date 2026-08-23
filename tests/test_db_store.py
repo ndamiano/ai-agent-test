@@ -42,13 +42,6 @@ def test_charge_grants_seconds_and_is_durable():
     assert (row["credits_spent"], row["seconds_granted"]) == (2, 28_800)
 
 
-def test_seconds_used_accumulates():
-    store.create_game("g1", "u1")
-    store.add_seconds_used("g1", 12.5)
-    store.add_seconds_used("g1", 7.5)
-    assert store.game("g1")["seconds_used"] == 20.0
-
-
 def test_build_lifecycle():
     store.create_game("g1", "u1")
     bid = store.create_build("g1", kind="build")

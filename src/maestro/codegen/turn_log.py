@@ -2,7 +2,7 @@
 
 A build turn's request IS the whole transcript so far, so a jobs row per turn stores the same
 conversation once per turn (measured 2026-07-31: 951 MB of `jobs.payload`, 26 MB for one 117-turn
-build). This log stores each message ONCE: the system prompt and the six tool schemas are
+build). This log stores each message ONCE: the system prompt and the eight tool schemas are
 byte-identical on every turn of a build, so they ride a single `meta` record, and a `turn` record
 carries only what that turn ADDED. Turn k is exactly `meta.system` + `meta.tools` +
 `concat(added[0..k])`.

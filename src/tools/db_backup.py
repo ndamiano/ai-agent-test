@@ -21,7 +21,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Dict, List, Tuple
+from typing import List, Tuple
 
 from tools import s3
 

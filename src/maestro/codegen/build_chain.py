@@ -23,7 +23,7 @@ from db import store as db_store
 from llm_clients.connector import get_connector
 from maestro.codegen import (artifact_screen, asset_use, build_state, build_steps, error_gate,
                              snapshots, turn_log)
-from maestro.codegen.build_state import BuildCursor
+from maestro.codegen.build_state import DEFAULT_MAX_STEPS, BuildCursor
 from maestro.codegen.staging import entry_path, game_dir, stage_for_play
 from maestro.codegen.tools import build_tools
 from maestro.state import RunState
@@ -47,13 +47,11 @@ def _lock_for(run_id: str) -> threading.Lock:
 
 
 def kickoff(run_id: str, *, kind: str = "build", note: str = "", fresh: bool = False,
-            max_steps: Optional[int] = None) -> str:
+            max_steps: int = DEFAULT_MAX_STEPS) -> str:
     """Create the build attempt row and start the build. Returns the build_id.
 
     `fresh` starts over an EMPTY game folder — the from-scratch button, and only that. A plain
     re-trigger and a resume carry the folder forward, and a fix edits it on purpose."""
-    if max_steps is None:
-        max_steps = 200
     build_id = db_store.create_build(run_id, kind=kind)
     db_store.build_started(build_id)
     start_build(run_id, build_id, kind=kind, note=note, fresh=fresh, max_steps=max_steps)
@@ -130,7 +128,7 @@ def status_of(run_id: str) -> Optional[Dict]:
 
 
 def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = "",
-                fresh: bool = False, max_steps: int = 200) -> None:
+                fresh: bool = False, max_steps: int = DEFAULT_MAX_STEPS) -> None:
     """Kick a build off: write the initial cursor and advance once (which enqueues the first llm
     turn, then returns). A FIX re-enters the same turn machine with the note as its request — the
     model lists and reads the files itself, so there is nothing to hand it up front."""
@@ -180,12 +178,10 @@ def _seed(rs: RunState) -> None:
 
 def on_completion(run_id: str, build_id: str, result: Optional[Dict], error: Optional[str],
                   job_id: str, exec_seconds: float) -> None:
-    """Drive the next step after a build llm turn lands, and ARCHIVE the turn that just landed. The
-    result arrives in raw Responses shape off the queue — normalize it to chat before applying. A
+    """Drive the next step after a build llm turn lands, and ARCHIVE the turn that just landed. A
     worker-reported error is carried THROUGH: a turn the server refused is not a turn that answered
     with nothing, and the model can only act on the difference if it is told which one happened."""
-    raw = result if (error is None and result) else {}
-    advance(run_id, get_connector().to_chat(raw),
+    advance(run_id, result if (error is None and result) else {},
             landed={"job_id": job_id, "exec_seconds": exec_seconds, "error": error})
 
 
@@ -344,7 +340,7 @@ def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") ->
 
     try:
         return _enqueue()
-    except db_store.InsufficientCompute as e:
+    except db_store.InsufficientCompute:
         released = db_store.abandon_pending_batch_jobs(
             run_id, "preempted: the build needs the remaining compute")
         if released:

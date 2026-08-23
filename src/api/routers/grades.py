@@ -101,8 +101,3 @@ async def submit_grade(run_id: str, body: Grade,
     name = grading.save(run_id, body.model_dump(), maestro_rev=_built_by(run_id))
     return {"saved": name}
 
-
-@router.get("/{run_id}/history", response_model=Dict)
-async def grade_history(run_id: str, user: User = Depends(require_admin)) -> Dict[str, Any]:
-    _owned_spec(run_id, user)
-    return {"grades": grading.history(run_id)}

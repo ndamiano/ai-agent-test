@@ -7,13 +7,11 @@ knows or cares which engine is behind a queue — adding one is a worker change.
 
 import logging
 import time
-import uuid
 from typing import Optional
 
 from config.settings_manager import settings_manager
 from db import queue_client
 from llm_clients.rate_limiter import get_llm_rate_limiter
-from llm_clients.wire import REASONING_EFFORTS as _REASONING_EFFORTS
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +48,6 @@ class LLMConnector:
         self.reasoning = _resolve_effort(reasoning)
         self.queue = queue
         self.job_timeout_seconds = job_timeout_seconds
-        self._response_format_supported = True
         self._context_length: Optional[int] = None
 
     def get_context_length(self) -> Optional[int]:
@@ -60,65 +57,35 @@ class LLMConnector:
             self._context_length = int(n_ctx) if n_ctx else None
         return self._context_length
 
-    def generate_with_tools(self, messages: list, tools: list = None,
-                            response_format: dict = None, max_tokens: int = None,
-                            reasoning=_REASONING_UNSET, model: str = None,
-                            temperature: float = None) -> dict:
+    def generate_with_tools(self, messages: list, tools: list = None, max_tokens: int = None,
+                            reasoning=_REASONING_UNSET, temperature: float = None) -> dict:
         rate_limiter = get_llm_rate_limiter()
         if not rate_limiter.acquire(blocking=True, timeout=10):
             error_msg = "Rate limit exceeded: too many LLM requests"
             logger.warning(error_msg)
             return {"error": error_msg}
 
-        payload = self._payload(messages, tools, response_format, max_tokens,
-                                reasoning=reasoning, model=model, temperature=temperature)
+        payload = self._payload(messages, tools, max_tokens, reasoning=reasoning,
+                                temperature=temperature)
         t0 = time.perf_counter()
         job = self._run_job(payload)
         if job["status"] == "done":
-            result = self.to_chat(job["result"])
+            result = job["result"] or {}
             _log_call(payload["model"], len(messages), bool(tools),
                       time.perf_counter() - t0, result)
             return result
-        # A server that rejects the structured-output field degrades to free-form rather than
-        # failing the whole call.
         error = job.get("error") or "job lost"
-        if response_format and "format" in error:
-            logger.warning("Endpoint does not support structured output, retrying without it")
-            self._response_format_supported = False
-            payload.pop("text", None)
-            payload.pop("response_format", None)
-            job = self._run_job(payload)
-            if job["status"] == "done":
-                return self.to_chat(job["result"])
-            error = job.get("error") or "job lost"
         logger.error("LLM call (%s) failed: %s", self.model_name, error)
         return {"error": error}
 
-    def generate_with_tools_stream(self, messages: list, tools: list = None):
-        """The queue is request/response; streaming callers get the full reply as one chunk."""
-        result = self.generate_with_tools(messages, tools)
-        if "error" in result:
-            yield {"error": result["error"]}
-            return
-        msg = result["choices"][0]["message"]
-        yield {"id": f"queue-{uuid.uuid4().hex[:8]}", "choices": []}
-        if msg.get("content"):
-            yield {"choices": [{"index": 0, "delta": {"content": msg["content"]}}]}
-        for i, tc in enumerate(msg.get("tool_calls") or []):
-            yield {"choices": [{"index": 0, "delta": {"tool_calls": [{**tc, "index": i}]}}]}
-        finish = "tool_calls" if msg.get("tool_calls") else "stop"
-        yield {"usage": result.get("usage", {}),
-               "choices": [{"index": 0, "delta": {}, "finish_reason": finish}]}
-
-    def _payload(self, messages: list, tools: list, response_format, max_tokens,
-                 reasoning=_REASONING_UNSET, model: str = None,
+    def _payload(self, messages: list, tools: list, max_tokens, reasoning=_REASONING_UNSET,
                  temperature: float = None) -> dict:
         """The CANONICAL request body — OpenAI chat shape, plus `reasoning` as a plain effort string.
 
         Sampling is the SERVER's: penalties and template switches are launch flags, so a default
         here would silently override whatever the operator chose."""
         payload = {
-            "model": model or self.model_name,
+            "model": self.model_name,
             "messages": messages,
             "temperature": 0.7 if temperature is None else temperature,
         }
@@ -132,8 +99,6 @@ class LLMConnector:
             payload["reasoning"] = effort
         if tools:
             payload["tools"] = tools
-        if response_format and self._response_format_supported:
-            payload["response_format"] = response_format
         return payload
 
     def _run_job(self, payload: dict) -> dict:
@@ -148,13 +113,8 @@ class LLMConnector:
         """Build the (queue payload, model) for one request WITHOUT enqueuing or waiting — the
         fire-and-forget seam the build chain uses: it lands the job itself (with build metadata) and
         drives the next turn from the completion, rather than blocking on run_job."""
-        body = self._payload(messages, tools, None, max_tokens, reasoning=reasoning)
+        body = self._payload(messages, tools, max_tokens, reasoning=reasoning)
         return {"kind": "llm", "body": body}, body.get("model")
-
-    def to_chat(self, result: dict) -> dict:
-        """Results come off the queue already canonical — the worker translated them. Kept as the
-        seam callers go through, so a future dialect has one place to land."""
-        return result or {}
 
 
 _cached_connector: Optional[LLMConnector] = None

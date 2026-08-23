@@ -1,5 +1,6 @@
 import logging
 import os
+from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException, Request
@@ -9,7 +10,41 @@ from fastapi.middleware.cors import CORSMiddleware
 # schema map, so they only exist when MAESTRO_DEV=1 (same switch run.py keys reload on).
 _dev = os.getenv("MAESTRO_DEV") == "1"
 
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    await event_bus.start()
+    logging.info("Event bus started")
+
+    # Unconditional, unlike the autoscaler below: a wedged job, a dropped asset finalize, or a
+    # stuck build (its driver process died mid-turn) needs reaping on the home box too.
+    app.state.reaper = Reaper()
+    app.state.reaper.start()
+    logging.info("Queue reaper started")
+
+    app.state.db_backup = DbBackup()
+    app.state.db_backup.start()
+
+    _rp = settings_manager.get_settings().get("runpod") or {}
+    if _rp.get("enabled") and _rp.get("api_key"):
+        app.state.autoscaler = Autoscaler(
+            SqliteStatsSource(), RunPodClient(_rp["api_key"]),
+            settings_manager.get_settings)
+        app.state.autoscaler.start()
+        logging.info("RunPod autoscaler started")
+
+    yield
+
+    if getattr(app.state, "autoscaler", None):
+        app.state.autoscaler.stop()
+    app.state.db_backup.stop()
+    app.state.reaper.stop()
+    await event_bus.shutdown()
+    logging.info("Event bus stopped")
+
+
 app = FastAPI(
+    lifespan=_lifespan,
     title="AI Agent API",
     description="API for AI agent management and task execution",
     version="1.0.0",
@@ -34,7 +69,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.routers import (admin, billing, demos, events, games, grades, prompts, system, websocket,
+from api.routers import (admin, billing, demos, events, games, grades, prompts, websocket,
                          workqueue)
 from api.websocket.event_bus import event_bus
 from auth.deps import install_auth
@@ -49,55 +84,12 @@ from scaler.stats import SqliteStatsSource
 # Gate every route behind a valid bearer token (public paths + the WebSocket handle themselves).
 install_auth(app)
 
-@app.on_event("startup")
-async def startup_event():
-    try:
-        await event_bus.start()
-        logging.info("Event bus started")
-
-        # Unconditional, unlike the autoscaler below: a wedged job, a dropped asset finalize, or a
-        # stuck build (its driver process died mid-turn) needs reaping on the home box too.
-        app.state.reaper = Reaper()
-        app.state.reaper.start()
-        logging.info("Queue reaper started")
-
-        app.state.db_backup = DbBackup()
-        app.state.db_backup.start()
-
-        _settings = settings_manager.get_settings()
-        _rp = _settings.get("runpod") or {}
-        if _rp.get("enabled") and _rp.get("api_key"):
-            app.state.autoscaler = Autoscaler(
-                SqliteStatsSource(), RunPodClient(_rp["api_key"]),
-                settings_manager.get_settings)
-            app.state.autoscaler.start()
-            logging.info("RunPod autoscaler started")
-
-    except Exception as e:
-        logging.error(f"Startup error: {str(e)}")
-        raise HTTPException(status_code=500, detail="Server startup failed")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    try:
-        if getattr(app.state, "autoscaler", None):
-            app.state.autoscaler.stop()
-        if getattr(app.state, "db_backup", None):
-            app.state.db_backup.stop()
-        if getattr(app.state, "reaper", None):
-            app.state.reaper.stop()
-        await event_bus.shutdown()
-        logging.info("Event bus stopped")
-    except Exception as e:
-        logging.error(f"Shutdown error: {str(e)}")
-
 @app.get("/healthz", response_model=Dict[str, Any])
 async def healthz():
     """Liveness probe. (`/` serves the SPA in a deployed build, so health lives here.)"""
     return {"status": "healthy", "server": "running"}
 
 app.include_router(auth_router, prefix="/auth", tags=["auth"])
-app.include_router(system.router, prefix="/api/system", tags=["system"])
 app.include_router(websocket.router, prefix="/api", tags=["websocket"])
 app.include_router(games.router, prefix="/api/games", tags=["games"])
 app.include_router(events.router, prefix="/api/events", tags=["events"])

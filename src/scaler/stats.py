@@ -11,7 +11,6 @@ from db import store
 
 class QueueStats(NamedTuple):
     pending: int
-    claimed: int
     oldest_pending_age_seconds: Optional[float]
 
 
@@ -31,7 +30,7 @@ class StatsSource(Protocol):
 class SqliteStatsSource:
     def queue_stats(self, queue: str) -> QueueStats:
         s = store.queue_stats(queue)
-        return QueueStats(s["pending"], s["claimed"], s["oldest_pending_age_seconds"])
+        return QueueStats(s["pending"], s["oldest_pending_age_seconds"])
 
     def live_workers(self, queue: str, freshness_seconds: float) -> List[WorkerInfo]:
         return [WorkerInfo(w["id"], w["pod_id"])

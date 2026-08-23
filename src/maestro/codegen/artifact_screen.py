@@ -9,7 +9,6 @@ Only the model's own files are read: the vendored renderer is not the game's tex
 assets have no text to screen.
 """
 
-from pathlib import Path
 from typing import Optional, Tuple
 
 from maestro.codegen.staging import game_dir, is_vendored

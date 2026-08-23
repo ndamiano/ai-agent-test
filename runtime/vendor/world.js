@@ -293,7 +293,7 @@ void splat(int i, vec2 uv, vec2 dx, vec2 dy, float wear, out vec3 albedo, out ve
   };
 }
 
-function terrainMaterial(job, uniforms, count) {
+function terrainMaterial(uniforms, count) {
   const chunks = terrainChunks(count);
   const material = new THREE.MeshStandardMaterial({ roughness: 1.0, metalness: 0.0 });
   material.onBeforeCompile = (shader) => {
@@ -412,13 +412,6 @@ class World {
     return (a * (1 - fx) + b * fx) * (1 - fz) + (c * (1 - fx) + d * fx) * fz;
   }
 
-  /* Ground normal, from the height field's own slope. */
-  normalAt(x, z, step = 1.0) {
-    const dx = this.heightAt(x + step, z) - this.heightAt(x - step, z);
-    const dz = this.heightAt(x, z + step) - this.heightAt(x, z - step);
-    return new THREE.Vector3(-dx, 2 * step, -dz).normalize();
-  }
-
   /* The first collider a circle of `radius` at (x, z) overlaps, or null. Each is
    * a cylinder around a placed mesh — the cheapest shape that stops a player
    * walking through a church, and the one a game can also use for line of sight. */
@@ -432,9 +425,8 @@ class World {
   }
 }
 
-function buildTerrain(job, heights, sample) {
+function buildTerrain(job, sample) {
   const grid = job.mesh_resolution;
-  const res = job.resolution;
   const size = job.size_m;
   const side = grid + 1;
   const positions = new Float32Array(side * side * 3);
@@ -494,7 +486,7 @@ function readColliders(world) {
   }
 }
 
-async function placeGroups(world, base, loader) {
+async function placeGroups(world, base) {
   const gltf = new GLTFLoader();
   const environment = skyEnvironment();
   const entries = Object.entries(world.job.instances);
@@ -565,7 +557,7 @@ export function configureView(renderer, scene, world) {
   }
 }
 
-export async function loadWorld(url, { meshes = true, renderer = null, scene = null } = {}) {
+export async function loadWorld(url, { renderer = null, scene = null } = {}) {
   const base = url.slice(0, url.lastIndexOf('/') + 1);
   const job = await (await fetch(url)).json();
   const heights = new Float32Array(await (await fetch(base + job.heightmap)).arrayBuffer());
@@ -618,7 +610,6 @@ export async function loadWorld(url, { meshes = true, renderer = null, scene = n
     // away the ground is ever seen from.
     uDetailNear: { value: job.size_m * 0.25 },
     uDetailFar: { value: job.size_m * 0.9 },
-    uSunDir: { value: new THREE.Vector3() },
   };
 
   // The snow line is the world's OWN relief, read off the height field rather
@@ -632,15 +623,15 @@ export async function loadWorld(url, { meshes = true, renderer = null, scene = n
 
   const elevation = THREE.MathUtils.degToRad(job.sun_elevation_deg);
   const azimuth = THREE.MathUtils.degToRad(job.sun_azimuth_deg);
-  uniforms.uSunDir.value.set(
+  const sunDir = new THREE.Vector3(
     Math.cos(elevation) * Math.sin(azimuth),
     Math.sin(elevation),
     Math.cos(elevation) * Math.cos(azimuth),
   ).normalize();
 
   const terrain = new THREE.Mesh(
-    buildTerrain(job, heights, (x, z) => world.heightAt(x, z)),
-    terrainMaterial(job, uniforms, count),
+    buildTerrain(job, (x, z) => world.heightAt(x, z)),
+    terrainMaterial(uniforms, count),
   );
   // Casting as well as receiving: a mountain that does not shade its own east
   // face at nine in the morning is a painted backdrop, and it is the single
@@ -674,7 +665,7 @@ export async function loadWorld(url, { meshes = true, renderer = null, scene = n
   // over the corner leaves everything past its edge clamped to the border of
   // the map, which draws whole villages in full shade under a midday sun.
   sun.target.position.copy(centre);
-  sun.position.copy(centre).addScaledVector(uniforms.uSunDir.value, job.size_m);
+  sun.position.copy(centre).addScaledVector(sunDir, job.size_m);
   sun.castShadow = true;
   sun.shadow.mapSize.set(4096, 4096);
   const reach = job.size_m * 0.75;
@@ -706,7 +697,7 @@ export async function loadWorld(url, { meshes = true, renderer = null, scene = n
   configureView(renderer, scene, world);
 
   readColliders(world);
-  if (meshes) await placeGroups(world, base, loader);
+  await placeGroups(world, base);
   await Promise.all(pending);
   return world;
 }

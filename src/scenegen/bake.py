@@ -1,11 +1,9 @@
-"""The platform face of scenegen: bake_scene writes a game-ready ground image and its logic file
-into the game folder, synchronously — pure CPU, so a build turn can wait for it.
+"""bake_scene writes an interior's ground image and its logic file into the game folder,
+synchronously — pure CPU, so a build turn can wait for it. Outdoor archetypes go through
+codegen/scene_chain.py instead.
 
-The split the tool contract encodes: the model asks for a PLACE (archetype + style + seed) and
-gets back pixels it never has to reason about plus a scene.json it must read — door cells, the
-walkable grid, POIs. Part sprites are code-drawn from a style-keyed palette for now; rendering
-them through the image queue in the game's own style is the marked upgrade, and it changes only
-the kit construction here.
+The model asks for a PLACE (archetype + style + seed) and gets back pixels it never has to reason
+about plus a scene.json it must read — the walkable grid and the rooms.
 """
 
 import json
@@ -14,14 +12,10 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 
-from scenegen.compose import compose_scene, paste_with_shadow, zone_masks
-from scenegen.ground import band_inside, band_outside, cell_mask, flat_speckle
-from scenegen.kit import BuildingKit
-from scenegen.layouts import glade_layout, town_layout
+from scenegen.ground import band_inside, cell_mask, flat_speckle
 from scenegen.light import COLD, WARM, apply_lights
-from scenegen.scatter import Scatterer
 
 CELL = 48
 MAX_CELLS = 64
@@ -53,24 +47,6 @@ def _palette(style: str):
     return _PALETTES["default"]
 
 
-def _drawn_part(w: int, h: int, body, edge) -> Image.Image:
-    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    d.rounded_rectangle([0, 0, w - 1, h - 1], 4, fill=body + (255,), outline=edge + (255,),
-                        width=2)
-    d.line([(w // 2, 4), (w // 2, h - 4)], fill=edge + (255,), width=1)
-    return im
-
-
-def _kit(pal) -> BuildingKit:
-    _, _, _, _, wall, trim, roof, door_c, win_c = pal
-    door = _drawn_part(30, 42, door_c, tuple(int(c * 0.6) for c in door_c))
-    win = _drawn_part(28, 26, win_c, trim)
-    return BuildingKit(door=door, window=win, wall=wall,
-                       wall_seam=tuple(int(c * 0.95) for c in wall), trim=trim, roof=roof,
-                       eave_spread=6)
-
-
 def _clamp(v: Optional[int], default: int) -> int:
     try:
         return max(12, min(MAX_CELLS, int(v)))
@@ -83,8 +59,8 @@ def bake_scene(root: Path, scene_id: str, archetype: str, style: str,
                height_cells: Optional[int] = None) -> dict:
     if not scene_id:
         raise KeyError("id")
-    if archetype not in ("town", "glade", "interior", "dungeon"):
-        return {"ok": False, "error": "archetype must be one of town, glade, interior, dungeon"}
+    if archetype not in ("interior", "dungeon"):
+        raise ValueError(f"bake_scene takes interior or dungeon, not {archetype!r}")
     seed = int(seed) if seed is not None else random.Random(scene_id).randint(0, 9999)
     w, h = _clamp(width_cells, 26), _clamp(height_cells, 18)
     pal = _palette(style)
@@ -92,60 +68,20 @@ def bake_scene(root: Path, scene_id: str, archetype: str, style: str,
     ground_rel = f"assets/{scene_id}_ground.png"
     json_rel = f"assets/{scene_id}_scene.json"
 
-    if archetype == "town":
-        img, data = _bake_town(w, h, seed, pal)
-    elif archetype == "glade":
-        img, data = _bake_glade(w, h, seed, pal)
-    else:
-        img, data = _bake_rooms(w, h, seed, pal, dark=(archetype == "dungeon"))
+    img, data = _bake_rooms(w, h, seed, pal, dark=(archetype == "dungeon"))
 
     img.save(root / ground_rel)
     data.update({"archetype": archetype, "seed": seed, "cell_px": CELL,
                  "width_cells": w, "height_cells": h, "ground": ground_rel})
     (root / json_rel).write_text(json.dumps(data), encoding="utf-8")
     return {"ok": True, "files": [ground_rel, json_rel],
-            "note": f"scene built. Read {json_rel} for the walkable grid, door cells and points "
-                    f"of interest; draw {ground_rel} as the map background, one cell = "
+            "note": f"scene built. Read {json_rel} for the walkable grid and the rooms; "
+                    f"draw {ground_rel} as the map background, one cell = "
                     f"{CELL}px."}
 
 
 def _walkable_strings(walk: np.ndarray):
     return ["".join("1" if c else "0" for c in row) for row in walk]
-
-
-def _bake_town(w, h, seed, pal):
-    grass, speck, road_c, plaza_c, *_ = pal
-    lay = town_layout(w, h, seed)
-    kit = _kit(pal)
-    img, doors = compose_scene(lay, kit, cell=CELL, grass=grass, grass_speck=speck,
-                               road_color=road_c, plaza_color=plaza_c)
-    walk = np.ones((h, w), bool)
-    for gx, gy, wc, hw in lay.buildings:
-        walk[max(0, gy - 2):gy + hw, gx:gx + wc] = False
-    pys, pxs = np.where(lay.plaza)
-    plaza_center = [int(pxs.mean()), int(pys.mean())] if len(pxs) else [w // 2, h // 2]
-    return img, {"doors": [list(d) for d in doors], "plaza_center": plaza_center,
-                 "walkable": _walkable_strings(walk)}
-
-
-def _bake_glade(w, h, seed, pal):
-    grass, speck, *_ = pal
-    pw, ph = w * CELL, h * CELL
-    lay = glade_layout(pw, ph, seed)
-    img_np = flat_speckle(ph, pw, grass, speck, stripe_period=CELL)
-    img_np[~lay.clearing] = (img_np[~lay.clearing].astype(np.float32)
-                             * np.array([0.5, 0.6, 0.5])).astype(np.uint8)
-    water = np.array([70, 150, 190], np.uint8)
-    img_np[lay.pond] = water
-    img_np[band_inside(lay.pond, 14)] = (110, 190, 215)
-    img_np[band_outside(lay.pond, 6) & lay.clearing] = (110, 86, 60)
-    pil = Image.fromarray(img_np)
-    cellgrid = lambda m: m.reshape(h, CELL, w, CELL).mean((1, 3)) > 0.5
-    walk = cellgrid(lay.clearing & ~lay.pond)
-    pys, pxs = np.where(lay.pond)
-    pond_center = [int(pxs.mean()) // CELL, int(pys.mean()) // CELL] if len(pxs) else None
-    return pil, {"doors": [], "pond_center": pond_center,
-                 "walkable": _walkable_strings(walk)}
 
 
 def _bake_rooms(w, h, seed, pal, dark: bool):

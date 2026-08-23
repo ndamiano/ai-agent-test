@@ -4,17 +4,13 @@ Stdlib plus pydantic only.
 """
 from __future__ import annotations
 
-import dataclasses
 import inspect
 import types
 import typing
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-try:
-    from pydantic import BaseModel
-except ImportError:  # pragma: no cover
-    BaseModel = None  # type: ignore[assignment]
+from pydantic import BaseModel
 
 _PY_TO_JSON = {
     str: "string",
@@ -98,30 +94,7 @@ def _strip_titles(node: Any) -> Any:
 
 
 def _is_pydantic(annotation: Any) -> bool:
-    return (
-        BaseModel is not None
-        and inspect.isclass(annotation)
-        and issubclass(annotation, BaseModel)
-    )
-
-
-def _dataclass_schema(annotation: Any) -> dict[str, Any]:
-    props: dict[str, Any] = {}
-    required: list[str] = []
-    hints = typing.get_type_hints(annotation)
-    for f in dataclasses.fields(annotation):
-        sub = _schema_for(hints.get(f.name, f.type))
-        if isinstance(f.metadata, dict) and f.metadata.get("description"):
-            sub = {**sub, "description": f.metadata["description"]}
-        props[f.name] = sub
-        if f.default is dataclasses.MISSING and f.default_factory is dataclasses.MISSING:  # type: ignore[misc]
-            required.append(f.name)
-    return {
-        "type": "object",
-        "properties": props,
-        "required": required,
-        "additionalProperties": False,
-    }
+    return inspect.isclass(annotation) and issubclass(annotation, BaseModel)
 
 
 def _schema_for(annotation: Any) -> dict[str, Any]:
@@ -129,8 +102,6 @@ def _schema_for(annotation: Any) -> dict[str, Any]:
         return {"type": "string"}
     if _is_pydantic(annotation):
         return _strip_titles(_inline_refs(annotation.model_json_schema()))
-    if dataclasses.is_dataclass(annotation) and inspect.isclass(annotation):
-        return _dataclass_schema(annotation)
     origin = typing.get_origin(annotation)
     if origin is typing.Literal:
         return {"type": "string", "enum": list(typing.get_args(annotation))}
@@ -153,20 +124,12 @@ def _schema_for(annotation: Any) -> dict[str, Any]:
 def _coercer_for(annotation: Any) -> Callable[[Any], Any] | None:
     """Return a converter turning the model's raw JSON value into `annotation`."""
     if _is_pydantic(annotation):
-        return lambda v: annotation.model_validate(v) if isinstance(v, dict) else v
-    if dataclasses.is_dataclass(annotation) and inspect.isclass(annotation):
-        def build(v: Any) -> Any:
-            if not isinstance(v, dict):
-                return v
-            hints = typing.get_type_hints(annotation)
-            kwargs = {}
-            for f in dataclasses.fields(annotation):
-                if f.name not in v:
-                    continue
-                sub = _coercer_for(hints.get(f.name, f.type))
-                kwargs[f.name] = sub(v[f.name]) if sub else v[f.name]
-            return annotation(**kwargs)
-        return build
+        def parse(v: Any) -> Any:
+            if isinstance(v, str):  # some local models hand a nested object over as a JSON string
+                return annotation.model_validate_json(v)
+            return annotation.model_validate(v) if isinstance(v, dict) else v
+
+        return parse
     origin = typing.get_origin(annotation)
     if origin in (list, set, tuple):
         args = typing.get_args(annotation)
@@ -208,11 +171,6 @@ def signature_info(fn: Callable[..., Any]) -> tuple[dict[str, Any], dict[str, Ca
         "additionalProperties": False,
     }
     return schema, coercers
-
-
-def infer_schema(fn: Callable[..., Any]) -> dict[str, Any]:
-    """Build a JSON Schema object from a function signature."""
-    return signature_info(fn)[0]
 
 
 def tool(
@@ -260,4 +218,4 @@ def as_tool(obj: Any) -> Tool:
     raise TypeError(f"cannot interpret {obj!r} as a tool")
 
 
-__all__ = ["Tool", "tool", "as_tool", "infer_schema", "signature_info"]
+__all__ = ["Tool", "tool", "as_tool", "signature_info"]

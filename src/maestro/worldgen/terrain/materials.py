@@ -1,25 +1,13 @@
 """M_terrain: the surfaces the regions are covered in.
 
-Materials are built two ways. "The generative pathway produces texture
-channels such as albedo, normal, and roughness maps for local surfaces with
-complex appearance or irregular details. The procedural pathway programmatically
-assembles Blender material nodes to create tileable and parameter-adjustable
-surface materials for large-scale regions."
-
-This module is the generative pathway. It synthesises a PAIR of albedos per
-region from p_material — the surface and the variant it wears through to — then
-derives normal and roughness from each.
+Synthesises a PAIR of albedos per region from p_material — the surface and the
+variant it wears through to — then derives a normal map from each.
 
 Derived, not generated, and worth being plain about. A diffusion model asked for
 a normal map returns a picture of one — plausible pastel blue, uncorrelated with
 the albedo it is supposed to accompany. Deriving the normal from the albedo's
 own luminance gradient at least guarantees the bumps line up with the grains,
-which is the property that matters at grazing light. Roughness comes from local
-contrast: polished surfaces are locally smooth, weathered ones are not.
-
-The procedural pathway belongs with the renderer — it writes shader code, and
-what that code has to compile against is the terrain shader. It lives in the
-terrain construction stage, not here.
+which is the property that matters at grazing light.
 
 Every material is written with the metre width of one repeat beside it, because
 a texture without a scale is the single most visible error in a finished
@@ -33,11 +21,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageFilter
+from PIL import Image
 
 from tools.quilting import quilt_tile
 
-from ..backends import ImageModel
+from ..backends import ImageModel, ImageModelError
 from .models import TerrainPlan
 
 # A tiling texture must be homogeneous, and saying so is not optional. Asked for
@@ -60,32 +48,9 @@ from .models import TerrainPlan
 # of ground is made of, seen from a camera pointing straight down at it from
 # knee height, with nothing else in the world. That has to be the first thing
 # said and the last, because it is the one the prose is most likely to lose.
-TEXTURE_TEMPLATE = (
-    "A square of {surface}, seen from directly above, filling the whole frame. "
-    "{appearance} This is the ground itself at close range, one or two metres "
-    "across, as if a camera were held at knee height pointing straight down at "
-    "it: no horizon, no sky, no water's edge, no view of a place, nothing "
-    "standing on it and nothing to look at in it. Completely uniform and "
-    "homogeneous across the whole frame: the same fine surface detail "
-    "everywhere, no large features, no focal point, no single object anywhere. "
-    "Any repeating elements — stones, grains, blades, cracks — must be small and "
-    "numerous, dozens across the frame, none of them large enough to be picked "
-    "out on its own. Flat even overcast light, no shadows, sharp detail "
-    "throughout, seamless and tileable."
-)
-TEXTURE_NEGATIVE = (
-    "perspective, horizon, sky, clouds, distance, landscape, scenery, aerial "
-    "view, shoreline, water's edge, far bank, objects, people, text, watermark, "
-    "vignette, strong shadows, directional light, blurry, seams, border, frame, "
-    "illustration, "
-    # the features that turn a texture into a repeating landmark
-    "craters, holes, pits, tracks, tyre tracks, footprints, ruts, trails, paths, "
-    "boulders, large rocks, debris, wreckage, plants, bushes, focal point, "
-    "composition, landmark, distinct features, uneven detail, "
-    # elements big enough to be recognised are what makes a repeat visible
-    "large slabs, large tiles, large stones, large planks, few elements, "
-    "sparse pattern, regular grid, checkerboard"
-)
+_HERE = Path(__file__).parent
+TEXTURE_TEMPLATE = (_HERE / "texture_prompt.txt").read_text().strip()
+TEXTURE_NEGATIVE = (_HERE / "texture_negative.txt").read_text().strip()
 
 SIZE = 1536  # more grain per repeat, so a tile carries detail rather than shapes
 # What the quilt lays down. The render is an exemplar, not a tile: its edges do
@@ -106,8 +71,6 @@ def _texture(images: ImageModel, prompt: str, appearance: str, path: Path,
         height=size,
         seed=seed,
     )
-    if not path.exists():
-        return  # a refused render is one missing material, as everywhere else
     quilt_tile(Image.open(path), out_size=TILE, block=TILE // 4, overlap=TILE // 16,
                seed=seed).save(path)
 
@@ -160,23 +123,20 @@ def albedo(
             pool.submit(contextvars.copy_context().run, _one, *job) for job in pending
         ]
         for future in futures:
-            future.result()
+            try:
+                future.result()
+            except ImageModelError:
+                pass  # a refused render is one missing material; the stage goes on
     return made
 
 
-def derive_channels(albedo_png: Path | str, strength: float = 2.5) -> tuple[Path, Path]:
-    """Write a normal and a roughness map beside an albedo. Returns both paths.
+def derive_normal(albedo_png: Path | str, strength: float = 2.5) -> Path:
+    """Write a normal map beside an albedo and return its path.
 
-    The normal comes from the luminance gradient: treat brightness as height,
-    take its slope in x and y, and normalise. It is not a measurement of the
-    real surface — no image is — but its bumps are the albedo's own bumps, which
-    is what stops lighting from disagreeing with the picture.
-
-    Roughness comes from local contrast: the difference between the luminance
-    and a blurred copy of it. A surface with fine structure everywhere reads
-    rough; a smooth one reads polished. Mapped into a middling band rather than
-    the full range, because a fully smooth or fully rough ground is a mirror or
-    a chalkboard and neither exists outdoors.
+    From the luminance gradient: treat brightness as height, take its slope in x
+    and y, and normalise. It is not a measurement of the real surface — no image
+    is — but its bumps are the albedo's own bumps, which is what stops lighting
+    from disagreeing with the picture.
     """
     albedo_png = Path(albedo_png)
     image = Image.open(albedo_png).convert("RGB")
@@ -188,21 +148,7 @@ def derive_channels(albedo_png: Path | str, strength: float = 2.5) -> tuple[Path
     normal /= np.linalg.norm(normal, axis=-1, keepdims=True)
     normal_path = albedo_png.with_name(albedo_png.stem.replace("_albedo", "") + "_normal.png")
     Image.fromarray(((normal * 0.5 + 0.5) * 255).astype(np.uint8)).save(normal_path)
-
-    blurred = np.asarray(
-        Image.fromarray((luminance * 255).astype(np.uint8)).filter(
-            ImageFilter.GaussianBlur(4)
-        ),
-        np.float32,
-    ) / 255.0
-    contrast = np.abs(luminance - blurred)
-    spread = float(contrast.max()) or 1.0
-    roughness = 0.55 + 0.40 * np.clip(contrast / spread, 0.0, 1.0)
-    roughness_path = albedo_png.with_name(
-        albedo_png.stem.replace("_albedo", "") + "_roughness.png"
-    )
-    Image.fromarray((roughness * 255).astype(np.uint8)).save(roughness_path)
-    return normal_path, roughness_path
+    return normal_path
 
 
 def build(
@@ -212,14 +158,7 @@ def build(
     images: ImageModel | None = None,
     size: int = SIZE,
 ) -> Path:
-    """Generate every region's material and write the manifest. Returns its path.
-
-    Regions whose plan asked for the procedural pathway still get an albedo
-    here. Their shader is written later against the engine, and until it is, a
-    generated texture is a better placeholder than an untextured surface — the
-    manifest records which pathway each region actually asked for, so that stage
-    knows which ones it owns.
-    """
+    """Generate every region's material and write the manifest. Returns its path."""
     out_dir = Path(out_dir)
     albedos = albedo(plan, out_dir, images=images, size=size)
     rows = []
@@ -231,20 +170,17 @@ def build(
             "appearance": material.appearance,
             "variant": material.variant,
             "scale_m": material.scale_m,
-            "pathway": material.pathway,
         }
         for role, prefix in (("base", ""), ("variant", "variant_")):
             path = pair[role]
             if not path.exists():
                 continue  # a render the safety screen refused; the base alone still draws
-            normal, roughness = derive_channels(path)
             row[f"{prefix}albedo"] = str(path)
-            row[f"{prefix}normal"] = str(normal)
-            row[f"{prefix}roughness"] = str(roughness)
+            row[f"{prefix}normal"] = str(derive_normal(path))
         rows.append(row)
     manifest = out_dir / "materials.json"
     manifest.write_text(json.dumps(rows, indent=2))
     return manifest
 
 
-__all__ = ["albedo", "derive_channels", "build", "TEXTURE_TEMPLATE"]
+__all__ = ["albedo", "derive_normal", "build", "TEXTURE_TEMPLATE"]

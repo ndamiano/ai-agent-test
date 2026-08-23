@@ -1,0 +1,1 @@
+text, watermark, ui, map, diagram, people, vehicles, buildings, blurry, low detail, split screen, collage, illustration

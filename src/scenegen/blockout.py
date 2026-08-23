@@ -491,10 +491,11 @@ def _place_decorations(rnd: random.Random, decos: List[Placeable],
 
 
 def solve(plan: dict, request: str, seed: int, w: int = 48, h: int = 36) -> dict:
-    if not isinstance(plan, dict) or "terrain" not in plan or "placeables" not in plan:
-        plan = {"terrain": {"base": "grass", "features": []},
-                "placeables": [{"name": "plaza", "kind": "zone", "size": "large"}],
-                "constraints": [["central", "plaza"]]}
+    if not isinstance(plan, dict):
+        raise ValueError(f"scene plan is not a JSON object: {type(plan).__name__}")
+    missing = [k for k in ("terrain", "placeables") if k not in plan]
+    if missing:
+        raise ValueError(f"scene plan is missing {', '.join(missing)}")
 
     terrain = plan.get("terrain", {}) or {}
     base = terrain.get("base", "grass") if isinstance(terrain, dict) else "grass"

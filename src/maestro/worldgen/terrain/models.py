@@ -32,7 +32,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
+
+from ..llm import Strict
 
 # The predefined terrain categories of §2.2.2: "distinct colors to encode
 # predefined terrain categories". Predefined is the operative word — the layout
@@ -76,24 +78,16 @@ OperatorKind = Literal[
     "erosion",   # drainage-like smoothing and channelling
 ]
 
-MaterialPathway = Literal["procedural", "generative"]
-
 # How much structure a scattered thing has, which is what decides the triangle
 # budget its mesh is reconstructed at. The planner says which of these a category
 # is, because that is a fact about the object; the number of triangles that buys
-# is the pipeline's business and lives in `worldclaw.terrain.assets`.
+# is the pipeline's business and lives in `terrain.assets`.
 #
 # A budget is needed at all because reconstruction has no opinion: TRELLIS
 # returns the same ~50k triangles for a grass tuft as for a cathedral, and a
 # world scatters those thousands of times. Undergrowth at 50k is what made a
 # 600 m map cost 47M triangles.
 AssetDetail = Literal["simple", "moderate", "intricate"]
-
-
-class Strict(BaseModel):
-    """Reject unknown keys instead of silently dropping them."""
-
-    model_config = ConfigDict(extra="forbid")
 
 
 # -- theta_terrain: the numbers the height field is built from ---------------
@@ -348,11 +342,6 @@ class RegionMaterial(Strict):
         "repeat every metre or two; broken rock every five to ten. Getting this "
         "wrong is the most visible error in a finished terrain.",
     )
-    pathway: MaterialPathway = Field(
-        description="How to make it. 'generative' synthesises texture maps and "
-        "suits complex or irregular surfaces; 'procedural' builds an adjustable "
-        "node material and suits large uniform areas.",
-    )
 
 
 # -- P_terrain ---------------------------------------------------------------
@@ -440,23 +429,11 @@ class TerrainPlan(Strict):
     def region_ids(self) -> list[str]:
         return [r.region_id for r in self.layout]
 
-    def layout_for(self, region_id: str) -> RegionLayout:
-        return next(r for r in self.layout if r.region_id == region_id)
-
     def terrain_for(self, region_id: str) -> RegionTerrain:
         return next(r for r in self.terrain if r.region_id == region_id)
 
     def material_for(self, region_id: str) -> RegionMaterial:
         return next(r for r in self.materials if r.region_id == region_id)
-
-    def lowest_ground_m(self) -> float:
-        """The lowest the terrain plausibly reaches, for sanity-checking water."""
-        return min(
-            r.base_elevation_m
-            - sum(b.amplitude_m for b in r.noise) / 2
-            - sum(o.relief_m for o in r.operators if o.kind in ("canyon", "valley", "crater"))
-            for r in self.terrain
-        )
 
 
 __all__ = [
@@ -470,5 +447,4 @@ __all__ = [
     "GeomorphOp",
     "TerrainCategory",
     "OperatorKind",
-    "MaterialPathway",
 ]

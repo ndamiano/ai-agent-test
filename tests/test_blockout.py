@@ -80,12 +80,13 @@ def test_doors_match_buildings(result):
     assert len(result["scene"]["doors"]) == n_buildings
 
 
-@pytest.mark.parametrize("bad", [None, {}, {"terrain": {}}, {"placeables": []}])
-def test_malformed_plan_falls_back(bad):
-    out = solve(bad, "anywhere", 3)
-    walk = _walk_grid(out["scene"])
-    assert walk.any()
-    assert out["blockout"]["boxes"]
+@pytest.mark.parametrize("bad, missing", [
+    (None, "not a JSON object"), ({}, "terrain, placeables"),
+    ({"terrain": {}}, "placeables"), ({"placeables": []}, "terrain"),
+])
+def test_malformed_plan_is_reported_not_substituted(bad, missing):
+    with pytest.raises(ValueError, match=missing):
+        solve(bad, "anywhere", 3)
 
 
 def test_determinism():

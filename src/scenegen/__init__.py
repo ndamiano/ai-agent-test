@@ -1,22 +1,3 @@
-"""Scene composition: baked ground + kit-assembled structures + zone-scattered props + a light
-plan, rendered from a spec over a logic grid. Ported from the 2026-08-06 24-round exploration
-(record: the session's notebook artifact); the laws it encodes live in the project memory's
-tile-ground doctrine.
-
-A build reaches it through the compose_scene tool (codegen/tools.py); the GPU half is
-codegen/scene_chain.py. Nothing here enqueues or talks to a GPU itself — part sprites and
-material exemplars arrive as images (parts.py builds the payloads a caller can put on the
-image queue).
-
-The division the rounds settled: code owns everything spatial and semantic — layouts, footprints,
-door cells, adjacency, scatter zones, light — and diffusion paints materials and parts. Structures
-are assembled from reused parts so every door is identical and sits on a cell game logic knows;
-restyling happens at the part level, never by img2img over an assembled building (measured: no
-denoise both keeps structure and changes style).
+"""Code-baked interiors: a rooms ground image and its logic grid (bake.py), and the blockout
+solver the GPU scene pipeline in codegen/scene_chain.py places outdoor maps with (blockout.py).
 """
-
-from scenegen.compose import compose_scene
-from scenegen.kit import BuildingKit, assemble
-from scenegen.layouts import glade_layout, town_layout
-
-__all__ = ["compose_scene", "BuildingKit", "assemble", "town_layout", "glade_layout"]

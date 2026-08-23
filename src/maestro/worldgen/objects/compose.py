@@ -23,17 +23,12 @@ from ..backends import ImageModel
 from ..planning.models import ScenePlan
 from ..terrain.models import TerrainPlan
 from ..terrain.render import render
-from .camera import Camera, frame_width_for, region_camera
+from .camera import ELEVATION_DEG, Camera, frame_width_for, region_camera
 from .models import RegionalSpec
 
-# What must not appear. A composition that adds people or invents a horizon has
-# stopped being an edit of our terrain, and everything downstream reads it as if
-# it were still that terrain.
-COMPOSITION_NEGATIVE = (
-    "text, watermark, ui, map, diagram, collage, split screen, illustration, "
-    "cartoon, people, faces, animals, different terrain, changed horizon, "
-    "changed camera angle, blurry, low detail"
-)
+# A composition that adds people or invents a horizon has stopped being an edit of
+# our terrain, and everything downstream reads it as if it were still that terrain.
+COMPOSITION_NEGATIVE = (Path(__file__).parent / "composition_negative.txt").read_text().strip()
 
 
 def describe(spec: RegionalSpec, scene: ScenePlan, camera: Camera, frame_m: float) -> str:
@@ -48,7 +43,7 @@ def describe(spec: RegionalSpec, scene: ScenePlan, camera: Camera, frame_m: floa
         f"horizon, same camera. Add objects standing on it.",
         f"",
         f"The view spans about {frame_m:.0f} m of ground from left to right, "
-        f"looking down at about {_pitch_deg(camera):.0f} degrees.",
+        f"looking down at about {ELEVATION_DEG:.0f} degrees.",
         f"",
         f"This is {spec.function}",
         f"",
@@ -77,13 +72,6 @@ def describe(spec: RegionalSpec, scene: ScenePlan, camera: Camera, frame_m: floa
         "clearly separated from the others, resting on the ground.",
     ]
     return "\n".join(lines)
-
-
-def _pitch_deg(camera: Camera) -> float:
-    position = np.asarray(camera.position, dtype=float)
-    target = np.asarray(camera.target, dtype=float)
-    direction = target - position
-    return float(np.degrees(np.arcsin(-direction[1] / np.linalg.norm(direction))))
 
 
 def terrain_view(

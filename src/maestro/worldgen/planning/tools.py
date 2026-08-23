@@ -313,9 +313,5 @@ class PlanBuilder:
             objects=self.objects,
         )
 
-    def to_dict(self) -> dict:
-        """The finished plan as plain JSON-ready data."""
-        return self.finish().model_dump(exclude_none=True)
-
 
 __all__ = ["IntentBuilder", "PlanBuilder"]

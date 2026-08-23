@@ -21,7 +21,6 @@ from pathlib import Path
 import numpy as np
 
 from .camera import sample_height
-from .place import glb_bounds
 
 # A mesh whose shortest axis is this thin relative to its longest is a billboard
 # rather than an object. TRELLIS2 returns one whenever the crop it was given is
@@ -84,14 +83,14 @@ def inspect(
         "defects": [],
     }
 
-    mesh = item.get("mesh")
-    if mesh and Path(mesh).exists():
+    from .place import glb_bounds
+
+    mesh = item["mesh"]
+    if Path(mesh).exists():
         low, high = glb_bounds(mesh)
         extent = np.asarray(high) - np.asarray(low)
         longest = float(extent.max()) or 1.0
         thinnest = float(extent.min())
-        report["mesh_extent"] = [round(float(v), 3) for v in extent]
-        report["flatness"] = round(thinnest / longest, 4)
         if thinnest / longest < SLAB_RATIO:
             report["defects"].append(
                 f"mesh is a flat slab ({thinnest / longest:.3f} thickness to length): "
@@ -102,13 +101,11 @@ def inspect(
         return report
 
     clearances = footprint(height, size_m, item["position"], float(item["size_m"]))
-    report["clearance_m"] = [round(c, 2) for c in clearances]
     object_height = max(float(item["height_m"]), 0.05)
     float_limit = FLOAT_TOLERANCE * object_height
     sink_limit = SINK_TOLERANCE * object_height
     in_contact = [c for c in clearances if -sink_limit <= c <= float_limit]
     support = len(in_contact) / len(clearances)
-    report["support"] = round(support, 2)
 
     highest = max(clearances)
     lowest = min(clearances)

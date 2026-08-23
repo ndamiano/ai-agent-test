@@ -8,7 +8,6 @@ import numpy as np
 
 WARM = (1.20, 1.09, 0.88)
 COLD = (0.85, 0.95, 1.25)
-FIRE = (1.45, 1.12, 0.80)
 
 Pool = Tuple[float, float, float, Tuple[float, float, float]]   # x, y, radius, tint
 

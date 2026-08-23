@@ -143,7 +143,7 @@ class TerrainPlanBuilder:
             waiting = sorted(self.known - {m.region_id for m in self.materials})
             return (
                 f"{material.region_id!r}: {material.surface!r} worn to "
-                f"{material.variant!r} via {material.pathway}, "
+                f"{material.variant!r}, "
                 f"repeating every {material.scale_m:g} m; "
                 f"still missing materials: {waiting or ['<none>']}"
             )

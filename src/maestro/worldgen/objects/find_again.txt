@@ -1,0 +1,1 @@
+Keep going. Record any object you have not recorded yet, then call finish_objects when there is nothing left.

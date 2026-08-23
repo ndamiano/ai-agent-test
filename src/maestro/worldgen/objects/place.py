@@ -1,28 +1,7 @@
-"""Object placement: recover each instance's world position, scale and yaw.
-
-The composition was generated from a render of terrain we built, so the camera
-that took it is known exactly and every instance pixel is a ray into the world.
-Placement is recovering, for each instance, where along its ray the object sits
-and how big it is.
-
-Scale could come from pairing the object reconstruction camera's focal length
-and depth against the terrain camera's, but TRELLIS2 returns a mesh normalised
-into a unit box with no camera and no pose, so that ratio is not available and
-pretending otherwise would mean inventing a focal length. Instead, scale is read
-off the one camera available: an instance subtending w pixels at depth Z through
-focal f spans `w * Z / f` metres, and the mesh is scaled so its own longest
-horizontal dimension matches. It keeps the property that matters, which is that
-the object ends up the size it looks.
-
-The anchor is the bottom of the box rather than its centre: a centre ray through
-a tall object lands on terrain well behind where the object stands, without a
-mesh-side intersection to correct it. The bottom of the box is where the object
-meets the ground, which is the point we actually want.
-
-The contact search then slides the anchor along the camera ray and rescales
-together so the 2D projection is preserved -- the object stays exactly where the
-image put it -- and keeps the depth at which the object sits on the ground
-rather than through it or above it.
+"""Object placement: each instance's world position, scale and yaw, recovered along the
+ray its box's bottom edge casts through the camera that rendered the composition, then
+slid along that ray until it sits on the ground. TRELLIS2 returns a unit-box mesh with no
+camera, so scale is read off the one camera there is: `w * Z / f`.
 """
 from __future__ import annotations
 
@@ -33,6 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from .camera import Camera, cast, sample_height
+from .diagnose import footprint
 
 # How far the search may move an object along its ray, as a fraction of the
 # depth the anchor ray found. Small: the ray is right, the depth along it is
@@ -50,8 +30,6 @@ SEARCH_STEPS = 29
 # never move it by more than the ratio below.
 TO_PLANNER = 0.75
 SIZE_CLAMP = 1.35
-
-CONTACT_TOLERANCE_M = 0.08  # of the object's own height
 
 
 def glb_bounds(path: Path | str) -> tuple[np.ndarray, np.ndarray]:
@@ -87,10 +65,8 @@ def glb_bounds(path: Path | str) -> tuple[np.ndarray, np.ndarray]:
 def anchor_pixel(bbox: tuple[int, int, int, int]) -> tuple[float, float]:
     """Where the object meets the ground, in image coordinates.
 
-    The bottom edge of the box, at its horizontal centre. A segmentation mask's
-    bottom edge would give nearly the same answer -- over every instance of the
-    cliff city the two definitions sat 0.28 m apart in the median, which is
-    below what the size blend below is doing to the object anyway.
+    The bottom edge of the box, at its horizontal centre: a centre ray through a
+    tall object lands on terrain well behind where it stands.
     """
     x0, y0, x1, y1 = bbox
     return (x0 + x1) * 0.5, float(y1)
@@ -128,10 +104,8 @@ def place_instance(
         np.clip(blended, stated_m / SIZE_CLAMP, stated_m * SIZE_CLAMP)
     )
 
-    bounds = None
     if mesh is not None and Path(mesh).exists():
         low, high = glb_bounds(mesh)
-        bounds = (low, high)
         extent = high - low
         longest = float(max(extent[0], extent[2])) or 1.0
         object_height_m = float(extent[1]) * (world_m / longest)
@@ -145,9 +119,7 @@ def place_instance(
     direction = np.asarray(camera.position) - np.asarray(camera.target)
     yaw_deg = float(np.degrees(np.arctan2(direction[0], direction[2])))
 
-    seated = _seat(
-        camera, height, size_m, px, py, depth, world_m, object_height_m, bounds
-    )
+    seated = _seat(camera, height, size_m, px, py, depth, world_m)
     return {
         "index": row["index"],
         "category": row["category"],
@@ -159,12 +131,7 @@ def place_instance(
         # measured from as well, since that is the quantity the image gave us.
         "height_m": float(object_height_m * seated["ratio"]),
         "size_m": float(world_m * seated["ratio"]),
-        "measured_m": measured_m,
         "stated_m": stated_m,
-        "clamped": bool(abs(measured_m - world_m) > 1e-6),
-        "depth_m": float(depth * seated["ratio"]),
-        "contact": seated["contact"],
-        "anchor_px": [px, py],
     }
 
 
@@ -176,8 +143,6 @@ def _seat(
     py: float,
     depth: float,
     world_m: float,
-    object_height_m: float,
-    bounds: tuple[np.ndarray, np.ndarray] | None,
 ) -> dict:
     """Slide along the ray, preserving projection, and keep the best contact.
 
@@ -192,18 +157,15 @@ def _seat(
     for ratio in np.linspace(1.0 - SEARCH_RANGE, 1.0 + SEARCH_RANGE, SEARCH_STEPS):
         point = origin + direction * (depth / _forward(camera, direction) * ratio)
         ground = sample_height(height, size_m, point[0], point[2])
-        clearance = float(point[1] - ground)
-        footprint = _footprint_error(
-            height, size_m, point, world_m * ratio, ground
-        )
-        tolerance = max(CONTACT_TOLERANCE_M * object_height_m * ratio, 0.02)
-        score = abs(clearance) + footprint
+        clearances = footprint(height, size_m, [point[0], ground, point[2]], world_m * ratio)
+        # an object seated at one sample floats at one corner and buries the other
+        # on any slope, so the spread under its footprint counts against it
+        score = abs(float(point[1] - ground)) + (max(clearances) - min(clearances)) * 0.5
         if best is None or score < best["score"]:
             best = {
                 "score": score,
                 "ratio": float(ratio),
                 "position": [point[0], ground, point[2]],
-                "contact": float(max(0.0, 1.0 - score / max(tolerance, 1e-6))),
             }
     return best
 
@@ -214,37 +176,14 @@ def _forward(camera: Camera, direction: np.ndarray) -> float:
     return float(np.clip(direction @ axis, 1e-6, 1.0))
 
 
-def _footprint_error(
-    height: np.ndarray,
-    size_m: float,
-    point: np.ndarray,
-    world_m: float,
-    ground: float,
-) -> float:
-    """How uneven the ground is under the object, in metres.
-
-    An object seated at a single sample floats at one corner and buries the
-    other on any slope. This is the spread of the terrain under its footprint,
-    which the score then trades off against the anchor's own clearance.
-    """
-    radius = max(world_m * 0.5, 0.05)
-    offsets = np.array([[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]]) * radius
-    samples = [
-        sample_height(height, size_m, point[0] + dx, point[2] + dz)
-        for dx, dz in offsets
-    ]
-    return float(max(samples) - min(samples)) * 0.5
-
-
 def place(
     rows: list[dict],
     camera: Camera,
     height: np.ndarray,
     size_m: float,
-    meshes: dict[int, Path] | None = None,
+    meshes: dict[int, Path],
 ) -> list[dict]:
     """Place every extracted instance. Instances that miss the ground are dropped."""
-    meshes = meshes or {}
     placed = []
     for row in rows:
         result = place_instance(

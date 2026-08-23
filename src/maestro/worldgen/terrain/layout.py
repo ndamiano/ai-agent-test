@@ -20,8 +20,7 @@ disjoint patches of the same category scattered across the frame — which a
 disc-edit can't produce.
 
 So the arrangement is described rather than drawn, and the disc map survives
-only as a spatial prior for reading membership back out. `draw_by_redraw()` is
-kept for a world whose regions genuinely are one blob each.
+only as a spatial prior for reading membership back out.
 
 Reading membership back out is the hard half. The model does not hold a palette
 exactly: asked for four colours it returns ten, drifted in hue and lightness,
@@ -46,7 +45,7 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 from ..backends import ImageModel
-from .models import RegionLayout, TerrainCategory, TerrainPlan
+from .models import RegionLayout, TerrainPlan
 
 # Distinct colours for the predefined terrain categories. Chosen to be far apart
 # in hue AND lightness, because the readback scores in CIELAB and two categories
@@ -88,20 +87,15 @@ SPATIAL_W = 0.55        # weight of the plan's arrangement against the drawn col
 REFITS = 2              # re-estimate each region's colour, then score again
 OUTLIER_T = 34.0        # Lab distance past which a pixel is no drawn colour at all
 MIN_SHARE = 0.005       # a region below this share of the map means the read failed
-DENOISE = 0.90          # how far the redraw may travel from the disc map
 
-NEGATIVE = (
-    "photograph, perspective, shading, gradient, texture, objects, text, "
-    "watermark, new colours, blurry, soft focus, labels, legend, "
-    # everything the map idioms drag in uninvited. A "fantasy game map" arrives
-    # with rivers, a green surround and hatched relief; a "segmentation mask"
-    # drifts photographic and comes back with shaded terrain. Both are colours
-    # no region claims, and every one of them has to be grown back into a
-    # neighbour at readback.
-    "rivers, water, lakes, coastline, grass, green, vegetation, mountains, "
-    "hills, relief shading, hatching, contour lines, outlines, black lines, "
-    "roads, paths, borders, background, unfilled areas, compass, grid"
-)
+_HERE = Path(__file__).parent
+LAYOUT_PROMPT = (_HERE / "layout_prompt.txt").read_text().strip()
+# The negative carries everything the map idioms drag in uninvited. A "fantasy
+# game map" arrives with rivers, a green surround and hatched relief; a
+# "segmentation mask" drifts photographic and comes back with shaded terrain.
+# Both are colours no region claims, and every one of them has to be grown back
+# into a neighbour at readback.
+LAYOUT_NEGATIVE = (_HERE / "layout_negative.txt").read_text().strip()
 
 
 def assign_colours(plan: TerrainPlan) -> dict[str, tuple[int, int, int]]:
@@ -110,7 +104,7 @@ def assign_colours(plan: TerrainPlan) -> dict[str, tuple[int, int, int]]:
     used: set[tuple[int, int, int]] = set()
     spares = iter(SPARE_COLOURS)
     for row in plan.layout:
-        colour = CATEGORY_COLOURS.get(row.category, (128, 128, 128))
+        colour = CATEGORY_COLOURS[row.category]
         if colour in used:
             colour = next(spares)
         used.add(colour)
@@ -189,40 +183,6 @@ def disc_owner(plan: TerrainPlan, resolution: int) -> np.ndarray:
     return cost.argmin(axis=0).astype(np.int32)
 
 
-def instruction(plan: TerrainPlan, colours: dict[str, tuple[int, int, int]]) -> str:
-    """The redraw prompt: same colours, same places, real boundaries.
-
-    The swatches say WHERE each region is. They do not say what kind of place it
-    is, and a model told only "wiggle these edges" wiggles them all the same
-    way. Naming the categories is what makes a boundary between a plateau and a
-    flat come back looking like an escarpment.
-
-    The wording is stronger than it reads. Asked politely for "natural rather
-    than circular" boundaries at a denoise of 0.62, this model returns the discs
-    back with their arcs very slightly bent — a redraw that changed nothing. It
-    takes both the explicit refusal of arcs and a denoise near 0.9 before real
-    erosional spurs and inlets appear, and the colours survive that: they are
-    restated every step, and the readback re-estimates them anyway.
-    """
-    swatches = "; ".join(
-        f"{row.region_id.replace('-', ' ')} ({row.category.replace('-', ' ')}) = "
-        f"RGB({colours[row.region_id][0]},{colours[row.region_id][1]},"
-        f"{colours[row.region_id][2]})"
-        for row in plan.layout
-    )
-    return (
-        "This is a top-down map of a landscape, drawn as flat blocks of solid "
-        f"colour. The coloured areas are: {swatches}. Redraw the same map with "
-        "these exact colours in the same places, but make every boundary natural "
-        "rather than circular: strongly irregular, jagged, lobed edges with deep "
-        "inlets and protruding spurs, like a geological survey map. No arcs, no "
-        "circles, no smooth curves. Every part of the square is one of "
-        "those colours. Use ONLY those colours — no new colours, no in-between "
-        "shades, no blending at the edges. Flat solid colours, no shading, no "
-        "texture, no labels, top-down map."
-    )
-
-
 def _where(row: RegionLayout) -> str:
     """The plan's numeric placement, said the way a map illustrator would hear it."""
     x, y = row.center
@@ -264,15 +224,7 @@ def description(plan: TerrainPlan, colours: dict[str, tuple[int, int, int]]) -> 
             f"{_where(row)}{neighbours}"
         )
     areas = "; ".join(parts)
-    return (
-        "A land cover classification map, top-down, flat categorical colours "
-        f"only. The classes are: {areas}. Each class appears as several separate "
-        "irregular patches with winding organic outlines, interlocking with its "
-        "neighbours rather than sitting as one round blob. The classes tile the "
-        "entire square edge to edge with no gaps. Flat solid fills only — no "
-        "shading, no gradients, no in-between shades, no blending at the edges, "
-        "no outlines, no text, no labels, no grid, no border."
-    )
+    return LAYOUT_PROMPT.format(areas=areas)
 
 
 def draw(
@@ -308,43 +260,9 @@ def draw(
     return images.generate(
         description(plan, colours),
         out_dir / "layout.png",
-        negative=NEGATIVE,
+        negative=LAYOUT_NEGATIVE,
         width=resolution,
         height=resolution,
-        seed=seed,
-    )
-
-
-def draw_by_redraw(
-    plan: TerrainPlan,
-    out_dir: Path | str,
-    *,
-    images: ImageModel | None = None,
-    resolution: int = RESOLUTION,
-    denoise: float = DENOISE,
-    seed: int = 17,
-) -> Path:
-    """Redraw the analytic disc map instead of generating one.
-
-    Keeps the planned arrangement almost exactly and pays for it in structure:
-    what comes back is the discs with irregular edges, never interleaved
-    patches. Worth having when a world's regions really are one contiguous area
-    each — a single island, a single crater — and worth avoiding otherwise.
-    """
-    out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    colours = assign_colours(plan)
-
-    discs = out_dir / "layout_discs.png"
-    disc_map(plan, colours, resolution).save(discs)
-
-    images = images or ImageModel()
-    return images.edit(
-        instruction(plan, colours),
-        [discs],
-        out_dir / "layout.png",
-        negative=NEGATIVE,
-        denoise=denoise,
         seed=seed,
     )
 
@@ -464,15 +382,7 @@ def weights_from(
         )
         masks.append(np.asarray(soft, np.float32) / 255.0)
     weights = np.stack(masks)
-    total = weights.sum(axis=0, keepdims=True)
-    # every pixel belongs somewhere: where the blur has cancelled out, fall back
-    # to hard ownership rather than dividing by nothing
-    empty = total[0] < 1e-6
-    if empty.any():
-        for index in range(len(weights)):
-            weights[index][empty] = (owner[empty] == index).astype(np.float32)
-        total = weights.sum(axis=0, keepdims=True)
-    return weights / np.maximum(total, 1e-6)
+    return weights / weights.sum(axis=0, keepdims=True)
 
 
 def read_back(
@@ -544,10 +454,8 @@ __all__ = [
     "assign_colours",
     "disc_map",
     "disc_weights",
-    "instruction",
     "description",
     "draw",
-    "draw_by_redraw",
     "classify",
     "weights_from",
     "read_back",

@@ -11,6 +11,7 @@ import pytest
 
 from maestro.worldgen.backends import images as images_mod
 from maestro.worldgen.backends import meshes as meshes_mod
+from maestro.worldgen.seed import seed_for
 from tools.execution_context import run_scope
 
 
@@ -193,7 +194,7 @@ def test_every_reconstruction_carries_a_seed(monkeypatch, tmp_path):
 
     meshes_mod.MeshModel().reconstruct(
         [tmp_path / "a.png", tmp_path / "b.png"], tmp_path / "out", verbose=False)
-    assert sorted(seen) == sorted([meshes_mod._seed_for("a"), meshes_mod._seed_for("b")])
+    assert sorted(seen) == sorted([seed_for("a") % 100_000, seed_for("b") % 100_000])
 
     seen.clear()
     meshes_mod.MeshModel().reconstruct(

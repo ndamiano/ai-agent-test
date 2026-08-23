@@ -79,16 +79,6 @@ class Camera:
         """Focal length in pixels. Square pixels, so one number covers both axes."""
         return (self.height * 0.5) / np.tan(np.deg2rad(self.fov_deg) * 0.5)
 
-    @property
-    def intrinsics(self) -> np.ndarray:
-        """K_t, the 3x3 pinhole matrix this render corresponds to."""
-        f = self.focal_px
-        return np.array([
-            [f, 0.0, self.width * 0.5],
-            [0.0, f, self.height * 0.5],
-            [0.0, 0.0, 1.0],
-        ])
-
     def ray(self, px: float, py: float) -> np.ndarray:
         """Unit direction in world space through pixel `(px, py)`.
 

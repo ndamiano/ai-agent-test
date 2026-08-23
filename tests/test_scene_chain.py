@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -31,7 +30,7 @@ def env(tmp_path):
          patch.object(asset_store, "resolve_types", return_value=dict(RESOLVED)), \
          patch.object(scene_chain.RunState, "__init__",
                       lambda self, run_id: setattr(self, "run_dir", run_dir) or None), \
-         patch.object(scene_chain, "_game_root", lambda rd: run_dir / "game"):
+         patch.object(scene_chain, "game_dir", lambda rd: run_dir / "game"):
         yield SimpleNamespace(run_dir=run_dir, root=run_dir / "game", store=store)
 
 

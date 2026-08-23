@@ -19,7 +19,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
+
+from ..llm import Strict
 
 Placement = Literal[
     "center",
@@ -49,12 +51,6 @@ RelationType = Literal[
     "connects_to",
     "faces",
 ]
-
-class Strict(BaseModel):
-    """Reject unknown keys instead of silently dropping them."""
-
-    model_config = ConfigDict(extra="forbid")
-
 
 # -- stage 1a: intent analysis -------------------------------------------
 # Extraction only. Absent means the user did not say it; do not fill it in.

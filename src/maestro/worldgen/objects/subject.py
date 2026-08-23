@@ -1,57 +1,18 @@
-"""Turning an instance in a composition into something reconstructable.
-
-TRELLIS2 is handed a crop of the region composition, and for a whole class of
-subject that crop cannot be reconstructed from. Measured on the jungle town:
-foliage and open lattice structures come back as flat cards at any source
-resolution, while closed opaque volumes reconstruct fine at 76 pixels. Size was
-never the discriminator -- a 331 px fence failed and a 76 px barrel succeeded.
-
-What the crop actually gives the model is a subject at a shallow near-orthographic
-angle, blurred by upscaling, cut out by a segmentation mask with holes in it, and
-sharing the frame with whatever ground and neighbours fell inside its box.
-
-So the subject is re-drawn rather than re-cut. A vision model looks at the crop
-and writes down what the thing is; a text-to-image model draws that from nothing,
-whole and isolated and lit, at full resolution and from an angle that shows its
-depth; and that is what gets reconstructed.
-
-The cost is honest and worth stating: this is no longer the same object the
-composition drew. It is an object of the same kind, described from it. Position
-and size still come from the instance mask and are unaffected, so what drifts is
-identity, not placement.
+"""Redraw each found subject from its description rather than reconstruct its crop: a
+shallow-angle composition crop comes back from TRELLIS2 as a flat card for foliage and
+open lattices, a redrawn subject does not (measured, see docs/experiments.md).
 """
 from __future__ import annotations
 
-import base64
 from pathlib import Path
 
 from ..backends import ImageModel
 
-DEFAULT_MODEL = "qwen3.8_27b"
-
-# Appended to whatever the vision model wrote. This half is about what makes an
-# image reconstructable rather than about what the object is: one subject, whole,
-# lit from several directions so its form reads, and seen from an angle that has
-# depth in it. The crops fail partly because a shallow camera gives almost no
-# parallax to infer thickness from.
-SUBJECT_STYLE = (
-    "Single object, complete and unobstructed, centred and filling the frame. "
-    "Three-quarter view from slightly above, showing its depth and thickness. "
-    "Plain flat mid-grey background. Soft even studio lighting from several "
-    "directions. Sharp focus, high detail, photographic."
-)
-
-SUBJECT_NEGATIVE = (
-    "blurry, low detail, cropped, cut off, partial object, multiple objects, "
-    "scenery, landscape, ground, floor, horizon, cast shadow, text, watermark, "
-    "flat, front view, orthographic"
-)
-
-
-def _image_part(path: Path) -> dict:
-    data = base64.b64encode(Path(path).read_bytes()).decode()
-    return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{data}"}}
-
+_HERE = Path(__file__).parent
+# Appended to whatever the vision model wrote: what makes an image reconstructable,
+# not what the object is.
+SUBJECT_STYLE = (_HERE / "subject_style.txt").read_text().strip()
+SUBJECT_NEGATIVE = (_HERE / "subject_negative.txt").read_text().strip()
 
 # How far the drawing canvas may depart from square. A canvas shaped like the
 # object is the whole point; a canvas shaped like a letterbox gives the model

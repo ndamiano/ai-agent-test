@@ -13,31 +13,23 @@ generated at this stage and nothing touches the image model.
 """
 from __future__ import annotations
 
-import base64
 import json
 from pathlib import Path
 
-from ..llm import LLMHarness, Message
+from ..llm import LLMHarness, Message, image_part
 from ..planning.models import ScenePlan
 from ..terrain.models import TerrainPlan
 from .models import RegionalPlan
 from .tools import RegionalPlanBuilder
 
-DEFAULT_MODEL = "qwen3.8_27b"
-
 _HERE = Path(__file__).parent
 REGIONAL_PROMPT = (_HERE / "regional_prompt.txt").read_text().strip()
+BRIEFING = (_HERE / "regional_briefing.txt").read_text().strip()
 
 # The top-down view says where the regions actually ended up; the obliques say
 # what they look like standing in them. Both questions matter to this stage, and
 # more views than this costs context without adding evidence.
 DEFAULT_VIEWS = ("view_top.png", "view_0.png", "view_2.png")
-
-
-def _image_part(path: Path) -> dict:
-    """One render, as the content part an OpenAI-compatible endpoint expects."""
-    data = base64.b64encode(path.read_bytes()).decode()
-    return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{data}"}}
 
 
 def views_in(out_dir: Path | str, names: tuple[str, ...] = DEFAULT_VIEWS) -> list[Path]:
@@ -53,14 +45,11 @@ def _briefing(scene: ScenePlan, terrain: TerrainPlan) -> str:
     answers — which regions are underserved — cannot be answered from a summary
     of either, because the gap between them is exactly what a summary loses.
     """
-    return (
-        f"Scene plan for {scene.name!r}:\n"
-        f"{json.dumps(scene.model_dump(exclude_none=True), indent=1)}\n\n"
-        f"Terrain specification that was built from it:\n"
-        f"{json.dumps(terrain.model_dump(exclude_none=True), indent=1)}\n\n"
-        f"Renders of the world as it now stands: a top-down view of the whole "
-        f"{terrain.world.size_m:g} m map, then oblique views from two sides.\n\n"
-        f"Decide which regions to populate with objects."
+    return BRIEFING.format(
+        name=scene.name,
+        scene=json.dumps(scene.model_dump(exclude_none=True), indent=1),
+        terrain=json.dumps(terrain.model_dump(exclude_none=True), indent=1),
+        size_m=terrain.world.size_m,
     )
 
 
@@ -69,7 +58,6 @@ def plan_regions(
     terrain: TerrainPlan,
     views: list[Path] | None = None,
     *,
-    model: str = DEFAULT_MODEL,
     temperature: float = 0.5,
 ) -> RegionalPlan:
     """Turn the scene plan and the built terrain into a regional plan.
@@ -80,14 +68,13 @@ def plan_regions(
     """
     builder = RegionalPlanBuilder(scene, terrain)
     harness = LLMHarness(
-        model=model,
         tools=builder.tools,
         system=REGIONAL_PROMPT,
         temperature=temperature,
     )
     message = Message("user", [
         {"type": "text", "text": _briefing(scene, terrain)},
-        *[_image_part(view) for view in (views or [])],
+        *[image_part(view) for view in (views or [])],
     ])
     harness.send_message_with_tools([message])
     return builder.finish()
@@ -97,14 +84,12 @@ def regional_stage(
     scene: ScenePlan,
     terrain: TerrainPlan,
     out_dir: Path | str,
-    *,
-    model: str = DEFAULT_MODEL,
 ) -> RegionalPlan:
     """Plan the regions and write the regional plan to `out_dir`."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    regional = plan_regions(scene, terrain, views_in(out_dir), model=model)
+    regional = plan_regions(scene, terrain, views_in(out_dir))
     (out_dir / "regional_plan.json").write_text(regional.model_dump_json(indent=2))
     return regional
 
@@ -114,5 +99,4 @@ __all__ = [
     "regional_stage",
     "views_in",
     "REGIONAL_PROMPT",
-    "DEFAULT_MODEL",
 ]

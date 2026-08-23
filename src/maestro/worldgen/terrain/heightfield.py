@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..seed import seed_for
 from .models import GeomorphOp, NoiseBand, RegionTerrain, TerrainPlan
 
 
@@ -28,8 +29,7 @@ def _rng(*parts: object) -> np.random.Generator:
     Seeded by name rather than by call order: adding an operator to one region
     must not reshuffle the peaks of another.
     """
-    seed = abs(hash("/".join(str(p) for p in parts))) % (2**32)
-    return np.random.default_rng(seed)
+    return np.random.default_rng(seed_for(*parts))
 
 
 def _grid(resolution: int) -> tuple[np.ndarray, np.ndarray]:

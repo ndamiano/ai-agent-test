@@ -11,7 +11,9 @@ fanned-out batch of image jobs rather than one at a time.
 Every stage writes its result before the next begins. A run that dies in
 reconstruction leaves a composition and its instances on disk, and rerunning
 skips what is already there -- which matters, because the composition is two
-minutes of image queue.
+minutes of image queue. Each subject is redrawn from its own description before
+reconstruction: the crop is a card, the redraw is a mesh (measured, see
+docs/experiments.md).
 """
 from __future__ import annotations
 
@@ -25,7 +27,7 @@ import numpy as np
 from ..backends import ImageModel, MeshModel
 from ..planning.models import ScenePlan
 from ..terrain.models import TerrainPlan
-from .camera import Camera, frame_width_for
+from .camera import Camera
 from .compose import compose, terrain_view
 from .extract import extract
 from .models import RegionalPlan, RegionalSpec
@@ -40,9 +42,6 @@ def region_objects(
     out_dir: Path | str,
     *,
     concept: Path | str | None = None,
-    overwrite: bool = False,
-    redraw: bool = True,
-    verbose: bool = True,
 ) -> list[dict]:
     """Compose, extract, reconstruct and place one region."""
     out_dir = Path(out_dir)
@@ -54,101 +53,60 @@ def region_objects(
     comp_png = out_dir / f"region_{region}_comp.png"
     instances_path = out_dir / f"instances_{region}.json"
 
-    # -- terrain render and camera --------------------------------------------
-    if overwrite or not (terrain_png.exists() and camera_path.exists()):
-        terrain_png, camera, frame_m = terrain_view(plan, spec, out_dir, height=height)
-        camera_path.write_text(json.dumps({**camera.to_dict(), "frame_m": frame_m}, indent=1))
-    else:
+    if terrain_png.exists() and camera_path.exists():
         stored = json.loads(camera_path.read_text())
         camera = Camera.from_dict(stored)
-        # frame_m is derivable from the spec, so a camera written before it was
-        # recorded is reusable rather than fatal
-        frame_m = float(
-            stored.get("frame_m")
-            or frame_width_for([o.typical_size_m for o in spec.objects])
-        )
-    if verbose:
-        print(f"[objects] {region}: {frame_m:.0f} m of ground in frame")
+        frame_m = float(stored["frame_m"])
+    else:
+        terrain_png, camera, frame_m = terrain_view(plan, spec, out_dir, height=height)
+        camera_path.write_text(json.dumps({**camera.to_dict(), "frame_m": frame_m}, indent=1))
+    print(f"[objects] {region}: {frame_m:.0f} m of ground in frame")
 
-    # -- composition, then the instances in it ---------------------------------
-    if overwrite or not instances_path.exists():
-        if overwrite or not comp_png.exists():
+    if instances_path.exists():
+        rows = json.loads(instances_path.read_text())
+    else:
+        if not comp_png.exists():
             compose(
                 spec, scene, terrain_png, camera, frame_m, comp_png,
                 images=ImageModel(), concept=concept,
             )
-            if verbose:
-                print(f"[objects] {region}: composed {comp_png.name}")
+            print(f"[objects] {region}: composed {comp_png.name}")
         # the plan's sizes anchor the categories it named; everything else the
         # grounding pass turns up keeps the size the vision model estimated
         sizes = {o.category.lower(): o.typical_size_m for o in spec.objects}
-        rows = extract(comp_png, camera, out_dir, sizes=sizes, verbose=verbose)
+        rows = extract(comp_png, out_dir, sizes=sizes)
         instances_path.write_text(json.dumps(rows, indent=1))
-    else:
-        rows = json.loads(instances_path.read_text())
-    if verbose:
-        print(f"[objects] {region}: {len(rows)} instances")
+    print(f"[objects] {region}: {len(rows)} instances")
     if not rows:
         return []
 
-    # -- re-draw each subject on its own --------------------------------------
-    # The crop is small, blurred, shot at a shallow angle, and shares its frame
-    # with whatever fell inside the box. Redrawn from a description of itself the
-    # subject is whole, isolated, lit, and seen from an angle with depth in it,
-    # which is the difference between a mesh and a card: measured on this world,
-    # a fence goes from 0.03 to 0.69 thickness-to-length and a shack 0.50 to 0.84.
-    #
-    # It is no longer the same object the composition drew, only one of the same
-    # kind described from it. Position and size come from the box, so what drifts
-    # is identity, not placement.
-    #
-    # The description was written when the object was recorded, by the model that
-    # was looking at it. A separate describing pass over the crops used to do
-    # this and no longer exists: asked to describe a list of boxes it wrote one
-    # sentence per KIND, so seven stalls in a row became seven copies of one
-    # stall.
-    if redraw:
-        drawn_dir = out_dir / "subjects" / region
-        drawn_dir.mkdir(parents=True, exist_ok=True)
-        images = ImageModel()
+    drawn_dir = out_dir / "subjects" / region
+    drawn_dir.mkdir(parents=True, exist_ok=True)
+    images = ImageModel()
 
-        def _draw_one(row: dict) -> Path:
-            drawn = drawn_dir / Path(row["image"]).name
-            if overwrite or not drawn.exists():
-                x0, y0, x1, y1 = row["bbox"]
-                subject_module.draw(
-                    row["prompt"], drawn, images=images,
-                    seed=row["index"] * 17 + 3,
-                    aspect=(y1 - y0) / max(x1 - x0, 1),
-                )
-            return drawn
+    def _draw_one(row: dict) -> Path:
+        drawn = drawn_dir / Path(row["image"]).name
+        if not drawn.exists():
+            x0, y0, x1, y1 = row["bbox"]
+            subject_module.draw(
+                row["prompt"], drawn, images=images,
+                seed=row["index"] * 17 + 3,
+                aspect=(y1 - y0) / max(x1 - x0, 1),
+            )
+        return drawn
 
-        with ThreadPoolExecutor(max_workers=min(16, len(rows))) as pool:
-            futures = {
-                pool.submit(contextvars.copy_context().run, _draw_one, row): row for row in rows
-            }
-            for future, row in futures.items():
-                try:
-                    row["drawn"] = str(future.result())
-                except Exception as e:  # noqa: BLE001 — one subject's failure, not the region's
-                    if verbose:
-                        print(f"[objects] {region}: subject [{row['index']}] failed to redraw: {e}")
-        (out_dir / f"instances_{region}.json").write_text(json.dumps(rows, indent=1))
-        if verbose:
-            print(f"[objects] {region}: redrew {sum(1 for r in rows if r.get('drawn'))}/{len(rows)} subjects")
+    with ThreadPoolExecutor(max_workers=min(16, len(rows))) as pool:
+        futures = {
+            pool.submit(contextvars.copy_context().run, _draw_one, row): row for row in rows
+        }
+        for future, row in futures.items():
+            row["drawn"] = str(future.result())
+    instances_path.write_text(json.dumps(rows, indent=1))
 
-    # -- reconstructed meshes --------------------------------------------------
-    # redrawn subjects go in their own directory: the GLB is named after its
-    # source image, and a redrawn subject keeps the crop's filename, so sharing
-    # a directory means every rerun silently reuses the crop-derived mesh it was
-    # meant to replace
-    mesh_dir = out_dir / "objects" / (f"{region}-drawn" if redraw else region)
-    rows = [row for row in rows if not redraw or row.get("drawn")]
     for row in rows:
-        row["mesh_source"] = row.get("drawn") or row["image"]
+        row["mesh_source"] = row["drawn"]
     produced = MeshModel().reconstruct(
-        [row["mesh_source"] for row in rows], mesh_dir,
-        overwrite=overwrite, verbose=verbose,
+        [row["mesh_source"] for row in rows], out_dir / "objects" / region
     )
     # keyed by the path as given, which is the string that went in -- looking it
     # up as a Path misses every entry and reports a total reconstruction failure
@@ -157,22 +115,21 @@ def region_objects(
         for row in rows
         if produced.get(row["mesh_source"]) is not None
     }
-    if verbose:
-        print(f"[objects] {region}: {len(meshes)}/{len(rows)} meshes reconstructed")
+    print(f"[objects] {region}: {len(meshes)}/{len(rows)} meshes reconstructed")
 
-    # -- placement ---------------------------------------------------------
     placed = place(rows, camera, height, plan.world.size_m, meshes)
+    sources = {row["index"]: row["mesh_source"] for row in rows}
     for item in placed:
         mesh = meshes.get(item["index"])
         item["region_id"] = region
         item["mesh"] = str(mesh) if mesh is not None else None
+        item["mesh_source"] = sources[item["index"]]
     placed = [item for item in placed if item["mesh"]]
-    if verbose:
-        dropped = len(rows) - len(placed)
-        print(
-            f"[objects] {region}: {len(placed)} placed"
-            + (f", {dropped} dropped (no mesh or no ground under them)" if dropped else "")
-        )
+    dropped = len(rows) - len(placed)
+    print(
+        f"[objects] {region}: {len(placed)} placed"
+        + (f", {dropped} dropped (no mesh or no ground under them)" if dropped else "")
+    )
     return placed
 
 
@@ -183,8 +140,6 @@ def generate_objects(
     out_dir: Path | str,
     *,
     concept: Path | str | None = None,
-    overwrite: bool = False,
-    redraw: bool = True,
 ) -> list[dict]:
     """Every selected region's objects, written to `objects.json`.
 
@@ -195,11 +150,7 @@ def generate_objects(
     everything: list[dict] = []
     for spec in regional.regions:
         everything.extend(
-            region_objects(
-                spec, scene, plan, out_dir,
-                concept=concept, overwrite=overwrite,
-                redraw=redraw,
-            )
+            region_objects(spec, scene, plan, out_dir, concept=concept)
         )
     (out_dir / "objects.json").write_text(json.dumps(everything, indent=1))
     return everything

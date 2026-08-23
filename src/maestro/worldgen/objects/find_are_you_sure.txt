@@ -1,0 +1,1 @@
+{count} objects recorded. Are you sure you are finished? Look over the picture once more -- small objects, things standing in a row, things partly hidden behind others -- record whatever is missing, then call finish_objects again when you are certain.

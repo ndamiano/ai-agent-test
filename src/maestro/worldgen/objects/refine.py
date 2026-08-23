@@ -20,29 +20,21 @@ world and not merely a different set of transforms.
 """
 from __future__ import annotations
 
-import base64
 import json
 from pathlib import Path
 
 import numpy as np
 
-from ..llm import LLMHarness, Message, tool
+from ..llm import LLMHarness, Message, image_part, tool
 from ..terrain.models import TerrainPlan
-from .camera import Camera, sample_height
+from .camera import Camera
 from .diagnose import footprint, summarise, survey
-
-DEFAULT_MODEL = "qwen3.8_27b"
 
 _HERE = Path(__file__).parent
 REFINE_PROMPT = (_HERE / "scene_refine_prompt.txt").read_text().strip()
 
 EMBED = 0.02      # of an object's height, so it rests in the ground not on it
 MAX_NUDGE_M = 3.0  # how far one call may move an object
-
-
-def _image_part(path: Path) -> dict:
-    data = base64.b64encode(path.read_bytes()).decode()
-    return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{data}"}}
 
 
 class SceneEditor:
@@ -354,9 +346,7 @@ def refine_scene(
     plan: TerrainPlan,
     *,
     rounds: int = 4,
-    model: str = DEFAULT_MODEL,
     region_cameras: list[Camera] | None = None,
-    verbose: bool = True,
 ) -> SceneEditor:
     """Run the refinement loop over every placed object in a world.
 
@@ -376,9 +366,7 @@ def refine_scene(
 
     cameras = region_cameras or _cameras_for(out_dir, objects)
 
-    harness = LLMHarness(
-        model=model, tools=editor.tools, system=REFINE_PROMPT, temperature=0.4,
-    )
+    harness = LLMHarness(tools=editor.tools, system=REFINE_PROMPT, temperature=0.4)
     for round_number in range(1, rounds + 1):
         editor.write(out_dir)
         views = render(
@@ -395,21 +383,18 @@ def refine_scene(
                 f"Views of the region with the objects in place follow. "
                 f"Fix what the report and the renders agree is wrong."
             )},
-            *[_image_part(view) for view in views],
+            *[image_part(view) for view in views],
         ])
         harness.send_message_with_tools([message])
 
         made = editor.changes[before:]
-        if verbose:
-            for change in made:
-                print(f"[scene] round {round_number}: {change}")
+        for change in made:
+            print(f"[scene] round {round_number}: {change}")
         if editor.done:
-            if verbose:
-                print(f"[scene] finished: {editor.summary}")
+            print(f"[scene] finished: {editor.summary}")
             break
         if not made:
-            if verbose:
-                print(f"[scene] round {round_number} made no changes — stopping")
+            print(f"[scene] round {round_number} made no changes — stopping")
             break
 
     editor.write(out_dir)
@@ -426,53 +411,32 @@ def _cameras_for(out_dir: Path, objects: list[dict]) -> list[Camera]:
     return cameras
 
 
-def apply_regenerations(
-    editor: SceneEditor,
-    out_dir: Path | str,
-    *,
-    verbose: bool = True,
-) -> int:
+def apply_regenerations(editor: SceneEditor, out_dir: Path | str) -> int:
     """Rebuild the meshes the agent queued, keeping their placements.
 
     TRELLIS2 takes only an image, with no coarse mesh to constrain the rebuild,
     so this is a re-roll at a new seed rather than a refinement: it fixes a slab
     that came from an unlucky sample and does nothing at all for one that came
-    from a crop too small or too dark to carry geometry. Which of those we have
-    is not yet established.
+    from a crop too small or too dark to carry geometry.
     """
     from ..backends import MeshModel
 
     if not editor.regenerate:
         return 0
     out_dir = Path(out_dir)
-    rows = {
-        item["index"]: item
-        for item in editor.objects
-        if item["index"] in editor.regenerate
-    }
-    images = [Path(item["mesh"]).with_suffix(".png") for item in rows.values()]
-    images = [
-        out_dir / "instances" / p.name if not p.exists() else p for p in images
-    ]
-    usable = [p for p in images if p.exists()]
-    if not usable:
-        if verbose:
-            print("[scene] nothing to regenerate: source images are missing")
-        return 0
+    rows = [item for item in editor.objects if item["index"] in editor.regenerate]
     produced = MeshModel().reconstruct(
-        usable, out_dir / "objects" / "regenerated",
-        seed=7919, overwrite=True, verbose=verbose,
+        [row["mesh_source"] for row in rows], out_dir / "objects" / "regenerated",
+        seed=7919, overwrite=True,
     )
     remade = 0
-    for item in rows.values():
-        source = out_dir / "instances" / Path(item["mesh"]).with_suffix(".png").name
-        glb = produced.get(str(source))
+    for item in rows:
+        glb = produced.get(item["mesh_source"])
         if glb is not None:
             item["mesh"] = str(glb)
             remade += 1
     editor.write(out_dir)
-    if verbose:
-        print(f"[scene] regenerated {remade} of {len(rows)} meshes")
+    print(f"[scene] regenerated {remade} of {len(rows)} meshes")
     return remade
 
 

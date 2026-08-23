@@ -33,7 +33,7 @@ from __future__ import annotations
 import base64
 import uuid
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any, Sequence
 
 from db.queue_client import run_job
 from maestro.worldgen import WORLD_JOB_TIMEOUT
@@ -78,7 +78,6 @@ class ImageModel:
     def __init__(self, *, timeout: float = WORLD_JOB_TIMEOUT) -> None:
         self.timeout = timeout
 
-    # -- the three capabilities -----------------------------------------------
 
     def generate(
         self,
@@ -92,7 +91,6 @@ class ImageModel:
         steps: int = STEPS,
         cfg: float = CFG,
         cutout: bool = False,
-        checkpoint: str = TXT2IMG_UNET,
     ) -> Path:
         """Draw `prompt` from nothing and write it to `out`, which is returned.
 
@@ -107,7 +105,7 @@ class ImageModel:
         self._screen(prompt)
         width, height = _snap(width), _snap(height)
         graph = {
-            "unet": _node("UNETLoader", unet_name=checkpoint, weight_dtype="default"),
+            "unet": _node("UNETLoader", unet_name=TXT2IMG_UNET, weight_dtype="default"),
             "clip": _node("CLIPLoader", clip_name=CLIP, type="qwen_image", device="default"),
             "vae": _node("VAELoader", vae_name=VAE),
             "sampling": _node("ModelSamplingAuraFlow", shift=SHIFT, model=["unet", 0]),
@@ -147,8 +145,6 @@ class ImageModel:
         steps: int = STEPS,
         cfg: float = CFG,
         denoise: float = 1.0,
-        cutout: bool = False,
-        checkpoint: str = EDIT_UNET,
     ) -> Path:
         """Redraw `images[0]` according to `prompt`, writing the result to `out`.
 
@@ -170,7 +166,7 @@ class ImageModel:
         uploads = [self._upload(p) for p in images]
         names = [u["name"] for u in uploads]
         graph: dict[str, Any] = {
-            "unet": _node("UNETLoader", unet_name=checkpoint, weight_dtype="default"),
+            "unet": _node("UNETLoader", unet_name=EDIT_UNET, weight_dtype="default"),
             "clip": _node("CLIPLoader", clip_name=CLIP, type="qwen_image", device="default"),
             "vae": _node("VAELoader", vae_name=VAE),
             "sampling": _node("ModelSamplingAuraFlow", shift=SHIFT, model=["unet", 0]),
@@ -196,17 +192,7 @@ class ImageModel:
             latent_image=["encode", 0],
         )
         graph["decode"] = _node("VAEDecode", samples=["sample", 0], vae=["vae", 0])
-        final = "decode"
-        if cutout:
-            graph["cutout"] = _node(
-                "BiRefNetRMBG",
-                model="BiRefNet-general", mask_blur=0, mask_offset=-1,
-                invert_output=False, refine_foreground=False,
-                background="Alpha", background_color="#ffffff",
-                image=["decode", 0],
-            )
-            final = "cutout"
-        graph["save"] = _node("SaveImage", images=[final, 0], filename_prefix="wc_edit")
+        graph["save"] = _node("SaveImage", images=["decode", 0], filename_prefix="wc_edit")
         return self._run_to(graph, out, uploads=uploads)
 
     # -- the queue --------------------------------------------------------------

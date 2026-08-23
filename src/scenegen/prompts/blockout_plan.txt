@@ -48,7 +48,6 @@ Fields:
   ["on_edge", A, DIR]       A sits by that map edge
   ["central", A]            A sits near the map center
   ["beside_road", A]        A touches the street
-  ["inside", A, Z]          A stands inside zone Z
   A, B are placeable names written exactly as in placeables. A constraint on a counted
   placeable applies to every copy.
 
@@ -75,7 +74,6 @@ Worked example — request: "a farming hamlet in the plains", seed 7:
     ["on_edge", "scarecrow field", "east"],
     ["far", "old stone windmill", "harvest square"],
     ["near", "hay cart", "grain barn"],
-    ["inside", "well", "harvest square"]
   ]
 }
 

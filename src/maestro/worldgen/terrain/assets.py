@@ -21,17 +21,12 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from ..backends import ImageModel, MeshModel
-from .models import TerrainAsset, TerrainPlan
+from ..backends import ImageModel, ImageModelError, MeshModel
+from .models import TerrainPlan
 
-# What an image-to-3D model needs and a scene photograph never gives it: the
-# whole object, no crop, no companions, no ground it is standing on.
-SUBJECT_TEMPLATE = (
-    "{appearance} A single isolated {category}, alone on a plain white "
-    "background, the entire object visible and centred, photographed from a "
-    "three-quarter view slightly above, even diffuse light, sharp focus, "
-    "no shadow on the ground, no other objects."
-)
+_HERE = Path(__file__).parent
+SUBJECT_TEMPLATE = (_HERE / "subject_prompt.txt").read_text().strip()
+SUBJECT_NEGATIVE = (_HERE / "subject_negative.txt").read_text().strip()
 # Triangles per prototype, by how much structure the plan says the category has.
 #
 # These are per-instance budgets for things that scatter in the hundreds, so they
@@ -49,11 +44,6 @@ DETAIL_TRIANGLES = {
     "intricate": 8_000,
 }
 
-SUBJECT_NEGATIVE = (
-    "multiple objects, cropped, cut off, group, collection, scene, landscape, "
-    "ground, horizon, people, hands, text, watermark, drop shadow, vignette, "
-    "blurry, illustration, drawing"
-)
 
 
 def slug(category: str) -> str:
@@ -114,7 +104,10 @@ def reference_images(
             for asset, path, one_seed in pending
         }
         for future, asset in futures.items():
-            future.result()
+            try:
+                future.result()
+            except ImageModelError:
+                continue  # a refused render is one category that will not scatter
             made[asset.category] = out_dir / f"{slug(asset.category)}.png"
     return made
 

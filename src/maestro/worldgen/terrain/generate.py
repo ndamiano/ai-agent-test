@@ -17,7 +17,6 @@ import json
 import time
 from pathlib import Path
 
-import numpy as np
 
 from ..backends import ImageModel, MeshModel
 from . import assets as assets_module
@@ -32,14 +31,8 @@ def generate_terrain_assets(
     *,
     images: ImageModel | None = None,
     meshes: MeshModel | None = None,
-    skip_meshes: bool = False,
 ) -> dict:
-    """Build A_terrain into `out_dir`. Returns a summary of what was made.
-
-    `skip_meshes` stops after the images, which is the useful half to iterate on:
-    reconstruction is by far the slowest step and the reference images are what
-    determine whether it was worth running.
-    """
+    """Build A_terrain into `out_dir`. Returns a summary of what was made."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     images = images or ImageModel()
@@ -60,7 +53,7 @@ def generate_terrain_assets(
     weights = layout_module.read_back(plan, out_dir)
 
     glbs: dict[str, Path | None] = {}
-    if not skip_meshes and plan.assets:
+    if plan.assets:
         print(f"[terrain] reconstructing {len(references)} prototypes", flush=True)
         glbs = assets_module.prototypes(
             plan, out_dir / "subjects", references=references, meshes=meshes or MeshModel()

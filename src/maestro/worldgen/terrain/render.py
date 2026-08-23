@@ -1,9 +1,8 @@
 """Rendering T in three.js.
 
-The refinement loop needs to look at the world, and until now the only view of
-it was a numpy hillshade — which shows geometry honestly and says nothing about
-whether the materials are the right scale, whether the scattered rocks are the
-right size, or whether any of it holds together as a place.
+The refinement loop needs to look at the world: whether the materials are the
+right scale, whether the scattered rocks are the right size, whether any of it
+holds together as a place.
 
 This writes `world.json` beside the world's files and draws it in a headless
 browser through `runtime/vendor/world.js` — the SAME loader the generated game
@@ -33,7 +32,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .bake import pack_masks
+from PIL import Image
+
 from .models import TerrainPlan
 
 VENDOR = Path(__file__).resolve().parents[4] / "runtime" / "vendor"
@@ -49,6 +49,28 @@ CHROMIUM_ARGS = [
     "--ignore-gpu-blocklist",
     "--use-gl=angle",
 ]
+
+
+def pack_masks(out_dir: Path) -> list[str]:
+    """Write the region weights as RGBA textures, four regions to a texture.
+
+    This is what the shader blends by. Four per texture because that is what a
+    colour sampler carries, and a world of five regions costing a second texture
+    lookup is cheaper than any of the alternatives.
+    """
+    weights = np.load(out_dir / "layout_masks.npy")
+    written = []
+    for group in range((len(weights) + 3) // 4):
+        block = weights[group * 4:(group + 1) * 4]
+        if len(block) < 4:
+            block = np.concatenate(
+                [block, np.zeros((4 - len(block), *block.shape[1:]), np.float32)]
+            )
+        image = np.clip(np.moveaxis(block, 0, -1), 0.0, 1.0)
+        path = out_dir / f"region_weights_{group}.png"
+        Image.fromarray((image * 255).astype(np.uint8), "RGBA").save(path)
+        written.append(str(path))
+    return written
 
 
 def camera_ring(
@@ -105,7 +127,7 @@ def write_job(
     height = np.load(out_dir / "heightmap.npy").astype(np.float32)
     (out_dir / "heightmap.f32").write_bytes(height.tobytes())
 
-    weight_textures = pack_masks(plan, out_dir)
+    weight_textures = pack_masks(out_dir)
     # Re-rooted at out_dir rather than trusted as written. The manifest records
     # the paths that existed when the textures were generated, so a run that was
     # copied or moved — which is exactly what refining a variant of a world looks
@@ -114,8 +136,7 @@ def write_job(
     materials = {}
     for row in json.loads((out_dir / "materials" / "materials.json").read_text()):
         row = dict(row)
-        for channel in ("albedo", "normal", "roughness",
-                        "variant_albedo", "variant_normal", "variant_roughness"):
+        for channel in ("albedo", "normal", "variant_albedo", "variant_normal"):
             if row.get(channel):
                 row[channel] = f"materials/{Path(row[channel]).name}"
         materials[row["region_id"]] = row
@@ -160,7 +181,7 @@ def write_job(
             # keyed by region as well as index: the index restarts at zero in
             # every region, so keying on it alone means the last region silently
             # overwrites every object the earlier ones placed
-            key = f"object-{item.get('region_id', 'r')}-{item['index']}"
+            key = f"object-{item['region_id']}-{item['index']}"
             grouped[key] = {
                 "mesh": relative,
                 "placements": [{
@@ -310,22 +331,4 @@ def render(
     return [out_dir / name for name in names]
 
 
-def render_meshes(
-    items: list[dict],
-    out_dir: Path | str,
-    *,
-    resolution: str = "512x512",
-    timeout: float = 600.0,
-) -> list[Path]:
-    """Photograph each GLB on its own, so a reconstruction can be looked at.
-
-    A flatness number says a mesh is a card; only a picture says what kind of
-    card. Each item is {"mesh": path, "name": png name}, both relative to
-    `out_dir`; the camera frames each mesh from its own bounding box, so a
-    barrel and a fence both fill the frame.
-    """
-    out_dir = Path(out_dir).resolve()
-    return _shoot(out_dir, "renderMeshes", items, resolution, timeout)
-
-
-__all__ = ["render", "render_meshes", "write_job", "camera_ring", "JOB_NAME"]
+__all__ = ["render", "write_job", "camera_ring", "JOB_NAME"]

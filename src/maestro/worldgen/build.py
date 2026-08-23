@@ -13,8 +13,6 @@ import json
 import time
 from pathlib import Path
 
-import numpy as np
-
 from .objects.generate import generate_objects
 from .objects.models import RegionalPlan
 from .objects.plan import regional_stage
@@ -80,11 +78,8 @@ def build_world(
     prompt: str,
     out_dir: Path | str,
     *,
-    terrain_rounds: int = 2,
-    scene_rounds: int = 2,
     start_at: str = "scene",
     stop_after: str = STAGES[-1],
-    regenerate: bool = True,
 ) -> dict:
     """Build a whole world from one sentence. Returns what was made and how long it took.
 
@@ -135,17 +130,17 @@ def build_world(
 
     if running("construct"):
         summary = construct_module.construct(plan, out_dir)
-        elevation = summary.get("elevation_m", {})
-        relief = float(elevation.get("max", 0.0)) - float(elevation.get("min", 0.0))
+        elevation = summary["elevation_m"]
+        relief = elevation["max"] - elevation["min"]
         print(
             f"[build] terrain {relief:.0f} m of relief, "
-            f"{sum(summary.get('scatter', {}).values())} scattered",
+            f"{sum(summary['scatter'].values())} scattered",
             flush=True,
         )
         clock.mark("construct")
 
     if running("terrain-refine"):
-        plan = terrain_refine.refine(plan, out_dir, rounds=terrain_rounds)
+        plan = terrain_refine.refine(plan, out_dir, rounds=2)
         clock.mark("terrain-refine")
     else:
         plan = TerrainPlan.model_validate_json(plan_path.read_text())
@@ -154,7 +149,6 @@ def build_world(
         return _summary(scene, out_dir, clock, started)
 
     # the regional planner reads the world; make sure there is one to read
-    height = np.load(out_dir / "heightmap.npy").astype(np.float32)
     if not (out_dir / "view_top.png").exists():
         render(plan, out_dir)
 
@@ -185,8 +179,8 @@ def build_world(
     print(f"[build] {len(placed)} objects placed", flush=True)
 
     if running("scene-refine") and placed:
-        editor = refine_scene(out_dir, plan, rounds=scene_rounds)
-        if regenerate and editor.regenerate:
+        editor = refine_scene(out_dir, plan, rounds=2)
+        if editor.regenerate:
             apply_regenerations(editor, out_dir)
             # the rebuilt meshes are a different shape, so what they rest on is
             # a different question; one more pass settles them

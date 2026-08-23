@@ -22,13 +22,9 @@ Sizes are metres, and counts are per region, not per world.
 """
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
 
-
-class Strict(BaseModel):
-    """Reject unknown keys instead of silently dropping them."""
-
-    model_config = ConfigDict(extra="forbid")
+from ..llm import Strict
 
 
 class RegionalObject(Strict):
@@ -160,11 +156,5 @@ class RegionalPlan(Strict):
             raise ValueError(f"developed and skipped at once: {both}")
         return self
 
-    def for_region(self, region_id: str) -> RegionalSpec:
-        for spec in self.regions:
-            if spec.region_id == region_id:
-                return spec
-        raise KeyError(f"no regional spec for {region_id!r}")
 
-
-__all__ = ["RegionalObject", "SpatialRule", "RegionalSpec", "RegionalPlan", "Strict"]
+__all__ = ["RegionalObject", "SpatialRule", "RegionalSpec", "RegionalPlan"]

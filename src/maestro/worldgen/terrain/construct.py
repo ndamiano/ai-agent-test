@@ -20,7 +20,6 @@ from pathlib import Path
 
 import numpy as np
 
-from . import preview as preview_module
 from . import scatter as scatter_module
 from .heightfield import build, slope_deg
 from .models import TerrainPlan
@@ -47,11 +46,6 @@ def construct(
     instances = scatter_module.scatter(plan, weights, height, out_dir)
 
     np.save(out_dir / "heightmap.npy", height)
-    preview_module.height_png(height, out_dir / "heightmap.png")
-    preview_module.render(
-        plan, height, weights, out_dir / "terrain_preview.png",
-        instances=instances,
-    )
 
     slope = slope_deg(height, plan.world.size_m)
     summary = {
@@ -83,7 +77,6 @@ def construct(
             "heightmap": str(out_dir / "heightmap.npy"),
             "masks": str(out_dir / "layout_masks.npy"),
             "scatter": str(out_dir / "scatter.json"),
-            "preview": str(out_dir / "terrain_preview.png"),
             "materials": str(out_dir / "materials" / "materials.json"),
             "prototypes": str(out_dir / "prototypes.json"),
         },

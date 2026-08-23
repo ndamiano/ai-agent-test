@@ -1,5 +1,5 @@
 """Image + mesh job PAYLOADS: this side resolves a workflow and screens the prompt, the worker next
-to the GPU runs it, and `_decimate_glb` is the one local post-op the asset chain calls on a result.
+to the GPU runs it.
 
 Nothing here enqueues or waits — a caller lands the payload on the `image` queue itself, so every
 producer of GPU work passes through one place that can meter it.
@@ -8,8 +8,6 @@ producer of GPU work passes through one place that can meter it.
 import copy
 import json
 import logging
-import os
-import subprocess
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -124,27 +122,6 @@ def build_image_payload(description: str, kind: str = "sprite",
     wf = build_img2img_job(description, init_name, kind, denoise)["workflow_override"]
     return {"kind": "comfy_image", "workflow": wf,
             "uploads": [{"name": init_name, "b64": init_image_b64}]}
-
-
-def _decimate_glb(glb_path: str) -> bool:
-    """Shrink a raw TRELLIS GLB to game weight (~16MB → ~1MB; runtime/decimate.mjs). Soft — a
-    failure keeps the fat original (heavy but playable), never a broken file."""
-    runtime = Path(__file__).resolve().parents[2] / "runtime"
-    tmp = f"{glb_path}.dec.glb"
-    try:
-        p = subprocess.run(["node", str(runtime / "decimate.mjs"), glb_path, tmp],
-                           capture_output=True, text=True, timeout=300, cwd=runtime)
-        if p.returncode == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 0:
-            os.replace(tmp, glb_path)
-            return True
-        logger.warning(f"decimate kept original for {os.path.basename(glb_path)}: "
-                       f"{(p.stderr or p.stdout)[-200:]}")
-    except Exception as e:
-        logger.warning(f"decimate kept original for {os.path.basename(glb_path)}: {e}")
-    finally:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-    return False
 
 
 def _load_workflow(path: Path) -> dict:

@@ -26,13 +26,13 @@ import base64
 import contextvars
 import os
 import subprocess
-import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Sequence
 
 from db.queue_client import run_job
 from maestro.worldgen import WORLD_JOB_TIMEOUT
+from maestro.worldgen.seed import seed_for
 
 DECIMATION_TARGET = 50_000
 
@@ -114,7 +114,7 @@ class MeshModel:
             futures = {
                 pool.submit(contextvars.copy_context().run, self._one, image, out_dir,
                            (targets or {}).get(image.stem, self.decimation_target),
-                           seed if seed is not None else _seed_for(image.stem)): image
+                           seed if seed is not None else seed_for(image.stem) % 100_000): image
                 for image in pending
             }
             for future, image in futures.items():
@@ -172,12 +172,3 @@ def _decimate(glb_path: Path, target: int) -> bool:
 
 
 __all__ = ["MeshModel", "MeshModelError"]
-
-
-def _seed_for(name: str) -> int:
-    """A stable seed for an image, by name.
-
-    Not `hash()`: string hashing is salted per process, so the same batch would
-    reconstruct differently on every run and a failure would not reproduce.
-    """
-    return zlib.crc32(name.encode()) % 100_000

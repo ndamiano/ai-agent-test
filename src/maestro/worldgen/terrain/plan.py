@@ -22,21 +22,16 @@ from ..planning.models import ScenePlan
 from .models import TerrainPlan
 from .tools import TerrainPlanBuilder
 
-DEFAULT_MODEL = "qwen3.8_27b"
-
 _HERE = Path(__file__).parent
 TERRAIN_PROMPT = (_HERE / "terrain_prompt.txt").read_text().strip()
 
-CONCEPT_NEGATIVE = (
-    "text, watermark, ui, map, diagram, people, vehicles, buildings, blurry, "
-    "low detail, split screen, collage, illustration"
-)
+CONCEPT_PROMPT = (_HERE / "concept_prompt.txt").read_text().strip()
+CONCEPT_NEGATIVE = (_HERE / "concept_negative.txt").read_text().strip()
 
 
 def plan_terrain(
     scene: ScenePlan,
     *,
-    model: str = DEFAULT_MODEL,
     temperature: float = 0.6,
 ) -> TerrainPlan:
     """Turn a scene plan into P_terrain.
@@ -46,7 +41,6 @@ def plan_terrain(
     """
     builder = TerrainPlanBuilder(scene)
     harness = LLMHarness(
-        model=model,
         tools=builder.tools,
         system=TERRAIN_PROMPT,
         temperature=temperature,
@@ -85,8 +79,7 @@ def render_concept(
     """
     images = images or ImageModel()
     return images.generate(
-        f"A high aerial photograph of a landscape. {plan.concept} "
-        f"Natural light, photographic, sharp, no people.",
+        CONCEPT_PROMPT.format(concept=plan.concept),
         out,
         negative=CONCEPT_NEGATIVE,
         width=width,
@@ -98,8 +91,6 @@ def render_concept(
 def terrain_stage(
     scene: ScenePlan,
     out_dir: Path | str,
-    *,
-    model: str = DEFAULT_MODEL,
 ) -> TerrainPlan:
     """Plan the terrain and render its concept image, writing both to `out_dir`.
 
@@ -110,7 +101,7 @@ def terrain_stage(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    plan = plan_terrain(scene, model=model)
+    plan = plan_terrain(scene)
     (out_dir / "terrain_plan.json").write_text(plan.model_dump_json(indent=2))
 
     render_concept(plan, out_dir / "concept.png")
@@ -122,5 +113,4 @@ __all__ = [
     "render_concept",
     "terrain_stage",
     "TERRAIN_PROMPT",
-    "DEFAULT_MODEL",
 ]

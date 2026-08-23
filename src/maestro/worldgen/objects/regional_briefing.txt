@@ -1,0 +1,9 @@
+Scene plan for {name!r}:
+{scene}
+
+Terrain specification that was built from it:
+{terrain}
+
+Renders of the world as it now stands: a top-down view of the whole {size_m:g} m map, then oblique views from two sides.
+
+Decide which regions to populate with objects.

@@ -793,3 +793,46 @@ is an SDXL checkpoint reached through a different graph entirely, so switching i
 not a parameter. The failures measured here were the PROMPT drawing a scene instead of a surface and
 the tile not being tileable, and both are fixed without touching the model. The routing question is
 still open and belongs in its own run.
+
+## Worldgen object-stage findings, moved out of the docstrings (2026-08-22, local 5090)
+
+These numbers were carried as module docstrings in `worldgen/objects/` (ground, subject, generate,
+place, extract) and are recorded here so the code keeps one line of WHY each. All are from the
+cliff-city and jungle-town worlds built during the WorldClaw spike and its migration.
+
+### Finding objects in a composition (`objects/ground.py`)
+
+- One region briefed for 15 objects had 4 painted; across 3 regions a third of what was in the
+  pictures (people, dome, statue, benches) had no category in the plan at all. SAM3 asked eight
+  times for a water jar returned eight courtyards. The grounding pass therefore asks the vision
+  model what IS there rather than checking the plan off.
+- A single JSON array on the densest scene: ~25 real objects, then identical barrels stepping
+  right by 15 units off the image edge until the token limit — ~200 junk entries. Hence one tool
+  call per object.
+- Naming the pixel dimensions in the user message: 20–22 objects vs 12–13 without, over 3 trials
+  each; the difference was entirely objects under 30 px.
+- Generic vocabulary: 30 objects vs 20 for a world-specific noun list.
+- Refusing the first `finish_objects`: jungle village 10 → 33 objects.
+- A near-to-far sweep or a smallest-first instruction: recall of <30 px objects went to exactly 0.
+- Rewriting the four one-line Field descriptions into fuller ones: 35 → 11 objects, reproducibly;
+  a "not 'market stall'" example made it record a row of stalls. Descriptions stay terse.
+
+### Drawing the subject rather than cropping it (`objects/subject.py`, `objects/generate.py`)
+
+- Foliage and open lattices reconstruct as flat cards at any crop resolution, while closed opaque
+  volumes reconstruct fine at 76 px: a 331 px fence failed and a 76 px barrel succeeded. Subjects
+  are redrawn from a description, not cropped.
+- Redrawn from description, thickness-to-length: fence 0.03 → 0.69, shack 0.50 → 0.84.
+- A separate describing pass over crops wrote one sentence per KIND (7 stalls → 7 copies of one),
+  so the description comes from the grounding pass that saw each instance.
+- A fence mask 3x wider than tall drawn on a square canvas came back as a mesh 0.87 as tall as
+  wide; drawn on a canvas of its own shape, 0.37. The canvas takes the mask's aspect.
+
+### Placing (`objects/place.py`, `objects/extract.py`)
+
+- Cliff city: bottom-of-box vs bottom-of-mask anchors sat 0.28 m apart in the median over every
+  instance; the mask bottom is the anchor.
+- Jungle town: box-measured sizes overread (bench 5.5 m, barrel 3.2 m), hence the 0.75 planner
+  blend clamped at 1.35x.
+- A vision-model size estimate for the same temple moved 15 m → 30 m across two consecutive calls;
+  sizes are not asked for twice.

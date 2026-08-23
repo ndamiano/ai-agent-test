@@ -122,8 +122,7 @@ def _restage(run_id: str) -> None:
 
 def published_files(job: Dict) -> List[str]:
     """The files a game reads, in `world.json`'s own words. Everything else in the build folder —
-    concept images, per-region compositions, refinement views, the roughness maps the loader has
-    no channel for — is working material."""
+    concept images, per-region compositions, refinement views — is working material."""
     files = [job["heightmap"], *job["weight_textures"]]
     for region in job["regions"]:
         files += [region["albedo"], region["normal"]]

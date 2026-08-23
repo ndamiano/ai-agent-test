@@ -21,6 +21,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..seed import seed_for
 from .heightfield import normals, slope_deg
 from .models import TerrainAsset, TerrainPlan
 
@@ -86,7 +87,7 @@ def place(
         return []
 
     generator = np.random.default_rng(
-        seed if seed is not None else abs(hash(asset.category)) % (2**32)
+        seed if seed is not None else seed_for(asset.category)
     )
     probability = field.reshape(-1) / field.sum()
     # oversample, then thin by spacing: rejecting after the fact is cheaper than

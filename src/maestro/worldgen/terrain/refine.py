@@ -22,27 +22,17 @@ inline.
 """
 from __future__ import annotations
 
-import base64
 import json
 from pathlib import Path
 
 from ..backends import ImageModel
-from ..llm import LLMHarness, Message, tool
+from ..llm import LLMHarness, Message, image_part, tool
 from .construct import construct
 from .models import GeomorphOp, NoiseBand, TerrainPlan
 from .render import render
 
 _HERE = Path(__file__).parent
 REFINE_PROMPT = (_HERE / "refine_prompt.txt").read_text().strip()
-
-DEFAULT_MODEL = "qwen3.8_27b"
-
-
-def _image_part(path: Path) -> dict:
-    """One render, as the content part an OpenAI-compatible endpoint expects."""
-    data = base64.b64encode(path.read_bytes()).decode()
-    return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{data}"}}
-
 
 class PlanEditor:
     """Applies the agent's corrections to a working copy of P_terrain.
@@ -298,7 +288,6 @@ def refine(
     out_dir: Path | str,
     *,
     rounds: int = 3,
-    model: str = DEFAULT_MODEL,
     temperature: float = 0.3,
 ) -> TerrainPlan:
     """Look, correct, rebuild, repeat. Returns the refined plan, and writes it.
@@ -309,7 +298,7 @@ def refine(
     out_dir = Path(out_dir)
     editor = PlanEditor(plan)
 
-    harness = LLMHarness(model=model, system=REFINE_PROMPT, temperature=temperature)
+    harness = LLMHarness(system=REFINE_PROMPT, temperature=temperature)
     for round_number in range(1, rounds + 1):
         summary = construct(editor.plan, out_dir)
         views = render(editor.plan, out_dir)
@@ -319,7 +308,7 @@ def refine(
             {"type": "text", "text": _briefing(
                 editor.plan, summary, round_number, rounds
             )},
-            *[_image_part(view) for view in views],
+            *[image_part(view) for view in views],
         ])
         harness.send_message_with_tools([message], tools=editor.tools)
 
@@ -346,7 +335,7 @@ def refine(
         for pair in remade.values():
             for path in pair.values():
                 if path.exists():
-                    materials_module.derive_channels(path)
+                    materials_module.derive_normal(path)
 
     construct(editor.plan, out_dir)
     render(editor.plan, out_dir)

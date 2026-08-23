@@ -28,13 +28,11 @@ const countTris = () => {
 
 const before = countTris();
 const ratio = Math.min(1, maxTris / Math.max(1, before));
-// error stays SMALL here — unbounded collapse tears buildings apart; anything this pass can't
-// bring near budget (foliage: thousands of disconnected leaf shells) drops to the sloppy pass.
+// error stays SMALL here — unbounded collapse tears buildings apart. Structured meshes come out a
+// little over budget but intact; only foliage-class geometry (thousands of disconnected leaf
+// shells, stalls out at ~10x budget) drops to the topology-ignoring pass below.
 await doc.transform(dedup(), weld(), simplify({ simplifier: MeshoptSimplifier, ratio, error: 0.05 }));
 
-// The gentle pass leaves structured meshes (buildings, creatures) a little over budget but INTACT
-// — sloppy would tear their walls. Only true foliage-class geometry (stalls out at 10x budget:
-// thousands of disconnected leaf shells) drops to the topology-ignoring pass.
 let sloppy = false;
 if (countTris() > maxTris * 5) {
   sloppy = true;

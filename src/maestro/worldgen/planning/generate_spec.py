@@ -21,8 +21,6 @@ from ..llm import LLMHarness
 from .models import Intent, ScenePlan
 from .tools import IntentBuilder, PlanBuilder
 
-DEFAULT_MODEL = "qwen3.8_27b"
-
 _HERE = Path(__file__).parent
 INTENT_PROMPT = (_HERE / "intent_prompt.txt").read_text().strip()
 PLAN_PROMPT = (_HERE / "plan_prompt.txt").read_text().strip()
@@ -31,7 +29,6 @@ PLAN_PROMPT = (_HERE / "plan_prompt.txt").read_text().strip()
 def analyze_intent(
     prompt: str,
     *,
-    model: str = DEFAULT_MODEL,
     temperature: float = 0.2,
 ) -> Intent:
     """Extract the constraints `prompt` explicitly states.
@@ -40,7 +37,6 @@ def analyze_intent(
     """
     builder = IntentBuilder(prompt)
     harness = LLMHarness(
-        model=model,
         tools=builder.tools,
         system=INTENT_PROMPT,
         temperature=temperature,
@@ -52,13 +48,11 @@ def analyze_intent(
 def plan_scene(
     intent: Intent,
     *,
-    model: str = DEFAULT_MODEL,
     temperature: float = 0.7,
 ) -> ScenePlan:
     """Complete `intent` into a full scene plan, preserving its constraints."""
     builder = PlanBuilder()
     harness = LLMHarness(
-        model=model,
         tools=builder.tools,
         system=PLAN_PROMPT,
         temperature=temperature,
@@ -82,7 +76,6 @@ def _plan_message(intent: Intent) -> str:
 def generate_spec(
     prompt: str,
     *,
-    model: str = DEFAULT_MODEL,
     intent_temperature: float = 0.2,
     plan_temperature: float = 0.7,
 ) -> ScenePlan:
@@ -91,15 +84,14 @@ def generate_spec(
     Use `analyze_intent` and `plan_scene` directly to inspect or edit the
     extracted constraints in between.
     """
-    intent = analyze_intent(prompt, model=model, temperature=intent_temperature)
-    return plan_scene(intent, model=model, temperature=plan_temperature)
+    intent = analyze_intent(prompt, temperature=intent_temperature)
+    return plan_scene(intent, temperature=plan_temperature)
 
 
 __all__ = [
     "generate_spec",
     "analyze_intent",
     "plan_scene",
-    "DEFAULT_MODEL",
     "INTENT_PROMPT",
     "PLAN_PROMPT",
 ]

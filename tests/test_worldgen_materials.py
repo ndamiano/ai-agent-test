@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from maestro.worldgen.backends import ImageModelError
 from maestro.worldgen.terrain import materials
 from maestro.worldgen.terrain.models import TerrainPlan
 
@@ -23,7 +24,7 @@ PLAN = {
     "terrain": [{"region_id": "meadow", "base_elevation_m": 1.0}],
     "materials": [{"region_id": "meadow", "surface": "cropped green grass",
                    "appearance": "Soft and even.", "variant": "bare brown earth",
-                   "scale_m": 2.0, "pathway": "generative"}],
+                   "scale_m": 2.0}],
     "concept": "A small green meadow under a clear sky.",
 }
 
@@ -76,10 +77,8 @@ def test_the_manifest_names_both_and_every_derived_channel(tmp_path, small_tiles
     for key, name in (
         ("albedo", "meadow_albedo.png"),
         ("normal", "meadow_normal.png"),
-        ("roughness", "meadow_roughness.png"),
         ("variant_albedo", "meadow_variant_albedo.png"),
         ("variant_normal", "meadow_variant_normal.png"),
-        ("variant_roughness", "meadow_variant_roughness.png"),
     ):
         assert row[key].endswith(name)
         assert (tmp_path / name).exists()
@@ -92,7 +91,7 @@ def test_a_refused_variant_leaves_the_base_alone_in_the_manifest(tmp_path, small
 
     def refuse_the_variant(prompt, out, **kwargs):
         if "bare brown earth" in prompt:
-            return out  # nothing written, which is what a dropped render looks like
+            raise ImageModelError("prompt blocked: earth")
         return real(prompt, out, **kwargs)
 
     images.generate = refuse_the_variant
@@ -101,3 +100,23 @@ def test_a_refused_variant_leaves_the_base_alone_in_the_manifest(tmp_path, small
 
     assert row["albedo"].endswith("meadow_albedo.png")
     assert "variant_albedo" not in row
+    assert not (tmp_path / "meadow_variant_albedo.png").exists()
+
+
+def test_a_refused_reference_is_one_category_fewer(tmp_path):
+    from maestro.worldgen.terrain import assets
+
+    plan = TerrainPlan.model_validate({**PLAN, "assets": [
+        {"category": "oak tree", "appearance": "gnarled", "height_m": 8.0, "per_hectare": 5, "regions": ["meadow"]},
+        {"category": "boulder", "appearance": "mossy", "height_m": 1.0, "per_hectare": 5, "regions": ["meadow"]},
+    ]})
+
+    class Refusing(FakeImages):
+        def generate(self, prompt, out, **kwargs):
+            if "boulder" in prompt:
+                raise ImageModelError("prompt blocked: boulder")
+            return super().generate(prompt, out, **kwargs)
+
+    made = assets.reference_images(plan, tmp_path, images=Refusing())
+    assert set(made) == {"oak tree"}
+    assert made["oak tree"].exists()

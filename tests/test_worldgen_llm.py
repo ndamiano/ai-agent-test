@@ -12,11 +12,21 @@ class FakeConnector:
         self.replies = list(replies)
         self.calls = []
 
-    def generate_with_tools(self, messages, tools=None, reasoning=None, model=None,
-                            response_format=None, max_tokens=None, temperature=None):
+    def generate_with_tools(self, messages, tools=None, reasoning=None, max_tokens=None,
+                            temperature=None):
         self.calls.append({"messages": messages, "tools": tools, "reasoning": reasoning,
-                           "model": model, "temperature": temperature})
+                           "temperature": temperature})
         return self.replies.pop(0)
+
+
+def test_the_fake_accepts_exactly_what_the_connector_does():
+    """The harness is tested against this fake, so a kwarg the real connector drops must fail
+    here, not in a build."""
+    import inspect
+    from llm_clients.connector import LLMConnector
+    real = set(inspect.signature(LLMConnector.generate_with_tools).parameters) - {"self"}
+    fake = set(inspect.signature(FakeConnector.generate_with_tools).parameters) - {"self"}
+    assert fake == real
 
 
 def _reply(content=None, tool_calls=None):
@@ -26,11 +36,11 @@ def _reply(content=None, tool_calls=None):
     return {"choices": [{"message": message}], "usage": {}}
 
 
-def test_send_message_plain(monkeypatch):
+def test_no_tool_call_is_one_round_trip(monkeypatch):
     fake = FakeConnector([_reply("hello there")])
     monkeypatch.setattr(llm, "_get_connector", lambda: fake)
 
-    resp = llm.LLMHarness().send_message("hi")
+    resp = llm.LLMHarness().send_message_with_tools("hi")
 
     assert resp.text == "hello there"
     assert str(resp) == "hello there"
@@ -102,7 +112,7 @@ def test_image_parts_reach_the_outgoing_payload(monkeypatch):
         {"type": "text", "text": "look at this"},
         {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
     ])
-    llm.LLMHarness().send_message([message])
+    llm.LLMHarness().send_message_with_tools([message])
 
     sent_content = fake.calls[0]["messages"][0]["content"]
     assert sent_content == message.content
@@ -155,6 +165,6 @@ def test_temperature_omitted_leaves_the_connector_default(monkeypatch):
     fake = FakeConnector([_reply("hi")])
     monkeypatch.setattr(llm, "_get_connector", lambda: fake)
 
-    llm.LLMHarness().send_message("hi")
+    llm.LLMHarness().send_message_with_tools("hi")
 
     assert fake.calls[0]["temperature"] is None

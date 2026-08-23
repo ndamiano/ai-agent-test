@@ -23,8 +23,8 @@ Work in this order:
    geomorphic operators.
 
 4. set_region_material — once for every region. What the ground is, how it
-   looks, the worn variant of the same ground, how wide one repeat is in
-   metres, and which pathway makes it. Both surfaces are the ground underfoot
+   looks, the worn variant of the same ground, and how wide one repeat is in
+   metres. Both surfaces are the ground underfoot
    there — litter, soil, sand, rock, turf, pavers.
 
 5. add_terrain_asset — the things scattered over the ground: rocks, scrub,

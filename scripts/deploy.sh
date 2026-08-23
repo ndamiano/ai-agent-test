@@ -29,6 +29,7 @@ ssh "${PROD_HOST}" "mkdir -p '${REMOTE_DIR}'"
 rsync -az --delete \
   --exclude '.git/' \
   --exclude '.github/' \
+  --exclude '.claude/' \
   --exclude 'docs/' \
   --exclude 'tasks/' \
   --exclude 'tests/' \

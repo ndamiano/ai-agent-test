@@ -229,7 +229,7 @@ aside.
 The autoscaler (`src/scaler/` + `docs/deploy.md`): `enabled`, `api_key`, `network_volume_id`,
 `cp_url` (the pod-reachable control-plane URL), `tick_seconds`, `stale_worker_seconds`, and
 per-queue `queues.<name>` scaling blocks (template_id, gpu_type_ids, allowed_cuda_versions,
-max_workers, thresholds, cooldown, idle_exit_seconds, boot_deadline_seconds). The `queues` dict
+fallback_drops_cuda_floor, max_workers, thresholds, cooldown, idle_exit_seconds, boot_deadline_seconds). The `queues` dict
 replaces the default wholesale — carry complete blocks. settings.json is the only place the block
 lives; `docs/deploy.md` describes what each knob does to a pod.
 

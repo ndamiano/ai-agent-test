@@ -92,10 +92,9 @@ class Autoscaler:
                 now - self._last_scale_up.get(queue, 0.0),
             )
             for action in actions:
-                self._execute(action, queue, qcfg, rp, token,
-                              (settings.get("llm") or {}).get("model", ""), now)
+                self._execute(action, queue, qcfg, rp, token, settings["llm"], now)
 
-    def _execute(self, action, queue: str, qcfg: Dict, rp: Dict, token: str, llm_model: str,
+    def _execute(self, action, queue: str, qcfg: Dict, rp: Dict, token: str, llm: Dict,
                  now: float) -> None:
         try:
             if isinstance(action, StartPod):
@@ -109,7 +108,11 @@ class Autoscaler:
                     # An llm pod picks its engine by the card it got, and ninfer answers only
                     # requests naming its --model-id. The pod cannot read settings, so the model
                     # string every request will carry is delivered at create.
-                    env["LLM_MODEL"] = llm_model
+                    env["LLM_MODEL"] = llm["model"]
+                    # The window too: the engine preallocates it, and nvfp4 + vision fits a
+                    # 5090 at 65535 and dies at launch above that (scripts/local_gpu.py). The
+                    # control plane computes its input budget from the same number.
+                    env["LLM_N_CTX"] = str(llm["n_ctx"])
                 self._start_pod(name, queue, qcfg, rp, env)
                 self._last_scale_up[queue] = now
             elif isinstance(action, TerminatePod):
@@ -131,13 +134,15 @@ class Autoscaler:
         cards differ in what they can serve (ninfer needs a 5090), which makes the fallback a real
         downgrade rather than a substitution."""
         ids = list(qcfg["gpu_type_ids"])
-        # The CUDA floor (`allowed_cuda_versions`) rides only the HEAD ask: it exists so the
-        # preferred card lands on a host whose driver can run its engine (ninfer needs r580+ —
-        # "13.0"). The widened ask drops it — fallback cards serve the GGUF on any driver, and a
-        # slow pod beats no pod (measured 2026-08-02: 3 of 4 draws landed old-driver 5090s, each
-        # serving at a third of ninfer's rate).
+        # The CUDA floor (`allowed_cuda_versions`) is what the queue's engine needs of the host
+        # driver. `fallback_drops_cuda_floor` is for a queue with a second engine that runs on any
+        # driver: the llm image falls back to llama.cpp, and a slow pod beats no pod (measured
+        # 2026-08-02: 3 of 4 draws landed old-driver 5090s, each serving at a third of ninfer's
+        # rate). An image pod has one engine, so for it an old-driver host is a dead pod on any
+        # card and the floor rides the widened ask too.
         cuda = qcfg.get("allowed_cuda_versions")
-        attempts = [(ids[:1], cuda), (ids, None)] if len(ids) > 1 else [(ids, cuda)]
+        widened_cuda = None if qcfg.get("fallback_drops_cuda_floor") else cuda
+        attempts = [(ids[:1], cuda), (ids, widened_cuda)] if len(ids) > 1 else [(ids, cuda)]
         for i, (attempt, attempt_cuda) in enumerate(attempts):
             try:
                 self._client.create_pod(

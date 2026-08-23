@@ -9,7 +9,7 @@
 # weights, and a binary staged beside them is a second thing to keep in step with this repo.
 FROM nvidia/cuda:13.1.2-devel-ubuntu24.04 AS ninfer-build
 
-ARG NINFER_REF=455c13c9429ed853297544071b6006abd5ca7404
+ARG NINFER_REF=5f45a26f81b6a15805a3d4d09d5c3d60f420b210
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates cmake g++ git libavcodec-dev libavformat-dev libavutil-dev \

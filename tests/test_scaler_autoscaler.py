@@ -17,8 +17,11 @@ def _scaler():
     return a, a._client
 
 
-def _start(a, qcfg=QCFG, llm_model="Qwen3.6-27B-UD-Q4_K_XL", queue="llm"):
-    a._execute(StartPod(queue), queue, qcfg, RP, "wtoken", llm_model, now=100.0)
+LLM = {"model": "qwen3.8_27b", "n_ctx": 65535}
+
+
+def _start(a, qcfg=QCFG, llm=LLM, queue="llm"):
+    a._execute(StartPod(queue), queue, qcfg, RP, "wtoken", llm, now=100.0)
 
 
 def test_preferred_gpu_is_requested_alone():
@@ -65,19 +68,28 @@ def test_pod_env_carries_the_model_string_the_control_plane_will_send():
     settings — so the alias has to arrive at create."""
     a, client = _scaler()
     _start(a)
-    assert client.create_pod.call_args.kwargs["env"]["LLM_MODEL"] == "Qwen3.6-27B-UD-Q4_K_XL"
+    assert client.create_pod.call_args.kwargs["env"]["LLM_MODEL"] == "qwen3.8_27b"
+
+
+def test_pod_env_carries_the_window_the_control_plane_budgets_against():
+    """The engine preallocates its window and the control plane trims its input to the same
+    number; neither can be right unless the pod hears it at create."""
+    a, client = _scaler()
+    _start(a)
+    assert client.create_pod.call_args.kwargs["env"]["LLM_N_CTX"] == "65535"
 
 
 def test_only_an_llm_pod_hears_about_the_model():
     """A ComfyUI pod has no engine to name it to — the queue owns its backend."""
     a, client = _scaler()
     _start(a, queue="image")
-    assert "LLM_MODEL" not in client.create_pod.call_args.kwargs["env"]
+    env = client.create_pod.call_args.kwargs["env"]
+    assert "LLM_MODEL" not in env and "LLM_N_CTX" not in env
 
 
 def test_tick_takes_the_model_off_settings():
     a, client = _scaler()
-    a._settings = lambda: {"llm": {"model": "Qwen3.6-27B-UD-Q4_K_XL"},
+    a._settings = lambda: {"llm": {"model": "qwen3.8_27b", "n_ctx": 65535},
                            "workqueue": {"token": "wtoken"},
                            "runpod": {"cp_url": "https://cp", "network_volume_id": "vol1",
                                       "queues": {"llm": QCFG}}}
@@ -87,13 +99,13 @@ def test_tick_takes_the_model_off_settings():
     a._stats.terminated_workers_with_pods.return_value = []
     client.list_pods.return_value = []
     a.tick()
-    assert client.create_pod.call_args.kwargs["env"]["LLM_MODEL"] == "Qwen3.6-27B-UD-Q4_K_XL"
+    assert client.create_pod.call_args.kwargs["env"]["LLM_MODEL"] == "qwen3.8_27b"
 
 
 def _busy(a, client, pods):
     """One live worker already on a pod, and a queue deep enough to ask for another."""
     from scaler.stats import QueueStats, WorkerInfo
-    a._settings = lambda: {"llm": {"model": "m"}, "workqueue": {"token": "wtoken"},
+    a._settings = lambda: {"llm": {"model": "m", "n_ctx": 65535}, "workqueue": {"token": "wtoken"},
                            "runpod": {**RP, "queues": {"llm": {**QCFG, "max_workers": 3}}}}
     a._stats.queue_stats.return_value = QueueStats(pending=50,
                                                    oldest_pending_age_seconds=5.0)
@@ -144,11 +156,22 @@ def test_a_refused_create_is_retried_on_the_next_tick(monkeypatch):
     assert client.create_pod.call_count == 4
 
 
-def test_cuda_floor_rides_the_head_ask_and_drops_on_widen():
-    """The floor exists so the preferred card lands where its engine runs; the fallback cards
-    run on any driver, so requiring it there would just shrink the pool."""
+def test_cuda_floor_rides_the_widened_ask_too():
+    """An engine that needs the driver needs it on every card: an old-driver host is a dead pod
+    whatever it was asked for."""
     a, client = _scaler()
     qcfg = {**QCFG, "allowed_cuda_versions": ["13.0"]}
+    client.create_pod.side_effect = [RunPodError("no 13.0 5090 host"), {"id": "pod1"}]
+    _start(a, qcfg)
+    head, widened = client.create_pod.call_args_list
+    assert head.kwargs["allowed_cuda_versions"] == ["13.0"]
+    assert widened.kwargs["allowed_cuda_versions"] == ["13.0"]
+
+
+def test_a_queue_with_an_any_driver_fallback_drops_the_floor_on_widen():
+    """The llm image carries llama.cpp beside ninfer; a slow pod beats no pod."""
+    a, client = _scaler()
+    qcfg = {**QCFG, "allowed_cuda_versions": ["13.0"], "fallback_drops_cuda_floor": True}
     client.create_pod.side_effect = [RunPodError("no 13.0 5090 host"), {"id": "pod1"}]
     _start(a, qcfg)
     head, widened = client.create_pod.call_args_list

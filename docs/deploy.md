@@ -228,14 +228,14 @@ lives in — a volume in another datacenter answers on its own endpoint or not a
 VOL=/workspace bash scripts/provision_volume.sh
 
 # 2. build + push the three worker images (one Docker Hub repo, queue-version tags)
-docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v9 .
+docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v11 .
 docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v8 .
 docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v17 .
 docker push ndamiano100/maestro-worker:mesh-v17   # etc.
 ```
 
 The deployed tag is whatever each RunPod TEMPLATE names; the templates are the only record of it
-(`llm-v8`, `image-v8`, `mesh-v17` at the last check, with `llm-v9` pushed and not yet named).
+(`llm-v9`, `image-v8`, `mesh-v17` at the last check; `llm-v9` pins a ninfer older than the qwen3.8 nvfp4 artifact and cannot read it — `llm-v11` is the first that can and takes its window from the control plane).
 An image tag and the volume's weights go live in LOCKSTEP: the entrypoint stages and warms up on
 the checkpoints the workflows name, so a pod predating a model swap dies at boot on a weight that
 is not there. Roll the volume forward first, the template second, and retire the old weight last.
@@ -252,11 +252,16 @@ a 5090 at r580+, llama.cpp (the base image's own CUDA 12.8 build, fine on old dr
 everything else. Old-driver draws proved common (3 of 4 on 2026-08-02), so the scaler now sends a
 create-time CUDA floor: `queues.<name>.allowed_cuda_versions` (prod llm: `["13.0"]` — RunPod's
 "13.0" means an r580+ host, which runs the CUDA 13.1 ninfer via minor-version compatibility). The
-floor rides only the HEAD gpu ask and is dropped when the create widens to fallback cards — those
-serve the GGUF on any driver, and a slow pod beats no pod. The entrypoint driver gate stays as the
-belt to this suspender. That is why the volume holds the model twice (`models/ninfer/*.ninfer` and
-`models/LLM/*.gguf`, ~37 GiB together) and why an llm pod needs `LLM_MODEL` in its env: ninfer refuses any request whose `model`
-is not its `--model-id`, and the autoscaler delivers the control plane's `llm.model` at create.
+floor rides every gpu ask. The llm queue alone sets `fallback_drops_cuda_floor: true`, so when its
+create widens to fallback cards the floor goes — those serve the GGUF on any driver, and a slow pod
+beats no pod. The image queue needs the same `["13.0"]` floor with no opt-out: `image-v8` is torch
+cu130, one engine, and an old-driver host is a dead pod on any card. The entrypoint driver gate
+stays as the belt to this suspender. That is why the volume holds the model twice
+(`models/ninfer/*.ninfer` and `models/LLM/*.gguf`, ~37 GiB together) and why an llm pod needs
+`LLM_MODEL` and `LLM_N_CTX` in its env: ninfer refuses any request whose `model` is not its
+`--model-id`, the engine preallocates the window it is given (nvfp4 + `--vision` fits a 5090 at
+65535 and dies at launch above), and the autoscaler delivers the control plane's `llm.model` and
+`llm.n_ctx` at create.
 The ninfer build stage compiles a pinned commit of github.com/Neroued/ninfer — it needs CUDA 13.1
 (the base image ships 12.8 for llama.cpp; only `libcudart.so.13` is added).
 

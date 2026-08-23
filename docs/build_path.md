@@ -54,8 +54,9 @@ src/
                          answered with nothing, which the nudge branch handles; an `error` is a turn
                          the WORKER could not deliver, which is neither. Collapsing any two of the
                          three scolds the model for a reply it never sent and burns a turn.
-                         Owns the seven tool schemas, the transcript, compaction, the DONE-NUDGE
-                         (`cursor.done_nudged` — asked once, then the next `done` is taken), and
+                         Owns the eight tool schemas (`done` is handled here, not in tools.py),
+                         the transcript, compaction, the DONE-NUDGE (`cursor.done_nudged` — asked
+                         once, then the next `done` is taken), and
                          every way a reply TOO BIG TO LAND arrives — all three answered with the one
                          remedy (write it in pieces), because they are one event: the reply cut off
                          before any tool call, the call whose ARGUMENTS stop mid-write (unreadable,
@@ -85,7 +86,7 @@ src/
                          the only one that lasts: a turn's request IS the transcript so far, so a
                          payload per jobs row stored the same conversation once per turn (951 MB of
                          `jobs.payload`, 26 MB for one 117-turn build). The system prompt and the
-                         seven schemas are byte-identical every turn, so they ride ONE `meta` record
+                         eight schemas are byte-identical every turn, so they ride ONE `meta` record
                          and a `turn` record carries only what that turn ADDED — turn k is
                          `system + tools + concat(added[0..k])`. A `compact` record carries the
                          rounds `build_steps.compact` dropped and the note that replaced them, so a
@@ -116,14 +117,13 @@ src/
                          that way. compose_world is worldgen's build face: one 3D world per game,
                          refused a second time because the game is already written against the
                          first one's metres and regions.
-                         compose_scene is scenegen's build face: it bakes a whole MAP —
+                         compose_scene is the scene chain's build face: it lays out a whole MAP —
                          assets/<id>_ground.png plus <id>_scene.json (walkable grid, door cells,
                          POIs) — and the model reads the json and wires it (verified in a real
                          build 2026-08-06: three scenes asked for, fetched at runtime, walkable
-                         grid driving collision). Interiors/dungeons bake synchronously, pure
-                         CPU; town/glade ride the SCENE CHAIN (below): scene.json and a
-                         code-painted ground land at tool time, the diffusion picture upgrades
-                         the same path as it renders. A path is resolved and must land inside the
+                         grid driving collision). scene.json and a code-painted ground land at
+                         tool time; the diffusion picture upgrades the same path as it renders
+                         (scene_chain.py). A path is resolved and must land inside the
                          game folder. Every failure is REPORTED to the model as text (a missing
                          argument names itself) and never guessed at: substituting a default for a
                          missing `path` sent every write in a run to one file.
@@ -140,7 +140,7 @@ src/
                          the 249th the cut). A window that stops short says where the rest is and
                          that a file this size is worth splitting.
       staging.py         where a game lives (runs/<id>/game/) and how it reaches the browser: copy
-                         the folder to runtime/games/<slug>/. No bundle, no transform.
+                         the folder to runtime/games/<run_id>/. No bundle, no transform.
                          `has_authored_files` discounts the seed, so it says whether a BUILD wrote
                          anything — which is what offers the from-scratch button. Also the SEED
                          (seed_vendor): the game folder starts holding the vendored renderer and
@@ -149,11 +149,18 @@ src/
                          runs: enqueue ONE `image` job, record the ask in assets.json, answer with
                          the path. Nothing plans, rewrites or inspects the game's source. `kind`
                          picks the model, the workflow and what a landed render owes: sprite is
-                         matted and autocropped, scene keeps the whole frame, a tile is quilted
-                         seamless (`tools/quilting.py`, in `asset_chain._save_flat` — soft, a
-                         quilt that throws saves the raw render), mesh chains image →
+                         matted and autocropped because the game draws it ON its own background,
+                         scene keeps the whole frame because it IS the background, a tile is
+                         quilted seamless (`tools/quilting.py`, in `asset_chain._save_flat` —
+                         soft, a quilt that throws saves the raw render), mesh chains image →
                          TRELLIS (its image leg renders as a sprite — TRELLIS lifts a cut-out
-                         subject). `check_render` reads the alpha of what landed against the kind
+                         subject) and lands normalized to 1 unit at its longest side, which the
+                         tool's answer states: placement code cannot discover scale any other
+                         way, and an untold model shipped a knee-high lighthouse. Rendering every
+                         kind through one item-icon path matted a game's floor tiles down to a
+                         handful of planks — it said "tile" in every prompt and nothing could
+                         hear it. A refused compute budget is answered as "draw this one with
+                         code instead", never left as a path that will never fill. `check_render` reads the alpha of what landed against the kind
                          that was asked for and records a `defect` on the manifest entry: a matte
                          that never ran, one that ate the subject, a background full of holes. It
                          may only find BROKEN — whether a picture suits the game is the same human
@@ -263,8 +270,13 @@ src/
                          recorded as a violation — a refused mesh source never reaches TRELLIS.
       artifact_screen.py the artifact TEXT gate — the game folder's authored text through the same
                          narrow screen as every input seam, at finalize before staging. A hit
-                         holds the build.
-      prompts/           build.txt
+                         HOLDS the build: status `held`, not staged, not archived, play/build/fix
+                         refused, a neutral message to the owner, a row in the violations table
+                         for the admin panel. The image side of the same policy is asset_chain's
+                         `_admit` above.
+      prompts/           build.txt (the one system prompt every build turn reads),
+                         error_gate_note.txt (the fix note an uncaught error becomes),
+                         stage_plan.txt (the staged-construction plan call).
       run.py             create_run / propose_prompt / set_prompt / run_build (CLI: kickoff +
                          block-poll the cursor) / fix_from_note + the CLI. The web build/fix path is
                          fire-and-forget through build_chain.kickoff, not run.py.
@@ -279,9 +291,8 @@ src/
                          tool and carries that tool's required arguments.
     state.py             RunState — durable per-run dir <working_dir>/runs/<run_id>/ (spec.json,
                          game/ folder). Ownership + charge state live in db/, not the run dir.
-  worldgen/              the 3D world behind the compose_world build tool: the worldclaw pipeline
-                         (ported 2026-08-21), stage for stage, with every GPU call on maestro's
-                         queues. build.py runs the nine stages in order — scene, terrain-plan,
+  worldgen/              the 3D world behind the compose_world build tool: the worldclaw pipeline,
+                         stage for stage, with every GPU call on maestro's queues. build.py runs the nine stages in order — scene, terrain-plan,
                          terrain-assets, construct, terrain-refine, regional-plan, objects,
                          scene-refine, final-render — and `start_at`/`stop_after` make any run of
                          them resumable, which is what lets one world be built in legs. planning/
@@ -298,39 +309,26 @@ src/
                          folder copyable into a game.
                          Each region is covered in a PAIR of squares, not one: the surface the
                          plan names and the variant it wears through to — grass to bare earth,
-                         sand to cracked clay, a lakebed to wet mud — both drawn as a metre or two
-                         of ground seen straight down (the prompt says so three ways, because
-                         asked for a lakebed a diffusion model draws a lake, far bank and all,
-                         and that photograph then tiles across the ground as a lattice of little
-                         lakes) and both quilted onto a torus by `tools.quilting.quilt_tile`, so
-                         the tile is seamless by construction rather than by luck. The shader
-                         mixes them by a fixed recipe in world metres — a 40 m low-frequency fbm
-                         for the patches, a fine one to break the isoline, and the slope, which
-                         carries a steep face over on its own, so a bank is earth and the field
-                         above it is not. The threshold sits ABOVE the noise's own mean: these
-                         fields average about a half, and a threshold at a half makes a region its
-                         variant as much as itself — a green pasture rendered as bare earth with
-                         green in it. Nothing about the recipe is per-world; world.json
-                         carries only the two paths and the one scale both repeat at, and a region
-                         that names no variant (an older world, a refused render) draws its base
-                         alone.
-                         The ground is a MeshStandardMaterial with the region splat injected into
-                         its shader, not a shader of its own: a raw shader receives no shadow map,
-                         no fog and no tone mapping, so the terrain used to be the one surface the
-                         sun did not cast onto. On top of the per-region blend the material reads
-                         three things off the ground itself — a face steeper than about 35 degrees
-                         blends toward a desaturated, darkened rock of its own material; the top
-                         quarter of the world's OWN relief, in regions the plan called high
-                         ground and only where the slope is shallow enough to hold it, blends
-                         toward snow; and every region's albedo is sampled at both its stated
-                         scale and eight times it, mixed by low-frequency world noise under a
-                         gentle hue drift, which is what stops one tile reading as one tile over
-                         eight hundred metres. All three are functions of the height field and the
-                         material already there, so they need no asset and no plan field. The
-                         stochastic tiling's taps are textureGrad on the unbroken UV's gradients:
-                         the offsets jump per triangular cell, and the implicit derivative of a
-                         jump picks the smallest mip, which drew a dashed lattice over every close
-                         view.
+                         sand to cracked clay — both drawn as ground seen straight down (asked
+                         for a lakebed, a diffusion model draws a lake, far bank and all, which
+                         then tiles as a lattice of little lakes) and both quilted seamless by
+                         `tools.quilting.quilt_tile`. The shader blends the pair by a fixed
+                         recipe in world metres — low-frequency noise for the patches, slope to
+                         carry a steep face over on its own — with the threshold above the
+                         noise's mean, so a pasture reads as pasture with earth in it and not the
+                         reverse. Nothing about the recipe is per-world: world.json carries the
+                         two paths and one scale, and a region with no variant draws its base
+                         alone. The ground is a MeshStandardMaterial with the splat injected into
+                         its shader rather than a shader of its own, because a raw shader
+                         receives no shadow map, fog or tone mapping — the sun has to cast onto
+                         the terrain as it does onto everything else. On top of the blend the
+                         material derives rock on steep faces, snow on the highest shallow ground
+                         of regions the plan called high, and a two-scale albedo mix that stops
+                         one tile reading as one tile over eight hundred metres — all from the
+                         height field and the material already there, so none needs an asset or
+                         a plan field. The stochastic tiling taps textureGrad on the unbroken
+                         UV's gradients: a per-cell offset jump otherwise picks the smallest mip
+                         and draws a dashed lattice over every close view.
                          compose.py is the build face. The tool BLOCKS through `construct` — the
                          first stage at which a world exists to write at all, since world.json
                          names the height field, the region materials and the scatter — and
@@ -354,24 +352,15 @@ src/
                          Locally the three queues are drained by `scripts/local_gpu.py auto`
                          (`docs/local_dev.md`).
 
-  scenegen/              scene composition behind the compose_scene build tool. bake.py is the
-                         synchronous face (interiors/dungeons); blockout.py is the SOLVER behind
-                         the scene chain: the llm plans relations — counts, kinds, no positions —
-                         and code places deterministically, roads by construction, walkable truth
-                         emitted, POIs snapped to the network. Terrain features are BANDS whose
-                         depth varies along the edge, so a coast is a coastline and not a ruler,
-                         and a sand strip handed the water band's own depths follows it by
-                         construction; variety patches are cosmetic and never touch hazard or
-                         cost, so placement and roads are unchanged by them.
-                         prompts/blockout_plan.txt is its hill-climbable plan prompt. The rest is
-                         the library: seeded layouts where every town door faces a street by
-                         construction, kit-assembled buildings that return their door cells,
-                         zone-scatter rules, procedural materials, distance bands, the light plan.
-                         Code owns everything spatial; diffusion paints materials and parts — part
-                         sprites are code-drawn from a style-keyed palette today, rendering them
-                         through the image queue in the game's own style is the marked upgrade.
-                         Structures restyle at the PART level, never img2img over an assembled
-                         building.
+  scenegen/              the solver behind the scene chain. bake.py is the synchronous face
+                         (interiors/dungeons, pure CPU); blockout.py is the SOLVER: the llm
+                         plans relations — counts, kinds, no positions — and code places
+                         deterministically, roads by construction, walkable truth emitted, POIs
+                         snapped to the network. Terrain features are BANDS whose depth varies
+                         along the edge, so a coast is a coastline and not a ruler; variety
+                         patches are cosmetic and never touch hazard or cost.
+                         prompts/blockout_plan.txt is its hill-climbable plan prompt. Code owns
+                         everything spatial; diffusion paints materials.
 ```
 
 The rest of the platform is build-path-agnostic: `auth/` (identity, bearer sessions, credits,
@@ -387,18 +376,8 @@ and `frontend/` (the React SPA, served same-origin by the API).
 
 ## Where inference happens
 
-**Only inside a build.** There is no conversational surface: `POST /api/games` takes the prompt the
-person typed, creates the run, charges it, and starts the build in one call, so every llm job on the
-queue belongs to a game that is paying for it.
-
-**Build-as-jobs.** `build_chain.advance` runs one `build_steps` turn, enqueues it on the `llm` queue
-tagged `metadata.stage="build"`, and RETURNS (the process may die). A worker runs the turn;
-`/worker/complete` → `build_chain.on_completion` reloads the durable cursor (`build_state.json`),
-applies the result, and advances. Crash recovery: a build with no turn in flight and not done is
-re-advanced by the reaper, and the per-run advance lock prevents a double-drive.
-
-**Adding a build STAGE** (beyond build/asset): register a driver keyed on `metadata.stage` in the
-`/worker/complete` dispatch — the queue stays a generic transport.
+Only inside a build, as a chain of `llm` jobs. The request paths, the completion dispatch and how
+a new stage registers are in `docs/architecture.md` § Request paths.
 
 ---
 
@@ -408,9 +387,9 @@ re-advanced by the reaper, and the per-run advance lock prevents a double-drive.
 no `write_file` can stand in for. Counted over the 35 staged games (2026-08-01): 19 called it at all,
 308 asks, 27 of them meshes across 6 builds — and the asks RATION. One 3D village asked for five NPC
 portraits and a lighthouse while building five shops, a farm, lamp posts and every interior out of 27
-code primitives. So the prompt no longer tells the model to draw a plain shape at the spot and the
-tool no longer prices a render in minutes: both framed art as a thing that might not arrive, and a
-model that believes that draws a prism and moves on.
+code primitives. So the prompt does not tell the model to draw a plain shape at the spot, and the tool
+does not price a render in minutes: both frame art as a thing that might not arrive, and a model
+that believes that draws a prism and moves on.
 
 What settles it is COVERAGE — how much of what the player sees got art — not call-at-all, and the
 same run has to show that a build whose art never lands still renders, since nothing now tells the
@@ -424,14 +403,3 @@ One card game rendered 67 and used none, while shipping 114 paths under an `asse
 that does not exist. The tool answers with a path and never learns whether the path was used, so
 until the audit nothing in the loop could see either half. Orphaning is NOT the recent prompt edit: a
 build carrying the older "draw a plain shape at that spot" line orphaned 7 of its 8.
-
----
-
-## The retired gate
-
-`tsc` used to be the contract gate, and it earned its place against `engine.d.ts` — types to check
-*against*. Measured on the 25-game grid after the kit came out: unfiltered `--checkJs` reported 54–94
-errors on games that WORK (implicit-any, `getElementById` possibly-null, `let x = []` inferring
-`never[]`); filtered to the codes that mean something in untyped JS it found **zero real defects**,
-and every hit traced to a global declared in an inline `<script>` that tsc never reads. It is gone.
-If output ever moves back to TypeScript it comes back for free and is worth it immediately.

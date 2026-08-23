@@ -11,8 +11,9 @@ This file is the layer above: processes, boundaries, storage, scale.
 ## The two planes
 
 **Control plane** — one CPU-only container. FastAPI serving the API + the built SPA same-origin
-(single uvicorn worker), the job queue, the databases, the run directories, and two background
-threads (queue reaper, RunPod autoscaler). It owns all durable state and all decisions.
+(single uvicorn worker), the job queue, the databases, the run directories, and the background threads `api/app.py`
+starts at boot: the queue reaper and the DB snapshotter always, the RunPod autoscaler when
+`runpod.enabled` is set. It owns all durable state and all decisions.
 
 **Compute plane** — worker agents (`worker/agent.py`), one process per queue, running wherever a GPU
 is. A worker long-polls `/worker/claim`, executes against its own local inference server, and posts
@@ -46,7 +47,7 @@ Consequences worth stating:
 
 | queue | work | target |
 |---|---|---|
-| `llm` | one build turn (one inference) | llama.cpp / any OpenAI-shaped server |
+| `llm` | one build turn (one inference) | ninfer on a 5090; llama.cpp or any OpenAI-shaped server elsewhere |
 | `image` | one sprite or texture render | ComfyUI |
 | `mesh` | image → 3D | TRELLIS |
 
@@ -92,7 +93,7 @@ transport that never learns what an asset is.
 | accounts, sessions, credit ledger | `auth.db` (SQLite) | `MAESTRO_DATA_DIR` |
 | games, builds, jobs, events, workers, compute budget | `platform.db` (SQLite, WAL) | `MAESTRO_DATA_DIR` |
 | run dirs — spec, build cursor, turn log, game source + its git history | `<WORKING_DIRECTORY>/runs/<run_id>/` | local filesystem |
-| staged playable games | `runtime/games/<slug>/` | local filesystem, served at `/play` |
+| staged playable games | `runtime/games/<run_id>/` | local filesystem, served at `/play` |
 | structured config the env can't express | `src/config/settings.json` | host bind mount |
 
 Two named Docker volumes back the first four rows (`maestro-data` → `/data`, `maestro-games` →
@@ -117,8 +118,8 @@ These are load-bearing; breaking one is a redesign, not a bug fix.
 3. **The durable cursor is the truth.** In-memory build state is always reconstructible from
    `build_state.json`; a control plane that restarts mid-build holds nothing while its turns keep
    completing.
-4. **A gate may only detect broken, never "bad."** One gate stands between a build and `built`:
-   `index.html` exists. See `CLAUDE.md`.
+4. **A gate may only detect broken, never "bad."** Two things stand between a build and `built`:
+   `index.html` exists, and the error gate finds no uncaught exception. See `CLAUDE.md`.
 5. **The prompt is the artifact.** No inference runs between the person's words and the build's
    user message.
 6. **Nothing proprietary in the loop.** MIT/Apache-2.0 weights and tooling only (`vision.md`).
@@ -161,14 +162,14 @@ long way, and product limits arrive before control-plane CPU limits do.
    context manager with plain SQL. `claim_job` already expresses the claim as
    `UPDATE … WHERE id = (SELECT … ORDER BY created_at LIMIT 1) RETURNING *`, which becomes
    `FOR UPDATE SKIP LOCKED` in Postgres — a better claim, not a compromised one.
-2. **The background singletons.** The reaper and the autoscaler start unconditionally at boot. Two
-   control planes means two autoscalers reading the same backlog and both adding pods — the one
+2. **The background singletons.** The reaper, the DB snapshotter and the autoscaler are one
+   thread each in the one process. Two control planes means two autoscalers reading the same backlog and both adding pods — the one
    failure here that spends money. Needs a leader lease or a separate singleton process.
 3. **The advance lock is in memory** (`build_chain._locks`, keyed by run id). It is what enforces
    invariant 2. Across processes, two completions for one run can interleave into a double advance.
    The durable cursor makes the fix small: compare-and-swap on the cursor's step count instead of
    holding a lock.
-4. **Run state is on local disk.** `runs/<id>/` and `runtime/games/<slug>/` must be on the box that
+4. **Run state is on local disk.** `runs/<run_id>/` and `runtime/games/<run_id>/` must be on the box that
    handles the completion. This is the only item that is a project rather than a change — shared
    storage, or object storage for staged games. The games half is wanted anyway, for share links
    and a CDN.

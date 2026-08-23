@@ -50,14 +50,14 @@ writing code.
 
 ### LLM — ninfer (preferred on a 5090)
 
-Same weights in its own artifact, ~60% more tok/s than llama.cpp, compiled for `sm_120a` alone. It
-serves `chat` only.
+Same weights in its own artifact, ~3x llama.cpp's decode rate on the same card (194.5 vs 63.3
+tok/s), compiled for `sm_120a` alone. It serves `chat` only.
 
 ```
 <ninfer>/build/apps/ninfer-serve \
   <model>.ninfer \
   --model-id qwen3.8_27b \
-  --host 0.0.0.0 --port 8090 \
+  --host 127.0.0.1 --port 8090 \
   --max-context 131072 \
   --spec mtp --draft-tokens 3 --lm-head-draft \
   --presence-penalty 0 \
@@ -140,6 +140,8 @@ cd src && python -m maestro.codegen.run "<request>"     # prompt → build
 - `--assets <run_id>` re-renders the art the game asked for and never got
 - `--history <run_id>` lists a run's snapshots; `--restore <run_id> <ref>` puts the game back to one
 - `--evict <run_id>` / `--rehydrate <run_id>` move a run dir to and from S3
+- `--archive-all` uploads every settled run that has no archive yet (the nightly sweep in
+  `docs/backups.md`)
 
 **Playing a build:** `runtime/games/<run_id>/index.html`. A game is plain browser files, but a 3D
 one needs http, not `file://` — `<script type="module">` is CORS-blocked from a file origin.
@@ -162,10 +164,9 @@ restarted — Node caches the ESM config, and a stale one drops every custom cla
 
 `model`, `n_ctx`, `max_tokens`, `reasoning`. There is no endpoint — inference rides the queue.
 
-`n_ctx` is what the INPUT budget is computed from: MessageBuilder trims the transcript to
-`max(n_ctx − 16k, n_ctx/3) × 3.5` chars, where 16k is the build turn's own output cap
-(`build_steps.MAX_TOKENS`) and 3.5 chars/token was measured on live code-heavy payloads, not the 4:1
-prose heuristic.
+`n_ctx` is the INPUT budget: when a transcript approaches it, `build_steps.compact` drops the
+oldest whole rounds and re-grounds the model on the file listing (`CLAUDE.md`). Nothing else
+trims.
 
 Set it to the server's `-c`. The local router never reports its window, so both errors are yours to
 avoid, and only one of them announces itself:
@@ -176,10 +177,6 @@ avoid, and only one of them announces itself:
   `-c 32768` spent 31 compactions and ~100 of 120 turns re-reading its own five files.
 
 `max_tokens` is only the connector's default ceiling — the build path passes its own.
-
-**Model categories** `large`/`medium`/`small` carry one knob, `message_budget_chars`, and it is only
-the fallback: when `n_ctx` is set the budget comes from the window instead, so the category decides
-nothing on a configured box.
 
 ### The wire format is the worker's, not a setting
 
@@ -207,8 +204,8 @@ state, deliberately not under `working_directory`.
 
 ### `play.origin` / `play.app_origin`
 
-Env `MAESTRO_PLAY_ORIGIN` / `MAESTRO_APP_ORIGIN`. Set BOTH to serve games from their own registrable
-domain; empty means one origin.
+Set BOTH to serve games from their own registrable domain; empty means one origin. settings.json
+is the only place these live — prod's values are in `docs/deploy.md` "Public domains".
 
 Either way /play auth is the handoff flow: the SPA mints a single-use token
 (`POST /api/games/<id>/play-session`), `/handoff` redeems it into a per-game path-scoped grant
@@ -230,9 +227,11 @@ aside.
 ### `runpod`
 
 The autoscaler (`src/scaler/` + `docs/deploy.md`): `enabled`, `api_key`, `network_volume_id`,
-`cp_url` (the pod-reachable control-plane URL), and per-queue `queues.<name>` scaling blocks
-(template_id, gpu_type_ids, max_workers, thresholds, idle_exit_seconds). The `queues` dict replaces
-the default wholesale — carry complete blocks.
+`cp_url` (the pod-reachable control-plane URL), `tick_seconds`, `stale_worker_seconds`, and
+per-queue `queues.<name>` scaling blocks (template_id, gpu_type_ids, allowed_cuda_versions,
+max_workers, thresholds, cooldown, idle_exit_seconds, boot_deadline_seconds). The `queues` dict
+replaces the default wholesale — carry complete blocks. settings.json is the only place the block
+lives; `docs/deploy.md` describes what each knob does to a pod.
 
 `gpu_type_ids` is PRIORITY-ORDERED: the scaler asks for the head alone and widens to the whole list
 only when RunPod refuses that create, since the cards are not substitutes (ninfer serves only a
@@ -243,3 +242,45 @@ stamped 5090, the bill entirely RTX PRO 4500).
 The autoscaled llm image carries both engines and picks by reading the card at boot. `llm.model`
 must be what the engine answers to: it reaches the pod as `LLM_MODEL` and becomes ninfer's
 `--model-id`.
+
+### `payments`
+
+`stripe_secret_key`, `stripe_webhook_secret` — the storefront (`api/routers/billing.py`). Empty
+means no purchases; credits still arrive by `auth.cli grant`.
+
+### `demo_games`
+
+`showcase` and `oneshot`, each a list of run ids the landing page serves unauthenticated
+(`api/routers/demos.py`). Curation is a deploy-time decision: nothing a build does can put a game
+here. Both empty means no demo surface.
+
+---
+
+## Environment variables
+
+Everything structured is in settings.json; the env carries only what `.env.example` lists (server
+bind, `WORKING_DIRECTORY`, `WORKQUEUE_TOKEN` + its timeouts, the `LLM_*` defaults) plus:
+
+- `MAESTRO_DATA_DIR` — above.
+- `MAESTRO_DEV=1` — uvicorn reload, `/docs` + `/redoc` served.
+- `MAESTRO_STALE_PENDING_SECONDS` (default 1800) — `db/reaper.py`: a job pending this long with
+  nobody claiming it is failed rather than left to hold its budget reservation forever.
+- `MAESTRO_LOCAL_LOGS` (default `/tmp/maestro-local`) — where `scripts/local_gpu.py` writes the
+  model-server and worker logs it starts.
+
+---
+
+## Reading the platform DB
+
+`scripts/db.py` — stdlib only, runs anywhere the file is: named queries (`cost`, `builds`,
+`models`, `failures`) and `sql "<text>"` for the rest; `--db` points it at another file, `--since`
+at a date. Read it from a snapshot, never the live file (`docs/backups.md` "Query hygiene").
+
+---
+
+## The pre-commit hook
+
+`git config core.hooksPath .githooks` once per clone. `.githooks/pre-commit` lists every comment
+line the commit adds and asks whether each belongs (the standard is `CLAUDE.md` "Comments"). On a
+terminal it prompts y/N; with no terminal it blocks and prints the list, and the same commit goes
+through with `COMMENTS_REVIEWED=1` after the list has been read.

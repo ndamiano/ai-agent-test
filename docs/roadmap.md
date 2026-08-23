@@ -1,13 +1,8 @@
 # Maestro Roadmap
 
-`vision.md` holds the destination and does not move. `CLAUDE.md` holds the architecture and changes
-as fast as the measurements do. This file is the line between them: where we stand against each
-vision stage, and what would tell us to move on.
-
-It stays at that altitude on purpose. What we are doing this week is not in the repo — a task list
-that lives here rots into a citation layer nobody updates, and the work itself is thinking, not
-documentation. If something here is specific enough to be wrong within a fortnight, it belongs in
-`CLAUDE.md` (if it is architecture) or `docs/experiments.md` (if it is a measurement) or nowhere.
+Where we stand against each stage of `vision.md`, and what would tell us to move on. Anything
+specific enough to be wrong within a fortnight belongs in `CLAUDE.md` (architecture) or
+`docs/experiments.md` (measurement), not here.
 
 ---
 
@@ -39,12 +34,13 @@ between us and the bar:
 - **No battery runs on a schedule.** Every grid so far has been a one-off experiment. Until a fixed
   set of requests runs against a fixed configuration, "does it come back running" has no answer that
   survives the next change to the loop. This is the single biggest gap on the track.
-- **Recurring defects with no fix yet earning more than a prompt line.** 3D scenes lit near-black,
-  silent games, arrow-keys-only input. The bar for promoting any of these to code is in `CLAUDE.md`:
-  a prompt line first, and a primitive only after a line has failed twice across two models.
-- **Art is on trial and unsettled.** `generate_media` entered unmeasured. What settles it is
-  coverage — how much of what the player sees got art — not whether the tool is called. An unused
-  schema costs every turn of every build, so a tool that fails that comes back out.
+- **The helper library shipped and the games it produced played worse.** `runtime/vendor/lib/`
+  closed the standing defect ledger (near-black 3D, silent games, arrow-keys-only input) 6/6
+  against a control arm, and on the same six requests the games that actually PLAYED went from
+  4/6 to 1/6 (`docs/experiments.md`, 2026-08-22). Two of the four deaths were one lib defect,
+  since fixed; the open item is the play rate on a rebuilt battery.
+- **Art is on trial and unsettled.** What settles `generate_media` is coverage — how much of what
+  the player sees got art — not whether the tool is called (`CLAUDE.md` "Adding a capability").
 - **A generated 3D world is something a build can now ask for, and unproven at scale.**
   `compose_world` puts a whole worldgen pipeline behind one tool call — ground, regions and the
   scenery standing on them — and a game written on its loader is a game nobody has built at
@@ -59,11 +55,8 @@ The hard one, and the one everything downstream waits on.
 **Bar:** the owner plays a battery of builds and is happy with them. Deliberately a human judgement,
 and it stays one. There is no metric here — there is a point at which the owner calls it.
 
-What is settled, and stays settled unless something answers the failure that retired it:
-
-- No local LLM-judge gates.
-- No "the game must do X" checks. A gate may only detect broken.
-- No automated round that fixes what a previous round already got right.
+Settled, with the measurements behind each in `CLAUDE.md`: no LLM-judge gates, no "the game must
+do X" checks, no automated round that fixes what a previous round already got right.
 
 The open question is not how to build a better judge. It is what a play-critic would have to answer
 before one is worth building again.
@@ -76,10 +69,9 @@ margin coming from utilization rather than from charging more.
 The mechanism exists: exec-second metering debited to the owning game, a compute budget that admits
 or refuses jobs, and a queue-driven autoscaler. Builds run concurrently rather than serializing.
 
-What is missing is the number. Earlier cost figures were measured on the owner's box, under turn
-caps that have since changed, and their working notes no longer exist. Treat them as gone. The
-measurement to make is cost per finished game **off rented pods, at the current caps**, with the
-failure rate alongside it — cold start and a different serving stack are not in the old seconds.
+What is missing is the number: cost per finished game **off rented pods, at the current caps**,
+with the failure rate alongside it. Nothing measured on the owner's box stands in for it — cold
+start and the serving stack are in the pod's seconds and not in a workstation's.
 
 Cheap to do, and it blocks every paid stage.
 

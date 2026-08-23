@@ -75,8 +75,8 @@ whole category we do not produce at all, and it is wanted.
 
 ## Previously investigated
 
-- **Inference shell: llama.cpp → ninfer** (adopted 2026-08-01). ~194 vs ~63 tok/s on the same
-  weights on a 5090. ninfer serves Qwen only, on 5090s only, and speaks `chat` only, so llama.cpp
+- **Inference shell: llama.cpp → ninfer** (adopted 2026-08-01). ~3x: 194.5 vs 63.3 tok/s on the
+  same weights on a 5090. ninfer serves Qwen only, on 5090s only, and speaks `chat` only, so llama.cpp
   stays the fallback everywhere else. Thinking and sampling are launch flags on both — see
   `docs/local_dev.md`.
 - **Image models: flux1-schnell-fp8 and animaOfficial retired** (bake-off 2026-08-06). Replaced by

@@ -59,8 +59,7 @@ platform-specific binaries resolve.
 On the **prod box**:
 
 ```bash
-# one-time host setup: Docker + compose (+ Node build toolchain for the container)
-./scripts/provision.sh        # confirm the version vars at the top first
+./scripts/provision.sh        # one-time host setup: Docker + the compose plugin
 ```
 
 Two files must exist on the prod box before the first deploy — `deploy.sh` never ships either. In
@@ -106,11 +105,13 @@ batch in the admin panel (`/admin` → Invite codes) or hand one out per person 
 `/app/src/auth/cli.py`; the container WORKDIR is `/app`, so run it from `/app/src`:
 
 ```bash
-docker compose exec -w /app/src app python -m auth.cli create <handle>   # prompts for a password
+docker compose exec -w /app/src app python -m auth.cli create <handle> <email> [--role admin]   # prompts for a password
 docker compose exec -w /app/src app python -m auth.cli grant  <handle> <n>
 ```
 
-Accounts start at 0 credits either way.
+The other subcommands: `passwd <handle>` (reset a password), `email <handle> <email>` (change the
+recovery address), `refund <handle> <n>` (a manual refund), `list`. Accounts start at 0 credits
+either way.
 
 ## Smoke test (do this before handing out the URL)
 
@@ -136,10 +137,9 @@ answers `/play` + `/handoff` + `/healthz` and 404s the rest (a game's `fetch('/a
 to a host with no API on it — that IS the isolation), and the app host 404s `/play`.
 
 Serving them means direct inbound 443 — Tailscale Funnel serves only `ts.net` names. Box side is
-DONE (2026-08-01): ufw active (OpenSSH + 80 + 443 + 41641/udp; it was inactive before, not the
-41641-only posture this doc used to claim), caddy 2.6 from Ubuntu universe installed and running,
-and the app container now binds `127.0.0.1:8000` (compose) — it was `0.0.0.0`, which serves the
-app to the internet on :8000 because Docker's iptables chain bypasses ufw entirely. Funnel and
+DONE (2026-08-01): ufw active (OpenSSH + 80 + 443 + 41641/udp), caddy 2.6 from Ubuntu universe installed and running,
+and the app container binds `127.0.0.1:8000` (compose) — a `0.0.0.0` bind would serve the app
+to the internet on :8000, because Docker's iptables chain bypasses ufw entirely. Funnel and
 caddy both proxy via loopback, so nothing else changed.
 
 `/etc/caddy/Caddyfile` as deployed — `default_bind` pins caddy to the PUBLIC IP because tailscaled
@@ -159,15 +159,9 @@ gamesummonerusercontent.com {
 
 DNS (the one registrar-side step): A records for both apexes → `137.184.59.143`. Caddy is already
 running and retries ACME on its own, so certs appear without a touch once DNS propagates. Then
-point the app at the split in the bind-mounted `settings.json` (env: `MAESTRO_PLAY_ORIGIN` /
-`MAESTRO_APP_ORIGIN`) and `docker compose restart` (settings load at process start):
-
-```json
-"play": {
-  "origin": "https://gamesummonerusercontent.com",
-  "app_origin": "https://gamesummoner.com"
-}
-```
+point the app at the split in the bind-mounted `settings.json` — `play.origin` =
+`https://gamesummonerusercontent.com`, `play.app_origin` = `https://gamesummoner.com`
+(`docs/local_dev.md` "Settings") — and `docker compose restart` (settings load at process start).
 
 Leave both empty (the default) and everything rides one origin — dev and the funnel-only alpha
 deploy keep working unchanged. Split smoke test:
@@ -187,14 +181,13 @@ One worker process per queue, run wherever the GPU is. It dials out, so it needs
 
 ```bash
 python -m worker.agent --server http://<control-plane>:8000 --token <WORKQUEUE_TOKEN> \
-    --queue llm   --target http://localhost:8080     # llama.cpp router
+    --queue llm   --target http://localhost:8090     # ninfer (llama.cpp serves :8080 on other cards)
 python -m worker.agent ... --queue image --target http://localhost:8188   # ComfyUI
 python -m worker.agent ... --queue mesh  --target http://localhost:8189   # TRELLIS
 ```
 
 `--target` is the worker's own inference server and should stay bound to `127.0.0.1` — a reachable
-one is an unauthenticated GPU. `scripts/maestro-worker.service` runs an agent under systemd on a box
-you own.
+one is an unauthenticated GPU.
 
 A queue with no worker means every job on it times out.
 
@@ -241,22 +234,20 @@ docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v17 .
 docker push ndamiano100/maestro-worker:mesh-v17   # etc.
 ```
 
-Deployed tags (what the TEMPLATES name, checked live 2026-08-08): `llm-v8`, `image-v8`, `mesh-v17`.
-`llm-v9` (Qwen3.8-27B NVFP4) is pushed to Docker Hub as of 2026-08-21 but the RunPod template still
-names `llm-v8` until someone points it at the new tag — see "roll the volume forward first" above.
+The deployed tag is whatever each RunPod TEMPLATE names; the templates are the only record of it
+(`llm-v8`, `image-v8`, `mesh-v17` at the last check, with `llm-v9` pushed and not yet named).
 An image tag and the volume's weights go live in LOCKSTEP: the entrypoint stages and warms up on
 the checkpoints the workflows name, so a pod predating a model swap dies at boot on a weight that
-is no longer there. Roll the volume forward first, the template second, and retire the old weight
-last (the 2026-08-08 flux → NetaYume/DreamShaper/Qwen swap, in that order).
-Bump the tag on every push — RunPod caches images
-per host, so re-pushing a tag leaves stale copies serving on warm hosts.
+is not there. Roll the volume forward first, the template second, and retire the old weight last.
+Bump the tag on every push — RunPod caches images per host, so re-pushing a tag leaves stale
+copies serving on warm hosts.
 
-**The llm image carries BOTH engines and picks at boot.** ninfer serves the same 27B ~60% faster
-but is compiled for `sm_120a`, so it runs on a 5090 and nowhere else — and the HOST DRIVER is part
+**The llm image carries BOTH engines and picks at boot.** ninfer serves the same 27B at ~3x
+llama.cpp's rate (194.5 vs 63.3 tok/s) but is compiled for `sm_120a`, so it runs on a 5090 and nowhere else — and the HOST DRIVER is part
 of the capability: ninfer is a CUDA 13.1 build, which needs the host at r580+, and RunPod hosts
 vary. On an older driver ninfer dies at `cudaGetDeviceCount` (`cudaErrorInsufficientDriver`) and
 the pod boot-loops, billing until the boot-deadline reaper collects it — measured 2026-08-01, two
-pods in a row. So the entrypoint (`llm-v7`) reads `nvidia-smi` name AND driver version: ninfer on
+pods in a row. So the entrypoint reads `nvidia-smi` name AND driver version: ninfer on
 a 5090 at r580+, llama.cpp (the base image's own CUDA 12.8 build, fine on old drivers) on
 everything else. Old-driver draws proved common (3 of 4 on 2026-08-02), so the scaler now sends a
 create-time CUDA floor: `queues.<name>.allowed_cuda_versions` (prod llm: `["13.0"]` — RunPod's
@@ -278,12 +269,10 @@ Order matters on first rollout: volume weights + new image tag FIRST, control pl
 control plane refuses any render without a verdict, so old image workers under a new control
 plane refuse every render.
 
-**Deploy the control plane BEFORE pointing the llm template at `llm-v6`.** `LLM_MODEL` has no
-default and the entrypoint refuses to start without one, so an `llm-v6` pod created by a control
-plane that does not yet send it exits 1 at boot — and RunPod restarts an exited container and keeps
-billing. Nothing recovers it until `boot_deadline_seconds` (900) expires, and the scaler creates a
-replacement in the meantime. The reverse order is free: an older image ignores `LLM_MODEL` and only
-stops reporting `GPU_TYPE`, which the worker now reads off the device anyway.
+**`LLM_MODEL` has no default and the entrypoint refuses to start without one.** An llm pod that
+boots without it exits 1 — and RunPod restarts an exited container and keeps billing until
+`boot_deadline_seconds` (900) expires, while the scaler creates a replacement in the meantime. The
+autoscaler delivers it at create; a pod launched by hand has to carry it in the template env.
 
 Make one RunPod **template** per image (container image + volume mount at `/workspace`; no ports).
 Run each pod with the volume at `/workspace` and `CP_URL` + `WORKER_TOKEN` set (`WORKER_TOKEN` must
@@ -353,8 +342,7 @@ is backed up. Workers own scale-DOWN: `IDLE_EXIT_SECONDS` (delivered at pod crea
 claim long-poll window, and a null claim means "queue stayed empty that long" → the worker
 deregisters and exits 0.
 
-Settings block (`settings.json` → `runpod`; env: `RUNPOD_ENABLED`, `RUNPOD_API_KEY`,
-`RUNPOD_NETWORK_VOLUME_ID`, `RUNPOD_CP_URL`):
+Settings block (`settings.json` → `runpod`, the full key list in `docs/local_dev.md` "Settings"):
 
 - `cp_url` — the control-plane URL pods dial back to; must be reachable from RunPod (funnel URL,
   not localhost).

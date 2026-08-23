@@ -72,7 +72,7 @@ the app first serves traffic with them.
 3. **Restore both DBs from the bucket** (any S3 client or the app's own; from the host):
 
    ```bash
-   DATA_MOUNT=$(sudo docker volume inspect maestro_maestro-data -f '{{ .Mountpoint }}')
+   DATA_MOUNT=$(sudo docker volume inspect maestro_maestro-data -f '{{ .Mountpoint }}')   # compose prefixes the project name
    docker compose run --rm --entrypoint sh -w /app/src app -c '
      python - <<EOF
    import gzip
@@ -127,13 +127,16 @@ the app first serves traffic with them.
 
 Never point `sqlite3` (or anything else) at the live files under `/data` — a stray query takes
 locks against the app's connections, and reading the DB without its WAL shows a stale or torn
-view. Pull a snapshot and inspect that:
+view. Pull a snapshot and inspect that (the volume name carries the compose project prefix, as in
+the drill above):
 
 ```bash
-sqlite3 "file:$(docker volume inspect maestro-data -f '{{ .Mountpoint }}')/platform.db?mode=ro" \
-    ".backup /tmp/platform-snap.db" && sqlite3 /tmp/platform-snap.db
+sqlite3 "file:$(docker volume inspect maestro_maestro-data -f '{{ .Mountpoint }}')/platform.db?mode=ro" \
+    ".backup /tmp/platform-snap.db" && scripts/db.py cost --db /tmp/platform-snap.db
 ```
 
 (`.backup` uses SQLite's online-backup API — the same mechanism the backup thread runs — so the
 copy is consistent under concurrent writers.) Or just pull the bucket's `latest` snapshot, which
-doubles as a check that the backup is restorable.
+doubles as a check that the backup is restorable. `scripts/db.py` is stdlib-only and carries the
+named queries (`cost`, `builds`, `models`, `failures`) plus `sql "<text>"`, so it runs on the
+droplet with nothing installed; `--db` is the snapshot path.

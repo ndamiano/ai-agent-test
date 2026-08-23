@@ -79,7 +79,7 @@ Two things stand between a build and `built`: **`index.html` exists** — withou
 for a browser to open — and the **error gate**, which opens the staged game headless after a playable
 finalize and re-enters the fix machine with one uncaught exception and its address. An uncaught
 exception satisfies the guardrail: `this._doIdle is not a function` can only be met by defining it.
-Measured 2026-07-30 and rebuilt 2026-08-02 after a 25-game day shipped five load-dead games the
+Measured 2026-07-30 after a 25-game day shipped five load-dead games the
 pipeline never saw — nine of nine broken cells went to zero unattended, and the rules that made it
 converge are all load-bearing.
 
@@ -90,12 +90,10 @@ proxy.
 
 ### The one exception is SAFETY, and it is not a gate the model builds against
 
-It acts after the fact and the model is never told the rule to satisfy. The artifact screen checks
-the game's own text at finalize; a hit HOLDS the build (status `held`: not staged, not archived,
-play/build/fix refused, neutral message to the owner). Every image render arrives with a worker-side
-NSFW score and the save op refuses explicit or verdict-less renders — the worker reports, the control
-plane decides, fail closed. Every refusal persists to the violations table for the admin panel. The
-whole of what the model hears is the same as a blocked prompt: draw it with code instead.
+It acts after the fact and the model is never told the rule to satisfy. Every seam fails closed —
+a flagged game is HELD rather than staged, a render without a clean verdict is never saved — and
+every refusal is recorded. The whole of what the model hears is the same as a blocked prompt: draw
+it with code instead. Mechanism: `artifact_screen.py` and `asset_chain.py` in `docs/build_path.md`.
 
 ### The FIRST `done` is answered, not accepted
 
@@ -114,28 +112,21 @@ the result. The human plays it and says what to change — `run --fix <run_id> "
 same turn machine with the note as its request, and the model lists and reads the files itself, so
 there is nothing to hand it up front.
 
-Any automated judge that returns here has to answer the question that retired the last one:
-judge-then-fix rounds were measured to spend 208 of one build's 227 steps and score WORSE in round 2
-than round 1, because each fix broke a claim that already worked.
+An automated judge-then-fix round spends a build's steps re-breaking what already worked, and
+scores worse the second round than the first; any judge proposed here has to answer that
+measurement first (`docs/experiments.md`).
 
 ### The game asks for its own art, as it writes the code that uses it
 
 `generate_media(id, prompt, kind)` enqueues one render and answers IMMEDIATELY with the path the file
-will appear at; the model writes that path into the game as it writes the code that uses it. The
-asset stage is then free: no planning call, no source rewrite, no static analysis of what the game
-spawns, and the GPU draws art while the llm turns keep writing code.
-
-`kind` is **sprite | tile | scene | mesh**, and it is the one thing the tool needs that the prose
-cannot carry: a sprite is matted and cropped to its subject because the game draws it ON its own
-background, while a tile and a scene ARE that background and keep the whole frame. A mesh lands
-normalized to 1 unit at its longest side and the tool's answer says so — placement code cannot
-discover scale any other way, and an untold model shipped a knee-high lighthouse. Rendering all four
-through one item-icon path is what shipped a game's floor tiles matted down to a handful of planks:
-it said "tile" in every prompt and nothing could hear it.
-
-The compute budget is the only cap on how much art a build may ask for, and a refused enqueue is
-REPORTED to the model as "draw this one with code instead" — a build that cannot have art has to be
-told to draw one rather than left waiting for a file that is never coming.
+will appear at; the model writes that path into the game as it writes the code that uses it. No
+planning call, no source rewrite, no static analysis of what the game spawns — the GPU draws art
+while the llm turns keep writing code. `kind` (sprite, tile, scene, mesh) is the one thing the prose
+cannot carry, because it decides what a landed render owes: a sprite is matted to its subject, a
+tile or scene keeps its frame, a mesh lands at a known scale. The compute budget is the only cap on
+how much art a build may ask for, and a refused enqueue is REPORTED as "draw this one with code
+instead" — a build that cannot have art is told to draw one, never left waiting for a file that is
+not coming. Mechanism: `assets.py` and `asset_chain.py` in `docs/build_path.md`.
 
 ### Staged construction: the hardest system gets a whole build to itself
 

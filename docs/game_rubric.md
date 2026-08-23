@@ -73,8 +73,8 @@ built for a single person grading his own output.
 
 ## The form
 
-Copy this block per game. Filled forms live in a gitignored directory; only this blank stays
-tracked.
+The web form on a game's page stores one filled copy per grading (`src/grading.py`); this is the
+blank.
 
 ```
 run_id:
@@ -255,7 +255,7 @@ a run again after a fix build keeps both files.
 
 ## Recording
 
-Filled forms live in a gitignored directory, alongside the rest of the lab material — never in the
-repo. When a set of grades supports a conclusion about a change to the loop, the conclusion and its
+Filled forms are control-plane state under `<data_dir>/grades/`, never repo content. When a set
+of grades supports a conclusion about a change to the loop, the conclusion and its
 numbers go to `docs/experiments.md`, the same rule as every other measurement. This file is the
 instrument; `experiments.md` is the record.

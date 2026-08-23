@@ -22,6 +22,8 @@ jobs:
         run: cp src/config/settings.example.json src/config/settings.json
       - name: Run tests
         run: cd src && python -m pytest ../tests/ -q
+      - name: Unused imports and names
+        run: pip install ruff && ruff check src scripts run.py --select F401,F811,F841
 
   frontend:
     runs-on: ubuntu-latest
@@ -36,5 +38,9 @@ jobs:
         run: cd frontend && npm ci
       - name: Lint
         run: cd frontend && npx eslint .
+      - name: Typecheck
+        run: cd frontend && npx tsc --noEmit
+      - name: Test
+        run: cd frontend && npm test -- --run
       - name: Build
         run: cd frontend && npm run build

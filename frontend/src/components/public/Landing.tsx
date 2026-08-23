@@ -4,11 +4,7 @@ import { Button } from '../ui/Button'
 import { SectionLabel } from '../ui/Field'
 import { Sigil } from '../ui/Sigil'
 import { Link } from '../../router'
-
-interface Demo {
-    run_id: string; title: string; prompt: string
-    tier: 'showcase' | 'oneshot'; thumb_url: string | null
-}
+import type { Demo } from '../../types'
 
 const CLAMP_AT = 160
 

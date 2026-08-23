@@ -26,7 +26,6 @@ export default {
       },
       fontFamily: {
         display: ['"Iowan Old Style"', '"Palatino Linotype"', 'Palatino', '"Liberation Serif"', 'Georgia', 'serif'],
-        sans: ['system-ui', '-apple-system', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'sans-serif'],
         mono: ['ui-monospace', '"JetBrains Mono"', '"SF Mono"', 'Menlo', 'Consolas', 'monospace'],
       },
     },

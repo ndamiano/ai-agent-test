@@ -8,7 +8,6 @@ __pycache__/
 # Environment
 .env
 .venv/
-env/
 venv/
 
 # IDE
@@ -16,11 +15,7 @@ venv/
 .idea/
 
 # Config
-src/config/api_keys.py
 src/config/settings.json
-
-# Build data
-output/
 
 # Logs
 logs/
@@ -32,19 +27,11 @@ data/
 # Outputs from our AI
 outputs/
 
-# Pipeline run outputs (generated artifacts and distribution builds)
+# Pipeline run outputs
 runs/
-*-dists/
 
-# Pipeline dev inputs (local test data, not source)
-pipeline_inputs/
-
-# RenPy template binary assets (copy from any SDK-generated project)
-src/pipelines/*/renpy_templates/**/*.png
-
-# Compiled/generated game build outputs (regenerable). CAUTION: this bare rule silently untracks
-# ANY source dir named build/ — never name one that.
-build/
+# Compiled/generated game build outputs (regenerable).
+/build/
 
 # Staged games (runtime/games/<run_id>/) — local build output, republished by staging on demand.
 runtime/games/
@@ -53,4 +40,4 @@ runtime/games/
 node_modules/
 
 scratchpad/
-eval
+/eval/

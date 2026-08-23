@@ -6,7 +6,7 @@ import { reportsAsNote } from './useConsoleReports'
 
 // Human-gated, one round: the deduped error list plus whatever the human adds goes through the
 // SAME fix path as a hand-typed note. Nothing here fires without a click — the measured failure
-// mode of automated fixing is the loop, not the signal (see tasks/platform_polish.md).
+// mode of automated fixing is the loop, not the signal.
 export const ErrorFixModal: React.FC<{
     reports: ConsoleReport[]
     busy: boolean

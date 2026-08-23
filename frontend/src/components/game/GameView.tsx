@@ -245,7 +245,7 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
 
                 {stage === 'ready' && (
                     <div className="max-w-2xl flex flex-col gap-4">
-                        <PromptBox prompt={detail.prompt} disabled={false}
+                        <PromptBox prompt={detail.prompt}
                             text={promptText} onChange={setPromptText} />
                         <div className="flex items-center gap-3">
                             <Button variant="primary" size="md" onClick={build} disabled={acting}>

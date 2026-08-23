@@ -20,7 +20,6 @@ export interface GameDetail {
     built: boolean
     building: boolean
     status: GameStatus
-    assets_exist: boolean
     // A previous attempt left files in the game folder — what a from-scratch build discards.
     has_game: boolean
     // Compute budget for the numberless bar: fraction remaining, 0..1, or null when the game is
@@ -66,11 +65,9 @@ export type PromptScope = 'all' | 'game' | 'platform'
 export interface PromptBucket {
     game_id: string | null
     turns: number
-    first_at: number
     last_at: number
     exec_seconds: number
     title: string | null
-    mode: string | null
     status: string | null
     user_id: string | null
 }
@@ -114,7 +111,6 @@ export interface PromptDetail {
     error: string | null
     stage: string | null
     reasoning: string | null
-    max_output_tokens: number | null
     system: string
     messages: PromptMessage[]
     tools: { name: string; description: string; parameters: Record<string, any> }[]
@@ -176,8 +172,6 @@ export interface CostWindow {
 }
 
 export interface AdminCosts {
-    generated_at: number
-    cache_seconds: number
     runpod_reachable: boolean
     windows: CostWindow[]
     ghost_30d: { pods: number; amount_usd: number; billed_seconds: number } | null
@@ -255,4 +249,12 @@ export interface GradeTarget {
     run_id: string
     request: string
     previous: number
+}
+
+export interface Demo {
+    run_id: string
+    title: string
+    prompt: string
+    tier: 'showcase' | 'oneshot'
+    thumb_url: string | null
 }

@@ -17,4 +17,4 @@ The backend must be running (`python run.py` from the repo root) — the dev ser
   backoff, and the central 401 → back to the login gate.
 - `src/hooks/useRunBuildStream.ts` — the build feed, folded from the durable `/events` replay plus
   the live websocket, so a tab switch never loses it.
-- `src/components/cockpit/` — the pieces of a game's detail view.
+- `src/components/game/` — the pieces of a game's detail view.

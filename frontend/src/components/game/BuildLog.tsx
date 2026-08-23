@@ -11,10 +11,8 @@ const TONE: Record<FeedTone, string> = {
 // A long build emits hundreds of step events; only the tail is worth showing (and worth mounting).
 const MAX_ROWS = 200
 
-export const BuildLog: React.FC<{ feed: FeedEntry[]; defaultOpen?: boolean }> = ({
-    feed, defaultOpen = false,
-}) => {
-    const [open, setOpen] = useState(defaultOpen)
+export const BuildLog: React.FC<{ feed: FeedEntry[] }> = ({ feed }) => {
+    const [open, setOpen] = useState(false)
     const boxRef = useRef<HTMLDivElement>(null)
 
     // Scroll the log's own container, never scrollIntoView — that walks every scrollable ancestor

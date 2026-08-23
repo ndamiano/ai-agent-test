@@ -130,10 +130,9 @@ export const AssetGallery: React.FC<{
     runId: string
     version: number
     rendering: boolean
-    canRender: boolean
     onRender: () => void
     acting: boolean
-}> = ({ runId, version, rendering, canRender, onRender, acting }) => {
+}> = ({ runId, version, rendering, onRender, acting }) => {
     const assets = useAssets(runId, version)
     // Assets the user just asked to redraw — shown as rendering until the next assets_done (version
     // bump) clears the optimism and the refetched manifest and bytes take over.
@@ -159,12 +158,10 @@ export const AssetGallery: React.FC<{
             <div className="flex items-center gap-3">
                 <SectionLabel>Art</SectionLabel>
                 {has && <span className="text-xs text-dim font-mono">{assets.length}</span>}
-                {canRender && (
-                    <Button onClick={onRender} disabled={acting || rendering} className="ml-auto"
-                        title={has ? 'draw every asset again' : 'draw the art this game asked for'}>
-                        {rendering ? 'Drawing…' : has ? 'Redraw all' : 'Draw the art'}
-                    </Button>
-                )}
+                <Button onClick={onRender} disabled={acting || rendering} className="ml-auto"
+                    title={has ? 'draw every asset again' : 'draw the art this game asked for'}>
+                    {rendering ? 'Drawing…' : has ? 'Redraw all' : 'Draw the art'}
+                </Button>
             </div>
 
             {rendering && (

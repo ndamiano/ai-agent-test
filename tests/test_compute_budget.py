@@ -46,6 +46,48 @@ def test_completion_replaces_the_reservation_with_measured_seconds():
     assert store.compute_remaining("g1") == 988.0
 
 
+def _build_row(build_id: str):
+    return next(b for b in store.builds_for("g1") if b["id"] == build_id)
+
+
+def test_a_completed_job_debits_its_build():
+    _game(10_000.0)
+    build_id = store.create_build("g1")
+    job_id = store.enqueue_job("llm", {}, game_id="g1", build_id=build_id)
+    store.worker_seen("w1", "llm")
+    store.claim_job("llm", "w1", 60)
+
+    store.complete_job(job_id, "w1", {"ok": True}, None, exec_seconds=12.0)
+
+    assert _build_row(build_id)["seconds_used"] == 12.0
+
+
+def test_build_seconds_accumulate_across_turns():
+    """A build is a chain of turns; its cost is their sum, not the last one."""
+    _game(10_000.0)
+    build_id = store.create_build("g1")
+    store.worker_seen("w1", "llm")
+    for seconds in (5.0, 7.0, 3.0):
+        job_id = store.enqueue_job("llm", {}, game_id="g1", build_id=build_id)
+        store.claim_job("llm", "w1", 60)
+        store.complete_job(job_id, "w1", {"ok": True}, None, exec_seconds=seconds)
+
+    assert _build_row(build_id)["seconds_used"] == 15.0
+
+
+def test_a_failed_job_does_not_debit_its_build():
+    """Same rule the game debit follows: only delivered work is billed."""
+    _game(10_000.0)
+    build_id = store.create_build("g1")
+    job_id = store.enqueue_job("llm", {}, game_id="g1", build_id=build_id)
+    store.worker_seen("w1", "llm")
+    store.claim_job("llm", "w1", 60)
+
+    store.complete_job(job_id, "w1", None, "boom", exec_seconds=9.0)
+
+    assert _build_row(build_id)["seconds_used"] == 0
+
+
 def test_a_failed_job_does_not_debit_the_game():
     """The user got nothing out of an OOM or a 500. It burned real GPU time, but that is our cost
     to eat, not theirs to pay."""

@@ -31,13 +31,3 @@ export const Button: React.FC<Props> = ({
     />
 )
 
-// An <a> that carries a button's weight — Play opens the staged game, which is a navigation.
-export const LinkButton: React.FC<
-    React.AnchorHTMLAttributes<HTMLAnchorElement> & { variant?: ButtonVariant; size?: ButtonSize }
-> = ({ variant = 'primary', size = 'sm', className = '', ...rest }) => (
-    <a
-        className={`inline-flex items-center gap-1.5 rounded transition-colors
-                    ${VARIANT[variant]} ${SIZE[size]} ${className}`}
-        {...rest}
-    />
-)

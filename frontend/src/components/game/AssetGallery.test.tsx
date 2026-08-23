@@ -10,7 +10,7 @@ const asset = (over: Partial<GameAsset> = {}): GameAsset =>
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 const gallery = () => render(
-    <AssetGallery runId="r1" version={0} rendering={false} canRender onRender={() => {}} acting={false} />,
+    <AssetGallery runId="r1" version={0} rendering={false} onRender={() => {}} acting={false} />,
 )
 
 describe('AssetGallery', () => {

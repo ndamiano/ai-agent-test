@@ -1,4 +1,4 @@
-import type { AdminAnalytics, AdminCosts, AdminInvite, AdminQueues, AdminViolation, DurableEventRow, Game, GameAsset, GameDetail, Grade, GradeTarget, PromptBucket, PromptDetail, PromptScope, PromptTurn } from '../types'
+import type { AdminAnalytics, AdminCosts, AdminInvite, AdminQueues, AdminViolation, Demo, DurableEventRow, Game, GameAsset, GameDetail, Grade, GradeTarget, PromptBucket, PromptDetail, PromptScope, PromptTurn } from '../types'
 
 let authToken: string | null = localStorage.getItem('maestro_token')
 let onUnauthorized: (() => void) | null = null
@@ -149,8 +149,7 @@ export const api = {
         request<Game[]>('/api/games'),
     // The landing page's demo surface — public, owner-curated server-side.
     listDemos: () =>
-        request<{ run_id: string; title: string; prompt: string; tier: 'showcase' | 'oneshot';
-                  thumb_url: string | null }[]>('/api/demos'),
+        request<Demo[]>('/api/demos'),
     demoPlaySession: (runId: string) =>
         request<{ url: string; origin: string }>(`/api/demos/${runId}/play-session`, { method: 'POST' }),
     // Make a new game: the prompt becomes the run and the build starts. Nothing exists server-side

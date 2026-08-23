@@ -13,7 +13,7 @@ __pycache__/
 *.pyo
 *.egg-info/
 .pytest_cache/
-.mypy_cache/
+.ruff_cache/
 
 # Frontend (source is copied for the node build stage; these are rebuilt/ignored)
 frontend/node_modules/
@@ -26,18 +26,14 @@ runtime/games/
 
 # Local state + secrets — must never enter the image (durable state lives on the /data volume)
 outputs/
+data/
 src/config/settings.json
-src/logs/
 
 # Scratch / editor / OS
 *.log
 .env
 .DS_Store
 scratchpad/
-tmp/
-
-# Personal notes — never ship
-tasks/nicknotes.md
 
 # Pod-side code — runs on GPU workers, not the control plane
 src/worker/

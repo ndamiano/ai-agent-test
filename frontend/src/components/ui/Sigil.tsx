@@ -63,16 +63,16 @@ export const drawSigil = (ctx: CanvasRenderingContext2D, w: number, h: number, s
 
 // What a game wears when it rendered no art of its own: a mark derived from its run id, so the
 // same game always looks the same and nothing has to stand in for a screenshot it never took.
-export const Sigil: React.FC<{ seed: string; className?: string; size?: number }> = ({
-    seed, className = '', size = 380,
-}) => {
+const SIZE = 380
+
+export const Sigil: React.FC<{ seed: string }> = ({ seed }) => {
     const ref = useRef<HTMLCanvasElement>(null)
 
     useEffect(() => {
         const ctx = ref.current?.getContext('2d')
         if (ctx) drawSigil(ctx, ref.current!.width, ref.current!.height, hashSeed(seed))
-    }, [seed, size])
+    }, [seed])
 
-    return <canvas ref={ref} width={size} height={Math.round(size * 0.75)} aria-hidden
-        className={`w-full h-full block ${className}`} />
+    return <canvas ref={ref} width={SIZE} height={Math.round(SIZE * 0.75)} aria-hidden
+        className="w-full h-full block" />
 }

@@ -39,5 +39,5 @@ Next steps:
   2. In the app dir:  cp .env.example .env  &&  edit .env  (WORKQUEUE_TOKEN is the one required
      value — the GPUs are reached only by worker agents, which name their own --target.)
   3. docker compose build && docker compose up -d
-  4. Create an account:  docker compose exec app python -m auth.cli create <handle>
+  4. Create an account:  docker compose exec app python -m auth.cli create <handle> <email>
 EOF

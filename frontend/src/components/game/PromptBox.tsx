@@ -6,10 +6,9 @@ import { SectionLabel, TextArea } from '../ui/Field'
 // with Build, which is the moment the user approves it.
 export const PromptBox: React.FC<{
     prompt: string
-    disabled: boolean
     text: string
     onChange: (text: string) => void
-}> = ({ prompt, disabled, text, onChange }) => {
+}> = ({ prompt, text, onChange }) => {
     const [dismissed, setDismissed] = useState(false)
 
     useEffect(() => { setDismissed(false) }, [prompt])
@@ -28,16 +27,12 @@ export const PromptBox: React.FC<{
                 )}
             </div>
 
-            <TextArea value={text} onChange={e => onChange(e.target.value)} disabled={disabled}
+            <TextArea value={text} onChange={e => onChange(e.target.value)}
                 rows={6} spellCheck={false} placeholder="Describe the game you want."
                 className="border-l-2 border-l-ember" />
 
             <p className="text-xs text-dim">
-                {disabled
-                    ? 'Editable when nothing is running.'
-                    : edited
-                        ? 'Rebuild uses this text.'
-                        : 'This exact text is the only thing the model is given.'}
+                {edited ? 'Rebuild uses this text.' : 'This exact text is the only thing the model is given.'}
             </p>
         </section>
     )

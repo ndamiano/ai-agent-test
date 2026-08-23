@@ -10,17 +10,11 @@ import requests
 
 import worker.agent as worker_agent
 from worker.agent import Agent, detect_gpu
-from fakes import FakeResponse
-
-
-def _agent():
-    a = Agent("http://server", "http://gpu", "llm", "wsecret", worker_id="w1")
-    a.session = MagicMock()
-    return a
+from fakes import FakeResponse, agent
 
 
 def test_execute_forwards_body_and_strips_the_worker_token():
-    a = _agent()
+    a = agent()
     calls = []
 
     def post(url, **kw):
@@ -47,7 +41,7 @@ def test_execute_forwards_body_and_strips_the_worker_token():
 
 
 def test_execute_reports_upstream_errors():
-    a = _agent()
+    a = agent()
 
     def post(url, **kw):
         if url.startswith("http://gpu"):
@@ -66,7 +60,7 @@ def test_execute_reports_upstream_errors():
 def test_execute_returns_while_the_result_is_still_uploading():
     """The pipelining contract: the GPU is free to claim the next job the moment the handler
     returns — the completion POST happens on the uploader thread."""
-    a = _agent()
+    a = agent()
     gate = threading.Event()
     completed = threading.Event()
 
@@ -86,7 +80,7 @@ def test_execute_returns_while_the_result_is_still_uploading():
 
 
 def test_run_drains_uploads_before_deregister():
-    a = _agent()
+    a = agent()
     order = []
 
     def post(url, **kw):
@@ -120,7 +114,7 @@ def test_claim_body_carries_pod_id_and_wait_seconds(monkeypatch):
 
 
 def test_idle_exit_zero_sends_no_wait_seconds():
-    a = _agent()
+    a = agent()
     a.session.post.return_value = FakeResponse(200, {"job": None})
     a.claim()
     assert "wait_seconds" not in a.session.post.call_args.kwargs["json"]
@@ -136,7 +130,7 @@ def test_null_claim_with_idle_exit_deregisters_and_stops():
 
 
 def test_idle_exit_zero_never_exits_on_a_null_claim():
-    a = _agent()
+    a = agent()
     calls = {"n": 0}
 
     def post(url, **kw):
@@ -153,7 +147,7 @@ def test_idle_exit_zero_never_exits_on_a_null_claim():
 
 
 def test_sigterm_drain_deregisters():
-    a = _agent()
+    a = agent()
     a.session.post.return_value = FakeResponse(200, {"ok": True})
     a.stopping = True
     a.run()
@@ -161,7 +155,7 @@ def test_sigterm_drain_deregisters():
 
 
 def test_deregister_is_best_effort():
-    a = _agent()
+    a = agent()
     a.session.post.side_effect = requests.ConnectionError("cp down")
     a.deregister()   # swallowed, not raised
 
@@ -170,7 +164,7 @@ def test_comfy_image_uploads_init_images_before_submit():
     import base64
     from worker import handlers
 
-    a = _agent()
+    a = agent()
     calls = []
 
     def post(url, **kw):
@@ -197,7 +191,7 @@ def test_comfy_image_uploads_init_images_before_submit():
 def test_comfy_image_attaches_a_safety_verdict_to_every_image(monkeypatch):
     from worker import handlers
 
-    a = _agent()
+    a = agent()
     a.session.post.return_value = FakeResponse(200, {"prompt_id": "p1"})
     outputs = {"9": {"images": [{"filename": "out.png"}]}}
 
@@ -233,7 +227,7 @@ def test_an_unloadable_classifier_reports_an_error_not_scores(monkeypatch):
 def test_comfy_image_upload_failure_never_submits():
     from worker import handlers
 
-    a = _agent()
+    a = agent()
     calls = []
 
     def post(url, **kw):

@@ -81,7 +81,7 @@ def test_tick_takes_the_model_off_settings():
                            "workqueue": {"token": "wtoken"},
                            "runpod": {"cp_url": "https://cp", "network_volume_id": "vol1",
                                       "queues": {"llm": QCFG}}}
-    a._stats.queue_stats.return_value = MagicMock(pending=1, claimed=0, oldest_age_seconds=5.0)
+    a._stats.queue_stats.return_value = MagicMock(pending=1, oldest_age_seconds=5.0)
     a._stats.live_workers.return_value = []
     a._stats.stale_workers.return_value = []
     a._stats.terminated_workers_with_pods.return_value = []
@@ -90,24 +90,58 @@ def test_tick_takes_the_model_off_settings():
     assert client.create_pod.call_args.kwargs["env"]["LLM_MODEL"] == "Qwen3.6-27B-UD-Q4_K_XL"
 
 
-def test_scale_up_cooldown_is_stamped_on_success():
-    a, _ = _scaler()
-    _start(a)
-    assert a._last_scale_up["llm"] == 100.0
+def _busy(a, client, pods):
+    """One live worker already on a pod, and a queue deep enough to ask for another."""
+    from scaler.stats import QueueStats, WorkerInfo
+    a._settings = lambda: {"llm": {"model": "m"}, "workqueue": {"token": "wtoken"},
+                           "runpod": {**RP, "queues": {"llm": {**QCFG, "max_workers": 3}}}}
+    a._stats.queue_stats.return_value = QueueStats(pending=50,
+                                                   oldest_pending_age_seconds=5.0)
+    a._stats.live_workers.return_value = [WorkerInfo("w0", "p0")]
+    a._stats.stale_workers.return_value = []
+    a._stats.terminated_workers_with_pods.return_value = []
+    client.list_pods.side_effect = lambda: list(pods)
 
 
-def test_cooldown_is_stamped_when_the_widened_create_lands():
+def _tick(a, monkeypatch, now):
+    monkeypatch.setattr("scaler.autoscaler.time.time", lambda: now)
+    a.tick()
+
+
+def test_a_second_tick_inside_the_cooldown_starts_no_pod(monkeypatch):
     a, client = _scaler()
-    client.create_pod.side_effect = [RunPodError("no capacity"), {"id": "p"}]
-    _start(a)
-    assert a._last_scale_up["llm"] == 100.0   # a widened create still counts as one scale-up
+    pods = [{"id": "p0", "name": "maestro-llm-p0"}]
+    _busy(a, client, pods)
+    client.create_pod.return_value = {"id": "p1"}
+    _tick(a, monkeypatch, 100.0)
+    assert client.create_pod.call_count == 1
+    pods.append({"id": "p1", "name": "maestro-llm-p1"})
+    _tick(a, monkeypatch, 101.0)
+    assert client.create_pod.call_count == 1
+    _tick(a, monkeypatch, 100.0 + QCFG.get("cooldown_seconds", 90))
+    assert client.create_pod.call_count == 2
 
 
-def test_no_cooldown_when_no_pod_was_created():
+def test_a_widened_create_starts_the_cooldown_too(monkeypatch):
     a, client = _scaler()
+    pods = [{"id": "p0", "name": "maestro-llm-p0"}]
+    _busy(a, client, pods)
+    client.create_pod.side_effect = [RunPodError("no capacity"), {"id": "p1"}, {"id": "p2"}]
+    _tick(a, monkeypatch, 100.0)
+    assert client.create_pod.call_count == 2
+    pods.append({"id": "p1", "name": "maestro-llm-p1"})
+    _tick(a, monkeypatch, 101.0)
+    assert client.create_pod.call_count == 2
+
+
+def test_a_refused_create_is_retried_on_the_next_tick(monkeypatch):
+    a, client = _scaler()
+    _busy(a, client, [{"id": "p0", "name": "maestro-llm-p0"}])
     client.create_pod.side_effect = RunPodError("no capacity")
-    _start(a)
-    assert "llm" not in a._last_scale_up   # nothing started, so the next tick may try again
+    _tick(a, monkeypatch, 100.0)
+    assert client.create_pod.call_count == 2
+    _tick(a, monkeypatch, 101.0)
+    assert client.create_pod.call_count == 4
 
 
 def test_cuda_floor_rides_the_head_ask_and_drops_on_widen():

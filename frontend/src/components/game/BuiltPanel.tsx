@@ -107,7 +107,7 @@ export const BuiltPanel: React.FC<{
                     </div>
                 </div>
                 <FixNote note={note} setNote={setNote} onSubmit={onFix} busy={acting} />
-                <PromptBox prompt={detail.prompt} disabled={false} text={promptText} onChange={setPromptText} />
+                <PromptBox prompt={detail.prompt} text={promptText} onChange={setPromptText} />
             </div>
 
             <div className="flex flex-col gap-6 min-w-0">
@@ -117,7 +117,7 @@ export const BuiltPanel: React.FC<{
                     </section>
                 )}
                 <AssetGallery runId={runId} version={assetsVersion} rendering={rendering}
-                    canRender onRender={onRender} acting={acting} />
+                    onRender={onRender} acting={acting} />
             </div>
         </div>
     )

@@ -27,14 +27,16 @@ const Thumb: React.FC<{ runId: string; asset: GameAsset; version: number }> = ({
 }
 
 // What the game asked for while it is still writing the code that uses it.
-export const AssetStrip: React.FC<{ runId: string; assets: GameAsset[]; version: number; max?: number }> = ({
-    runId, assets, version, max = 8,
+const MAX = 8
+
+export const AssetStrip: React.FC<{ runId: string; assets: GameAsset[]; version: number }> = ({
+    runId, assets, version,
 }) => (
     <div className="flex gap-2 flex-wrap">
-        {assets.slice(0, max).map(a => <Thumb key={a.id} runId={runId} asset={a} version={version} />)}
-        {assets.length > max && (
+        {assets.slice(0, MAX).map(a => <Thumb key={a.id} runId={runId} asset={a} version={version} />)}
+        {assets.length > MAX && (
             <span className="w-12 h-12 rounded border border-edge grid place-items-center text-xs font-mono text-dim">
-                +{assets.length - max}
+                +{assets.length - MAX}
             </span>
         )}
     </div>

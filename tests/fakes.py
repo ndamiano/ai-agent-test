@@ -17,3 +17,12 @@ class FakeResponse:
 
     def raise_for_status(self):
         pass
+
+
+def agent(queue="llm", target="http://gpu"):
+    """A worker agent whose HTTP session is a mock — the queue loop without a network."""
+    from unittest.mock import MagicMock
+    from worker.agent import Agent
+    a = Agent("http://server", target, queue, "wsecret", worker_id="w1")
+    a.session = MagicMock()
+    return a

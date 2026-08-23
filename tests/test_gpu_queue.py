@@ -3,22 +3,14 @@ the worker runs the ComfyUI submit/poll/fetch flow and the TRELLIS POST next to 
 """
 
 import base64
-from unittest.mock import MagicMock
 
 import tools.comfyui_tools as ct
 from tools.safety import SafetyViolation
 from worker import handlers
-from worker.agent import Agent
-from fakes import FakeResponse
+from fakes import FakeResponse, agent
 
 PNG = b"\x89PNG\r\n\x1a\nfake"
 GLB = b"glTF\x02fake"
-
-
-def _agent(queue="image", target="http://gpu"):
-    a = Agent("http://server", target, queue, "wsecret", worker_id="w1")
-    a.session = MagicMock()
-    return a
 
 
 def test_build_image_payload_returns_workflow_for_clean_prompt(monkeypatch):
@@ -40,7 +32,7 @@ def test_build_image_payload_returns_none_for_blocked_prompt(monkeypatch):
 def test_comfy_image_handler_submits_polls_and_fetches(monkeypatch):
     monkeypatch.setattr(handlers.safety_vision, "classify",
                         lambda b: {"scores": {"NSFW": 0.0, "SFW": 1.0}})
-    a = _agent()
+    a = agent(queue="image")
     a.session.post.side_effect = lambda url, **kw: FakeResponse(200, {"prompt_id": "p1"})
     gets = []
 
@@ -64,7 +56,7 @@ def test_comfy_image_handler_submits_polls_and_fetches(monkeypatch):
 
 
 def test_comfy_image_handler_reports_submit_failure():
-    a = _agent()
+    a = agent(queue="image")
     a.session.post.side_effect = lambda url, **kw: (
         FakeResponse(500, text="bad workflow") if url.endswith("/prompt") else FakeResponse(200, {}))
     a.session.get.side_effect = lambda url, **kw: FakeResponse(200, {"data": []})
@@ -73,7 +65,7 @@ def test_comfy_image_handler_reports_submit_failure():
 
 
 def test_trellis_handler_retries_once():
-    a = _agent(queue="mesh", target="http://trellis")
+    a = agent(queue="mesh", target="http://trellis")
     a.session.get.side_effect = lambda url, **kw: FakeResponse(200, {"data": []})
     calls = []
 
@@ -96,7 +88,7 @@ def test_trellis_handler_retries_once():
 def test_trellis_handler_carries_the_servers_timing_split():
     """A pod's stdout is unreachable, so cold-start attribution only survives if the load /
     generate split rides back on the job row."""
-    a = _agent(queue="mesh", target="http://trellis")
+    a = agent(queue="mesh", target="http://trellis")
     a.session.get.side_effect = lambda url, **kw: FakeResponse(200, {"data": []})
     a.session.post.side_effect = lambda url, **kw: FakeResponse(
         200, content=GLB, headers={"X-Load-Seconds": "5.6", "X-Generate-Seconds": "16.2"})
@@ -109,7 +101,7 @@ def test_trellis_handler_carries_the_servers_timing_split():
 
 
 def test_trellis_handler_gives_up_after_two_attempts():
-    a = _agent(queue="mesh", target="http://trellis")
+    a = agent(queue="mesh", target="http://trellis")
     a.session.get.side_effect = lambda url, **kw: FakeResponse(200, {"data": []})
     a.session.post.side_effect = lambda url, **kw: (
         FakeResponse(500, text="OOM") if url.endswith("/generate") else FakeResponse(200, {}))
@@ -119,7 +111,7 @@ def test_trellis_handler_gives_up_after_two_attempts():
 
 
 def test_agent_dispatches_on_payload_kind(monkeypatch):
-    a = _agent()
+    a = agent(queue="image")
     monkeypatch.setitem(handlers.HANDLERS, "comfy_image",
                         lambda agent, payload: ({"images": []}, None))
     a.session.post.side_effect = lambda url, **kw: FakeResponse(200, {"ok": True})

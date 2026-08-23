@@ -10,11 +10,9 @@ const TONES: Record<Tone, string> = {
     idle: 'text-slate bg-bone/[0.07]',
 }
 
-export const Pill: React.FC<{ label: string; tone?: Tone; dot?: boolean }> = ({
-    label, tone = 'idle', dot = true,
-}) => (
+export const Pill: React.FC<{ label: string; tone?: Tone }> = ({ label, tone = 'idle' }) => (
     <span className={`inline-flex items-center gap-1.5 rounded px-1.5 py-0.5 text-xs font-semibold ${TONES[tone]}`}>
-        {dot && <span className="w-1.5 h-1.5 rounded-full bg-current" />}
+        <span className="w-1.5 h-1.5 rounded-full bg-current" />
         {label}
     </span>
 )

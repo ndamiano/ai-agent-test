@@ -6,8 +6,8 @@ import { api } from '../api/client'
 import type { PromptBucket, PromptDetail, PromptTurn } from '../types'
 
 const bucket = (over: Partial<PromptBucket> = {}): PromptBucket => ({
-    game_id: 'g1', turns: 2, first_at: 1785115000, last_at: 1785115243, exec_seconds: 7,
-    title: 'Moon Miner', mode: '2d', status: 'built', user_id: 'u1', ...over,
+    game_id: 'g1', turns: 2, last_at: 1785115243, exec_seconds: 7,
+    title: 'Moon Miner', status: 'built', user_id: 'u1', ...over,
 })
 
 const turn = (over: Partial<PromptTurn> = {}): PromptTurn => ({
@@ -24,7 +24,7 @@ const indexed = (turns: PromptTurn[]): IndexedTurn[] => turns.map((t, i) => ({ .
 
 const detail: PromptDetail = {
     id: 'j1', game_id: 'g1', build_id: 'b1', status: 'done', model: 'qwen', created_at: 1785115243,
-    exec_seconds: 3.5, error: null, stage: 'build', reasoning: 'none', max_output_tokens: 4096,
+    exec_seconds: 3.5, error: null, stage: 'build', reasoning: 'none',
     system: 'You author ONE file.',
     messages: [{ role: 'user', kind: 'text', name: null, text: '# TASK write game.ts' }],
     tools: [], response: { text: 'authoring now', tool_calls: [], usage: {} },

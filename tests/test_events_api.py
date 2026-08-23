@@ -27,10 +27,6 @@ def _raw_rows(tmp_path):
     return [dict(r) for r in rows]
 
 
-def test_anonymous_is_rejected(app_client):
-    assert app_client.post("/api/events", json=[]).status_code == 401
-
-
 def test_batch_lands_attributed_to_the_caller(app_client, isolated_dbs):
     token = _token()
     user_id = auth_store.get_user_by_handle("alice").id

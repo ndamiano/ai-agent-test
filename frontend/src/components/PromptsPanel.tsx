@@ -145,7 +145,6 @@ const BucketList: React.FC<{
                             <div className="text-bone text-xs truncate">{bucketLabel(b)}</div>
                             <div className="text-dim text-xs font-mono flex gap-1.5">
                                 <span>{b.turns} turns</span>
-                                {b.mode && <span>{b.mode}</span>}
                                 <span className="ml-auto">{day(b.last_at)}</span>
                             </div>
                         </button>

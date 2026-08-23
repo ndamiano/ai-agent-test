@@ -138,7 +138,8 @@ MEDIA_SCHEMA = {"type": "function", "function": {
                     "the art. A game's art shares one visual style: before the first call, write "
                     "one style phrase naming medium, palette and outline (like \"painted cartoon "
                     "style, warm forest palette, soft dark outlines\") and repeat it word for word "
-                    "in every prompt."),
+                    "in every prompt. The style is stylized and cartoonish — chunky simplified "
+                    "shapes, bold colour — unless the request names another style."),
     "parameters": {"type": "object",
                    "properties": {"id": {"type": "string",
                                          "description": "Short name: letters, digits, - and _."},

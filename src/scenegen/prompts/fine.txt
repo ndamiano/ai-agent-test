@@ -1,0 +1,21 @@
+We are building a 2D tile map of this place: "{place}".
+Terrain legend: {legend}
+Current map, {h} rows by {w} columns (each line starts with its row number, row 0 is north, column 0 is west):
+{grid}
+
+Fourth step: add the linear and structural features the place needs — paths between areas, a river course, walls of a building, a shoreline detail. You paint by listing draw operations that are applied in order.
+
+Reply with only a JSON object in exactly this shape:
+{
+  "ops": [
+    {"op": "line", "tile": "P", "from": [2, 3], "to": [18, 3]},
+    {"op": "rect", "tile": "W", "top_left": [5, 10], "bottom_right": [9, 20], "fill": false}
+  ]
+}
+
+Op meanings:
+- "line": paints the tile along a straight line from [row, col] to [row, col], inclusive.
+- "rect": paints a rectangle between the two corners; "fill": true paints the inside too, "fill": false paints only the border.
+
+Rows go 0 to {h_max}, columns 0 to {w_max}. "tile" must be one of: {symbols}.
+Use 2 to 10 ops. Keep walkable routes between the main areas of the map.

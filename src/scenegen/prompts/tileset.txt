@@ -1,0 +1,19 @@
+We are building a 2D tile map of this place: "{place}".
+
+First step: decide the terrain tile classes (ground, water, floors, walls — the base layer only; objects and characters come later).
+
+Reply with only a JSON object in exactly this shape:
+{
+  "terrain": [
+    {"symbol": "G", "name": "grass", "walkable": true, "color": "#4caf50"},
+    {"symbol": "W", "name": "water", "walkable": false, "color": "#2196f3"}
+  ]
+}
+
+Field meanings:
+- "symbol": single uppercase letter, unique per tile.
+- "name": short terrain name.
+- "walkable": true when a person can stand on it.
+- "color": hex color for rendering.
+
+Choose 4 to 7 terrain classes that fit the place. Most of the map should be standable ground, so include at least two walkable terrain types.

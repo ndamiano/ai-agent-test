@@ -118,7 +118,7 @@ src/
                          refused a second time because the game is already written against the
                          first one's metres and regions.
                          compose_scene is the scene chain's build face: it lays out a whole MAP —
-                         assets/<id>_ground.png plus <id>_scene.json (walkable grid, door cells,
+                         assets/<id>_ground.png plus <id>_scene.json (walkable grid and
                          POIs) — and the model reads the json and wires it (verified in a real
                          build 2026-08-06: three scenes asked for, fetched at runtime, walkable
                          grid driving collision). scene.json and a code-painted ground land at
@@ -178,24 +178,25 @@ src/
                          A top-up RESUMES a mesh from its `<id>.src.png` if one is there: the chain
                          needs ComfyUI and then TRELLIS, and a one-GPU box holds one at a time, so
                          always restarting at the image leg never reached the second half.
-      scene_chain.py     compose_scene's GPU path (the 2026-08-08 validated cell recipe, see
-                         docs/experiments.md). Synchronous half at tool time: one plan call
-                         (blocking llm job — the calling turn has already completed, so the queue
-                         is free), the scenegen solver, scene.json (walkable TRUTH, never
-                         diffused), a code-painted ground.
+      scene_chain.py     compose_scene's GPU path. Synchronous half at tool time: the scenegen
+                         layout calls plus the paint spec (blocking llm jobs — the calling turn
+                         has already completed, so the queue is free), scene.json (walkable
+                         TRUTH, never diffused), and the spec-colored jittered guide saved as
+                         the ground.
                          Async half as jobs: store-miss subjects (Qwen-2512, image queue) each
                          chaining TRELLIS (mesh queue) whose completion deposits
-                         subject+GLB+sprite to the asset store, plus one masked terrain img2img
-                         (DreamShaper; structural cells at 0.45 so code keeps owning where
-                         things ARE) — the BATCH FINALIZE is the fan-in barrier
+                         subject+GLB+sprite to the asset store, plus the two-stage ground
+                         (DreamShaper: per-region masked conditioning at 0.55 over the guide,
+                         then a chained global blend at 0.35) — the BATCH FINALIZE is the
+                         fan-in barrier
                          (claim_batch_finalize already guarantees exactly-one against the
                          reaper): composite store sprites over the terrain, then one Qwen-Edit
                          embedding job whose finalize drift-checks each box against the
                          composite (detection only — broken, never bad), lands the final ground
                          AT THE SAME PATH and re-stages. Every enqueue carries game_id, so
                          admission and debit ride the queue like all GPU work; a refused budget
-                         at any seam leaves the best ground already on disk (code paint →
-                         terrain → composite → embed, each overwriting the last). Its names
+                         at any seam leaves the best ground already on disk (guide →
+                         regional → blend → composite → embed, each overwriting the last). Its names
                          ride asset_chain's registries, so the completion dispatch stays one
                          branch.
       asset_store.py     the ASSET STORE: rendered object TYPES shared across games, so a mesh
@@ -352,15 +353,24 @@ src/
                          Locally the three queues are drained by `scripts/local_gpu.py auto`
                          (`docs/local_dev.md`).
 
-  scenegen/              the solver behind the scene chain. bake.py is the synchronous face
-                         (interiors/dungeons, pure CPU); blockout.py is the SOLVER: the llm
-                         plans relations — counts, kinds, no positions — and code places
-                         deterministically, roads by construction, walkable truth emitted, POIs
-                         snapped to the network. Terrain features are BANDS whose depth varies
-                         along the edge, so a coast is a coastline and not a ruler; variety
-                         patches are cosmetic and never touch hazard or cost.
-                         prompts/blockout_plan.txt is its hill-climbable plan prompt. Code owns
-                         everything spatial; diffusion paints materials.
+  scenegen/              the map maker behind the scene chain, deliberately maestro-free: pure
+                         functions with an injected llm callable, so the folder copies into a
+                         lab and iterates against any OpenAI-style endpoint. bake.py is the
+                         synchronous face (interiors/dungeons, pure CPU). layout.py is the
+                         LLM-layered layout — tileset, items, coarse zone grid, deterministic
+                         upscale+smooth, fine paint ops, placement with terrain snap — each a
+                         small validated call with a JSON skeleton and one-error-at-a-time
+                         reask (measured 2026-08-23: 12/12 maps, fully connected, where the
+                         relations→solver blockout it replaced made one road-spine tunnel per
+                         archetype; asked for a full-resolution grid the model emits uniform
+                         fill, so every stage edits through its own small representation).
+                         paintspec.py: the llm art-directs each region's guide color and
+                         material phrase — the guide color ANCHORS the final hue, no prompt
+                         wording overrides it. paint.py: jittered guide → per-region masked
+                         conditioning at 0.55 (feather scaled to region thickness) → global
+                         blend at 0.35, as pure ComfyUI graph builders. prompts/ holds one
+                         .txt per llm call. Code owns walkable truth; diffusion paints
+                         materials.
 ```
 
 The rest of the platform is build-path-agnostic: `auth/` (identity, bearer sessions, credits,

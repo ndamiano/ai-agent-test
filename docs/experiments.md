@@ -836,3 +836,51 @@ cliff-city and jungle-town worlds built during the WorldClaw spike and its migra
   blend clamped at 1.35x.
 - A vision-model size estimate for the same temple moved 15 m → 30 m across two consecutive calls;
   sizes are not asked for twice.
+
+## 2026-08-23/24 — the LLM-layered map replaces blockout (scene-gen lab → `src/scenegen`)
+
+Standalone lab, qwen3.8_27b local, DreamShaperXL Turbo. 14 places total across the runs.
+
+### Layout (`scenegen/layout.py`)
+
+- Word2World's recipe transfers to a 27B only as small single-purpose calls with JSON skeletons
+  and a one-error-at-a-time reask: 12/12 maps completed, largest walkable component 100% on all
+  12, walkable ground 32–96%. Median 10 calls / ~15k tokens / 37s per map.
+- The same model asked to rewrite a full-resolution 24x32 grid emitted uniform fill (768 of one
+  symbol), twice — compose_scene's founding "the model can't hand-write tile maps" reproduced.
+  Every stage edits through its own small representation.
+- Layout coherence by eye: ~9/12 on the original battery, ~6/10 on ten unfamiliar one-shot
+  places — layout, not paint, is where quality is lost now.
+- Self-critique rounds measured flat (scores do not climb round to round) and their `fill:true`
+  rect fix-ops caused the worst artifacts of the run; the promoted pipeline has none.
+- Vision-critique → full regenerate on all 14: accurate concrete critiques, but ~2-3 improved
+  vs ~7 regressed — a repair tool for structurally-broken maps that damages good ones. Not
+  promoted. Vision best-of-3 picked defensibly on 3 of 4 places and hallucinated structure to
+  justify the fourth where all three candidates were weak. Not promoted yet.
+
+### Ground paint (`scenegen/paint.py`, `scenegen/paintspec.py`)
+
+- Flat color guides need denoise >=0.7 before turbo grows texture, and structure dies there
+  (pier → rock arch, clearing → pond). Per-pixel jitter (±22) lets texture emerge at 0.55 with
+  boundaries pixel-true to the grid. Coarse blotch noise is worse than none: a blotch straddling
+  a boundary reads as "terrain crosses here".
+- One masked ConditioningSetMask prompt per region beats a global prompt on all 4 test maps —
+  the global prompt made every region compete for the same words ("stone" pulled the pier,
+  walls and floor all to one gray). Mask feather must scale with region thickness: a fixed 24px
+  feather diluted a thin treasury strip below its neighbours' conditioning and it painted as
+  floor.
+- A second global img2img at 0.35 deepens texture and unifies lighting; 0.45+ smears material
+  identity back toward mush.
+- The guide color anchors the final hue at 0.55 — no prompt wording overrode a traffic-cone
+  `#f1c40f` sand until the guide hex changed. The LLM paintspec (per-region hex + material
+  phrase, with the tileset hex passed as intent) matched or beat a hand-curated table on all 4
+  originals; without the intent hint it turned a gold treasury into tasteful slate.
+- Whole-map unify img2img over a sprite composite: harmful at 0.3 (sprites mush), dead end.
+
+### Sprites (not yet promoted — bench only)
+
+- Qwen-2512 + worldgen's subject_style.txt + one contextual descriptive sentence produced
+  clean game assets for all 7 bench items including the character; the same items through
+  NetaYume with a bare one-word prompt gave a briefcase for a fisherman and deck chairs for a
+  pier. The subject leg keeps its existing prompt for now; the bench is the evidence for the
+  next pass.

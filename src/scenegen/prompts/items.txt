@@ -1,0 +1,22 @@
+We are building a 2D tile map of this place: "{place}".
+The terrain tiles are already decided: {terrain}
+
+Second step: list the objects (buildings, props) and entities (people, animals) that belong in this place.
+
+Reply with only a JSON object in exactly this shape:
+{
+  "objects": [
+    {"symbol": "h", "name": "hut", "count": 1, "on_terrain": "G", "walkable": false, "cells": 2}
+  ],
+  "entities": [
+    {"symbol": "f", "name": "fisherman", "count": 2, "on_terrain": "G"}
+  ]
+}
+
+Field meanings:
+- "symbol": single lowercase letter, unique, different from the terrain symbols.
+- "count": how many copies to place (1 to 8).
+- "on_terrain": the terrain symbol this item stands on.
+- objects also need "walkable": true when a person can step onto that tile (a door, a bridge), false when it blocks (a wall, a hut), and "cells": its footprint width in tiles, 1 to 4 (a barrel is 1, a hut 2, a barn 3).
+
+List 2 to 10 items in total. Include the things the place description implies.

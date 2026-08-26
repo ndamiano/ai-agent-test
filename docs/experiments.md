@@ -8,6 +8,55 @@ at a row here has not earned its place.
 
 ---
 
+## A 2K-word design, and the window it needs (2026-08-25/26, local 5090, qwen3.8_27b via ninfer, thinking on)
+
+### The question
+The systems designs of 2026-08-24 were 500–700 words. Does a much longer one — a top-down RPG in
+2,139 words: four seeded-generator areas with exits between them, turn-based battle, three staged
+quests, shop, save — build at all, and what does it need from the harness?
+
+### The builds
+| arm | main build | gate | GPU min |
+|---|---|---|---|
+| 65K window, bf16 KV | 110 turns, 380K gen, 134 reads / 75 edits / 13 writes; 29 compactions (787 rounds trimmed, 101 dropped) | clean on the first probe | 76 |
+| 131K window, int8 KV | 61 turns, 225K gen, 32 reads / 43 edits / 12 writes; 2 compactions (80 trimmed, 0 dropped) | 3 fix rounds: 4 syntax errors, then `rnd is not a function`, then `undefined.cat` | 53 + 58 |
+| 131K, "drawn in code" removed from the design | hit the 120-turn cap, no `done`; 122 KB of JS, parses and loads clean; ZERO `generate_media` calls | (a capped build is not gated) | — |
+
+Both finished games are real RPGs of the design — four areas, exits, battles, quests — and the
+owner's verdict on the first: "missing a bit, but surprisingly way better than I expected."
+
+### What the window did
+Same design, same model: half the turns, a quarter of the reads, no dropped rounds. At 65K the
+~128 KB codebase (~35K tokens) is over half the window, so the model's contract-verification
+passes became read → stubbed three rounds later → re-read; 60% of its turns were reads, and each
+sweep still found real bugs (a missing `sfx` alias, table keys, `description` vs `desc`). At 131K
+the codebase stays resident and the sweeps are short. int8 KV is what fits 131K on the card
+(bf16 is 450 MB short), a confound this run did not separate from the window itself.
+
+### What compaction did
+Trimming file bodies before dropping rounds (`build_steps.compact`) carried the 65K build through
+turn 40 with no round dropped where the old shape would have cut the transcript in half three
+times. It cannot beat a codebase larger than the window: past that point the read-stub-reread
+cycle is the cost, and the fix is the window, not the trim.
+
+### The gate had two holes
+Both surfaced on the 131K build's first fix round, which got "(no location available)" for four
+syntax errors it then spent 23 turns reading for:
+- `node --check` only ran on `*.js` at the game root; both RPG builds kept code under `game/`.
+- node 22 module detection: `--check` on a `.js` file containing `export` retries as ESM and
+  reports a PASS, so the "both parsers refuse" rule never fired on module code. `.cjs` forces the
+  script parse. With both fixed the note named all four files and lines; the fix took 24 turns.
+
+### Art was not asked for
+Deleting "drawn in code" from the design did not make the model ask for art: it wrote a sprite
+module and drew everything in code, as the art ledger (`docs/build_path.md`) predicts. A design
+that wants art has to name it as art. Open.
+
+### The cap
+The art arm reached 120 turns writing sensible code across 17 files in 7 folders and a final
+verification sweep, not looping. With thinking on and a design this size, 120 is a working
+ceiling, not a runaway guard. Open: raise it, or measure what the last 40 turns bought.
+
 ## Thinking on, and what the request is made of (2026-08-24/25, local 5090, qwen3.8_27b via ninfer)
 
 ### The questions

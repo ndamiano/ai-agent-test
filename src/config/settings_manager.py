@@ -49,8 +49,8 @@ class SettingsManager:
                 # Engine launch flags, delivered to an llm pod at create and to the local leg at
                 # start, so a tuning knob (KV dtype, thinking, draft tokens) is a settings edit
                 # and never a new worker image.
-                "ninfer_args": "",
-                "llama_args": "",
+                "ninfer_args": os.getenv("NINFER_ARGS", ""),
+                "llama_args": os.getenv("LLAMA_ARGS", ""),
                 "n_ctx": int(os.getenv("LLM_N_CTX", "32768"))
             },
             "workqueue": {

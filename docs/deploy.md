@@ -262,7 +262,8 @@ stays as the belt to this suspender. That is why the volume holds the model twic
 whose `model` is not its `--model-id`, the engine preallocates the window it is given (nvfp4 +
 `--vision` fits a 5090 at 131072 only with `--kv-dtype int8`; bf16 KV is 450 MB short at launch),
 and the autoscaler delivers the control plane's `llm.model`, `llm.n_ctx`, `llm.ninfer_args` and
-`llm.llama_args` at create. The two `_args` strings are appended to the engine's launch line, so
+`llm.llama_args` at create — on prod those are the control plane's own `.env` (`LLM_MODEL`,
+`LLM_N_CTX`, `NINFER_ARGS`, `LLAMA_ARGS`), which is why the settings.json there has no `llm` block. The two `_args` strings are appended to the engine's launch line, so
 a tuning knob — KV dtype, thinking, draft tokens, a sampler override — is a `settings.json` edit
 and the next pod, never a new image tag. `scripts/local_gpu.py llm` launches with the same string,
 which is where a flag that dies at launch should die first: on a pod it bills until the

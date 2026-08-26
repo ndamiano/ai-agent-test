@@ -41,7 +41,8 @@ def _image_jobs():
 
 def test_the_path_comes_back_before_the_render(run_dir):
     out = request_media(RUN, run_dir, "goblin", "a snarling goblin")
-    assert out == {"ok": True, "path": "assets/goblin.webp", "status": "rendering"}
+    assert (out["ok"], out["path"], out["status"]) == (True, "assets/goblin.webp", "rendering")
+    assert "stand-in" in out["note"]
     assert len(_image_jobs()) == 1
 
 
@@ -73,9 +74,64 @@ def test_the_request_is_recorded_in_the_manifest(run_dir):
     request_media(RUN, run_dir, "hut", "a thatched hut", kind="mesh")
     assert read_manifest(run_dir) == [
         {"id": "goblin", "file": "assets/goblin.webp", "kind": "sprite",
-         "prompt": "a snarling goblin"},
-        {"id": "hut", "file": "assets/hut.glb", "kind": "mesh", "prompt": "a thatched hut"},
+         "prompt": "a snarling goblin", "placeholder": True},
+        {"id": "hut", "file": "assets/hut.glb", "kind": "mesh", "prompt": "a thatched hut",
+         "placeholder": True},
     ]
+
+
+def test_a_placeholder_is_at_the_path_from_the_moment_the_tool_answers(run_dir):
+    """The model writes `drawImage(img)` against the path it was given; a file that is not there
+    yet is a broken image, and drawing one throws every frame — a black game until the render
+    lands. A sprite stand-in is matted, a scene's is opaque, because the game draws one ON its
+    background and the other AS it."""
+    from PIL import Image
+    request_media(RUN, run_dir, "goblin", "a snarling goblin")
+    request_media(RUN, run_dir, "floor", "a stone floor", kind="scene")
+    goblin = Image.open(assets.asset_path(RUN, "goblin", "webp"))
+    floor = Image.open(assets.asset_path(RUN, "floor", "webp"))
+    assert goblin.format == "WEBP" and goblin.convert("RGBA").getpixel((0, 0))[3] == 0
+    assert floor.format == "WEBP" and floor.convert("RGBA").getpixel((0, 0))[3] == 255
+    assert not assets.asset_path(RUN, "hut", "glb").exists()
+
+
+def test_a_placeholder_is_not_a_landed_render(run_dir):
+    """Everything that used to read 'file exists' as 'art arrived' — the repeat-ask answer, the
+    top-up, the batch finalize — reads the manifest flag instead, or a stand-in would count as
+    art and the real render would never be paid for."""
+    request_media(RUN, run_dir, "goblin", "a snarling goblin")
+    again = request_media(RUN, run_dir, "goblin", "a snarling goblin")
+    assert again["status"] == "rendering"
+    assert assets.landed(RUN, read_manifest(run_dir)[0]) is False
+
+    assets.start_from_manifest(RUN, run_dir)
+    assert len(_image_jobs()) == 2, "the top-up re-renders past a placeholder"
+
+
+def test_a_landed_render_replaces_the_placeholder_and_the_flag(run_dir, monkeypatch, tmp_path):
+    from PIL import Image
+    from maestro.codegen.asset_chain import OPERATIONS
+    request_media(RUN, run_dir, "floor", "a stone floor", kind="scene")
+    src = tmp_path / "render.png"
+    Image.new("RGBA", (64, 64), (0, 255, 0, 255)).save(src)
+    monkeypatch.setattr("maestro.codegen.asset_chain._record_defect", lambda md, d: None)
+    OPERATIONS["save_flat"]({"run_id": RUN, "asset_id": "floor", "kind": "scene"},
+                            {"images": [{"file": str(src),
+                                         "safety": {"scores": {"NSFW": 0.0, "SFW": 1.0}}}]})
+    entry = read_manifest(run_dir)[0]
+    assert "placeholder" not in entry and assets.landed(RUN, entry)
+    assert Image.open(assets.asset_path(RUN, "floor", "webp")).size == (64, 64)
+    assert request_media(RUN, run_dir, "floor", "a stone floor")["status"] == "ready"
+
+
+def test_a_confirmed_replace_keeps_the_landed_art_until_the_new_render(run_dir, monkeypatch):
+    request_media(RUN, run_dir, "goblin", "a goblin")
+    assets.set_landed(run_dir, "goblin")
+    assets.asset_path(RUN, "goblin", "webp").write_bytes(b"REAL")
+    request_media(RUN, run_dir, "goblin", "a bigger goblin")
+    request_media(RUN, run_dir, "goblin", "a bigger goblin")
+    assert assets.asset_path(RUN, "goblin", "webp").read_bytes() == b"REAL"
+    assert "placeholder" not in read_manifest(run_dir)[0]
 
 
 def test_the_batch_carries_no_build_id(run_dir):
@@ -112,7 +168,7 @@ def test_a_confirmed_repeat_replaces_the_art_and_the_prompt(run_dir):
     request_media(RUN, run_dir, "goblin", "a goblin, full body, for a 3d model")
     out = request_media(RUN, run_dir, "goblin", "a goblin, full body, for a 3d model")
 
-    assert out == {"ok": True, "path": "assets/goblin.webp", "status": "rendering"}
+    assert (out["path"], out["status"]) == ("assets/goblin.webp", "rendering")
     assert len(_image_jobs()) == 2
     entries = read_manifest(run_dir)
     assert len(entries) == 1, "a replacement rewrites its record rather than adding one"
@@ -178,7 +234,7 @@ def test_an_exhausted_budget_tells_the_model_to_draw_it_instead(run_dir):
 def test_the_tool_reaches_the_queue_and_defaults_to_a_sprite(run_dir):
     tools = build_tools(RunState(RUN))
     out = tools["generate_media"](id="goblin", prompt="a snarling goblin")
-    assert out == {"ok": True, "path": "assets/goblin.webp", "status": "rendering"}
+    assert (out["ok"], out["path"], out["status"]) == (True, "assets/goblin.webp", "rendering")
     assert _image_jobs()[0]["metadata"]["kind"] == "sprite"
 
 

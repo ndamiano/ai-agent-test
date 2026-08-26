@@ -55,11 +55,13 @@ _INLINE_SCRIPT = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.IG
 def probe(game_dir: Path) -> List[Dict[str, str]]:
     """Serve the game folder, load it headless, and return the uncaught errors in arrival order.
 
-    Each error is {"message": ..., "stack": ...}. The page gets a click and the two keys any
-    title screen answers to (Enter, Space) — enough to get past "press to start", deliberately
-    no more. An environment with no browser answers [] and logs why, per the boundary rule.
-    The page has NO network egress: every request that is not the game's own ephemeral server
-    is aborted and logged.
+    Each error is {"message": ..., "stack": ...}. The page gets a click at the viewport centre
+    (where a canvas-drawn PLAY button sits) and the two keys any title screen answers to (Enter,
+    Space) — enough to get past "press to start", deliberately no more. A script the page asked
+    for and did not get is an error too: a module import that 404s stops the whole module graph
+    without throwing, so nothing else would ever report it. An environment with no browser
+    answers [] and logs why, per the boundary rule. The page has NO network egress: every request
+    that is not the game's own ephemeral server is aborted and logged.
     """
     try:
         from playwright.sync_api import sync_playwright
@@ -93,6 +95,20 @@ def probe(game_dir: Path) -> List[Dict[str, str]]:
                 page.route("**/*", _no_egress)
                 page.on("pageerror", lambda e: errors.append(
                     {"message": str(e), "stack": getattr(e, "stack", "") or ""}))
+
+                def _missing_script(response):
+                    req = response.request
+                    if response.status < 400 or req.resource_type != "script":
+                        return
+                    path = req.url[len(base_url) + 1:]
+                    referrer = (req.headers.get("referer") or "")[len(base_url) + 1:]
+                    who = f" ({referrer} asked for it)" if referrer and referrer != "index.html" else ""
+                    errors.append({"message": f"the page asked for {path} and it does not exist "
+                                              f"(HTTP {response.status}){who} — the path in the "
+                                              f"script tag or import that names it is wrong",
+                                   "stack": ""})
+
+                page.on("response", _missing_script)
                 try:
                     page.goto(f"{base_url}/index.html", timeout=15_000, wait_until="load")
                 except Exception as e:
@@ -101,7 +117,8 @@ def probe(game_dir: Path) -> List[Dict[str, str]]:
                     if not errors:
                         errors.append({"message": f"page did not finish loading: {e}", "stack": ""})
                 page.wait_for_timeout(PROBE_SECONDS * 500)
-                for poke in (lambda: page.mouse.click(320, 240),
+                size = page.viewport_size or {"width": 1280, "height": 720}
+                for poke in (lambda: page.mouse.click(size["width"] // 2, size["height"] // 2),
                              lambda: page.keyboard.press("Enter"),
                              lambda: page.keyboard.press("Space")):
                     try:

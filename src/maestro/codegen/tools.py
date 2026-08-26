@@ -133,6 +133,10 @@ def build_tools(state) -> dict:
             # but only when the model sends "" and means it.
             raise KeyError("new_text")
         old, new = old_text, new_text
+        if old == new:
+            return {"ok": False, "error": "old_text and new_text are identical, so this edit "
+                                          "changes nothing. If the file already reads the way you "
+                                          "want, move on."}
         body = p.read_text(encoding="utf-8")
         n = body.count(old)
         if n == 0:

@@ -140,14 +140,44 @@ def ext_for(kind: str) -> str:
     return "glb" if kind == "mesh" else "webp"
 
 
+def write_placeholder(path: Path, kind: str, asset_id: str) -> None:
+    """A stand-in at the promised path from the moment the tool answers, so the game never loads
+    a file that is not there — a `drawImage` of a broken image throws every frame and the game is
+    black until the render lands. Its hue comes from the id so two stand-ins tell apart; a sprite
+    is a matted disc because the game draws it on its own background, a tile or scene an opaque
+    frame because it IS one. A mesh gets none: a GLB has no cheap stand-in and the loader's
+    failure is a callback, not a throw."""
+    from PIL import ImageDraw
+    hue = sum(asset_id.encode()) % 360
+    rgb = Image.new("HSV", (1, 1), (int(hue * 255 / 360), 140, 200)).convert("RGB").getpixel((0, 0))
+    if kind in MATTED_KINDS:
+        im = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+        ImageDraw.Draw(im).ellipse((24, 24, 232, 232), fill=rgb + (255,))
+    else:
+        im = Image.new("RGBA", (512, 512), rgb + (255,))
+        d = ImageDraw.Draw(im)
+        for y in range(0, 512, 64):
+            for x in range(0, 512, 64):
+                if (x + y) // 64 % 2:
+                    d.rectangle((x, y, x + 63, y + 63), fill=tuple(c * 7 // 8 for c in rgb) + (255,))
+    save_image(im, path)
+
+
+def landed(run_id: str, entry: Dict) -> bool:
+    """Whether an asked-for asset's REAL file is on disk — the placeholder at the same path does
+    not count."""
+    return (not entry.get("placeholder")
+            and asset_path(run_id, entry["id"], ext_for(entry.get("kind"))).exists())
+
+
 def _pending(run_id: str, run_dir, entries: List[Dict]) -> List[Dict]:
-    """Entries whose file isn't on disk yet — so a re-run tops up rather than re-paying for art
+    """Entries whose render hasn't landed — so a re-run tops up rather than re-paying for art
     that already rendered."""
     out = []
     for e in entries:
         if e.get("refused"):
             continue
-        if not asset_path(run_id, e["id"], ext_for(e.get("kind"))).exists():
+        if not landed(run_id, e):
             out.append(e)
     return out
 
@@ -188,6 +218,11 @@ def _update(run_dir, asset_id: str, **fields) -> None:
 def set_defect(run_dir, asset_id: str, defect: Optional[str]) -> None:
     """Record (or clear) what a landed render came back broken as."""
     _update(run_dir, asset_id, defect=defect)
+
+
+def set_landed(run_dir, asset_id: str) -> None:
+    """The real file has replaced the placeholder at its path."""
+    _update(run_dir, asset_id, placeholder=None)
 
 
 # Above the measured innocent ceiling (0.954): the classifier overcalls stylized game art, and a
@@ -257,7 +292,7 @@ def request_media(run_id: str, run_dir, asset_id: str, prompt: str,
         # picture, which is what someone asking for the art to be redrawn used to get.
         _update(run_dir, asset_id, replace_asked=True)
         return {"ok": True, "path": rel,
-                "status": "ready" if asset_path(run_id, asset_id, ext).exists() else "rendering",
+                "status": "ready" if landed(run_id, existing) else "rendering",
                 "note": "not requeued — this id already has art. Call again with the prompt you "
                         "want to replace it with, or use a different id to draw something new."}
 
@@ -274,17 +309,25 @@ def request_media(run_id: str, run_dir, asset_id: str, prompt: str,
                                        "then": then})
     except db_store.InsufficientCompute:
         return {"ok": False, "error": "no compute left for art — draw this one with code instead"}
+    # A confirmed replace keeps the art it has until the new render lands.
+    stand_in = not mesh and not asset_path(run_id, asset_id, ext).exists()
+    if stand_in:
+        write_placeholder(asset_path(run_id, asset_id, ext), kind, asset_id)
     if existing:
         # The manifest holds the prompt a regenerate re-prompts against, so a confirmed replace
         # rewrites it rather than leaving the record describing art that no longer exists.
-        _update(run_dir, asset_id, prompt=prompt, replace_asked=None, defect=None, refused=None)
+        _update(run_dir, asset_id, prompt=prompt, replace_asked=None, defect=None, refused=None,
+                placeholder=True if stand_in else None)
     else:
-        _record(run_dir, {"id": asset_id, "file": rel, "kind": kind, "prompt": prompt})
+        _record(run_dir, {"id": asset_id, "file": rel, "kind": kind, "prompt": prompt,
+                          "placeholder": True})
     logger.info("assets %s: %s requested (%s)", run_id, asset_id, kind)
     out = {"ok": True, "path": rel, "status": "rendering"}
     if mesh:
         out["note"] = ("the model will span exactly 1 unit at its longest side — scale it in the "
                        "scene to its real-world size (person ≈ 1.7 units, building ≈ 6+).")
+    elif stand_in:
+        out["note"] = "a stand-in image is at that path now; the render replaces it when it lands."
     return out
 
 

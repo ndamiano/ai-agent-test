@@ -35,10 +35,11 @@ wait_engine() {
 }
 
 start_ninfer() {
-    # --spec mtp + --lm-head-draft are speculative decode; --no-thinking is the floor the
-    # llama.cpp branch gets from enable_thinking=false. --vision is required: world refinement
-    # sends the model renders of the world. Residency is frozen at start, so what is NOT passed
-    # (dflash) is weights this process never allocates.
+    # --spec mtp + --lm-head-draft are speculative decode. Thinking stays ON (no --no-thinking):
+    # measured 2026-08-25, it is the one change that moved game quality by a league rather than a
+    # notch, and the build's per-turn cap is sized for it (build_steps.MAX_TOKENS). --vision is
+    # required: world refinement sends the model renders of the world. Residency is frozen at
+    # start, so what is NOT passed (dflash) is weights this process never allocates.
     #
     # --presence-penalty 0 is load-bearing, not tidying: ninfer's sampler defaults to Qwen3
     # THINKING defaults, presence-penalty 1.0 among them, and a penalty on repeated tokens
@@ -51,7 +52,7 @@ start_ninfer() {
         --max-context "$LLM_N_CTX" \
         --spec mtp --draft-tokens 3 --lm-head-draft \
         --presence-penalty 0 \
-        --no-thinking --vision &
+        --vision &
     engine_pid=$!
     target="http://127.0.0.1:$NINFER_PORT"
     # ninfer answers nothing until the whole artifact is resident, so this waits on a 17 GiB pull

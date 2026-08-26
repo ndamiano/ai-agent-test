@@ -61,7 +61,6 @@ tok/s), compiled for `sm_120a` alone. It serves `chat` only.
   --max-context 131072 \
   --spec mtp --draft-tokens 3 --lm-head-draft \
   --presence-penalty 0 \
-  --no-thinking \
   --cors \
   --vision
 ```
@@ -71,9 +70,12 @@ images, and a server launched without it refuses every image-bearing turn (`visi
 Its fixed GPU allocations come out of the same card as the weights and KV, and they are the
 margin: `scripts/local_gpu.py` serves exactly `<llm.model>.ninfer` from `NINFER_MODELS` because a
 larger variant artifact of the same model left no room for them and died at launch.
-`--no-thinking` and `--presence-penalty 0` are both load-bearing: ninfer's sampler defaults to
-Qwen3 thinking defaults, penalty 1.0 among them, which degrades long structured output.
-`--model-id` must match `llm.model` in settings.json.
+`--presence-penalty 0` is load-bearing: ninfer's sampler defaults to Qwen3 thinking defaults,
+penalty 1.0 among them, which degrades long structured output. Thinking itself stays ON — there
+is no `--no-thinking` — because a thinking build is a league better than a non-thinking one
+(`docs/experiments.md`, 2026-08-25), and ninfer has no thinking-budget flag: the build's per-turn
+output cap (`build_steps.MAX_TOKENS`, 50K) is what bounds it. `--model-id` must match `llm.model`
+in settings.json.
 
 ### LLM — llama.cpp
 

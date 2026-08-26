@@ -163,6 +163,30 @@ def test_headless_probe_hears_boot_errors(tmp_path, body, expect):
         assert "undefinedFunction" in errors[0]["message"]
 
 
+def test_probe_hears_a_module_the_page_asked_for_and_did_not_get(tmp_path):
+    """A module import that 404s stops the whole graph without throwing — a game that never ran
+    a line read clean until the probe listened for the failed fetch."""
+    pytest.importorskip("playwright.sync_api")
+    gdir = _game(tmp_path, "<html><body><script type=module src='js/main.js'></script></body></html>")
+    (gdir / "js").mkdir()
+    (gdir / "js" / "main.js").write_text("import { keys } from './lib/input.js';\nkeys.up;\n")
+    errors = error_gate.probe(gdir)
+    assert len(errors) == 1
+    assert "js/lib/input.js" in errors[0]["message"] and "does not exist" in errors[0]["message"]
+
+
+def test_probe_clicks_the_viewport_centre(tmp_path):
+    """A canvas-drawn PLAY button sits at the centre; a build died on one an off-centre click
+    never reached."""
+    pytest.importorskip("playwright.sync_api")
+    gdir = _game(tmp_path, "<html><body><script>\n"
+                 "addEventListener('click', e => { const w = innerWidth, h = innerHeight;\n"
+                 "  if (Math.abs(e.clientX - w/2) < 5 && Math.abs(e.clientY - h/2) < 5) startTurn(); });\n"
+                 "</script></body></html>")
+    errors = error_gate.probe(gdir)
+    assert len(errors) == 1 and "startTurn" in errors[0]["message"]
+
+
 def test_probe_blocks_external_egress_and_logs_it(tmp_path, caplog, monkeypatch):
     """The probe runs the game's own JS on the control-plane box — a request to anything but the
     game's ephemeral server must die inside the browser."""

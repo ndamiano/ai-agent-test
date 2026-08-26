@@ -8,6 +8,78 @@ at a row here has not earned its place.
 
 ---
 
+## Thinking on, and what the request is made of (2026-08-24/25, local 5090, qwen3.8_27b via ninfer)
+
+### The questions
+Three, run in sequence on one six-request battery (top-down arena shooter, third-person indoor 3D
+dungeon, card battle, village mystery with five NPCs, four-lane rhythm game, three-level
+platformer), single-shot, no image or mesh worker, the owner playing every result:
+
+1. Does the DEPTH of the request move the game? Three arms: the plain one-paragraph request; a
+   "spec" design (~300 words of what happens on screen); a "systems" design (500–700 words: the
+   systems named, every entity as a record with its fields, the content roster with values, the
+   screens as a state machine, and every rule stated as a GENERATOR rather than as content).
+2. What kills a build that a better request cannot save?
+3. Does thinking (ninfer launched without `--no-thinking`) change the game?
+
+### Request depth
+Plain 3/6 played, spec 2/6 — noise at n=1, and the spec arm was the wrong question: it described
+outcomes, not parts. The systems arm built what was written wherever the harness held: the arcade
+came out as designed, the rhythm game's "one audio clock, chart derived from the song's event list"
+fixed a bug two other arms could not, the apostrophe rule held. Arm C of the 2026-07-30 depth arms
+(the model writes its own `DESIGN.md`) lost because the model's design was thin, not because
+design-first is wrong: the ceiling is the design INPUT. One rule of writing them, learned the
+expensive way: a design says generator, never content — "maps are hand-written strings" made the
+platformer rewrite `data.js` two hundred times and never write the game.
+
+### Harness deaths, and the fixes
+Three of six systems builds hit the 120-step cap, all harness:
+- **Identical no-op edit, repeated.** Past ~80 steps and a few compactions, a build's last 10–25 turns
+  were the same `edit_file` with `old_text == new_text`, which the tool answered `ok`. Now refused
+  ("changes nothing"): rhythm went cap→38 steps, gate clean.
+- **Art that never lands.** With no image worker the model's `drawImage` of a 404'd webp threw every
+  frame — a black game. `generate_media` now writes a placeholder at the promised path (matted disc
+  for a sprite, opaque frame for a tile or scene) and the manifest's `placeholder` flag, cleared on
+  landing, is what "rendered" means. Cards went black cap→27 steps, playable.
+- **Compaction shape.** Trigger 0.62 × n_ctx, keep 0.33: every cut forgets ~half the transcript, and
+  the loops above began after the second or third cut. ≥60% of the transcript is file bodies that are
+  also on disk. Open: trim bodies of old rounds rather than drop rounds; bigger window.
+
+### Thinking
+At the build's 16K per-turn cap, thinking is unusable: turn 0 generated 16,000 tokens of reasoning,
+no content, no tool call. At a 50K cap, on the systems designs:
+
+| game | no-think | think | turns / gen tokens / GPU s (think) |
+|---|---|---|---|
+| rhythm ×2 | notes fall, music unrelated | notes tied to the generated music | 31 / 158K / 1498 · 26 / 109K / 1075 |
+| platformer | blank (hand-map design) | plays; one gap unwinnable | 57 / 195K / 2243 |
+| npcs | grass grid + crates | village with paths, well, buildings | 29 / 141K / 1396 |
+| cards | black | plays after one missing import | 29 / 111K / 1248 |
+| arcade | plays | plays, spawn rings, "awesome" | 22 / 82K / 704 |
+| indoor3d | wall-facing, dark | first playable one in any arm; A/D inverted | 22 / 113K / 877 |
+| farming (new) | — | plays after two one-line fixes | 39 / 178K / 1474 |
+| bullet hell (new) | — | plays; damage rarely lands | 40 / 184K / 1638 |
+
+No-think rhythm for scale: 39 turns, 19K tokens, 343 s. Thinking is front-loaded — 25–36K tokens
+on turn 0, 18–31K on the next two, then mostly under 3K with the odd 17K spike on a design
+decision — and the bigger, fewer turns re-read less (one build never compacted). Owner's verdict:
+"a marked improvement from previous where basically only a couple worked at all". Adopted: thinking
+on, `MAX_TOKENS` 50K.
+
+### The gate missed two of the deaths
+Cards died on PLAY (`startTurn` exported, never imported) and the gate reported clean: its poke
+clicked (320, 240), the canvas-drawn button sat at the viewport centre. Farming never ran a line:
+`js/main.js` imported `./lib/input.js`, which resolves under `js/`, and a module import that 404s
+is a console error, not a `pageerror`. Both fixed in `error_gate.probe`: the click is at the
+viewport centre, and a script the page asked for and did not get is an error with the path.
+
+### Not measured yet
+The walking sim (`compose_world`) — the world's image and mesh legs need `local_gpu.py auto`,
+which cannot yet launch the llm leg with thinking. The stage planner, fix rounds and worldgen's own
+llm calls all now run with thinking too, unmeasured.
+
+---
+
 ## A helper library beside the game (2026-08-22, local 5090, qwen3.8_27b via ninfer, 6 requests × 2 arms)
 
 ### The question

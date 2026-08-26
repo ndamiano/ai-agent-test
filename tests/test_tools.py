@@ -46,6 +46,15 @@ def test_edit_replaces_a_unique_snippet(tools, tmp_path):
     assert "const b = 3;" in (tmp_path / "game" / "game.js").read_text()
 
 
+def test_edit_that_changes_nothing_is_refused(tools, tmp_path):
+    """A 27B stuck at the end of a long build repeats one edit whose old and new text are the
+    same, and a tool that answers ok to it keeps the loop fed — measured at 10 and 25 identical
+    trailing calls in two capped builds (2026-08-24)."""
+    r = tools["edit_file"](path="game.js", old_text="const b = 2;", new_text="const b = 2;")
+    assert r["ok"] is False and "changes nothing" in r["error"]
+    assert "const b = 2;" in (tmp_path / "game" / "game.js").read_text()
+
+
 def test_edit_needs_no_prior_read(tools):
     """The grid harness had no read-before-edit rule; adding one only invents a failure mode."""
     assert tools["edit_file"](path="game.js", old_text="const b = 2;", new_text="x")["ok"] is True

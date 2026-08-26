@@ -93,7 +93,7 @@ def _leg(queue: str) -> dict:
                      "--host", "127.0.0.1", "--port", "8090",
                      "--max-context", str((_settings().get("llm") or {}).get("n_ctx", 98304)),
                      "--spec", "mtp", "--draft-tokens", "3", "--lm-head-draft",
-                     "--presence-penalty", "0", "--no-thinking", "--cors", "--vision"],
+                     "--presence-penalty", "0", "--cors", "--vision"],
             "cwd": None,
             "env": {},
         }

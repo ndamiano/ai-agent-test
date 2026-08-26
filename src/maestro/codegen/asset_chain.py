@@ -17,8 +17,9 @@ from typing import Dict, List, Optional
 from PIL import Image
 
 from db import store as db_store
-from maestro.codegen.assets import (asset_path, autocrop_image, ext_for, check_render, render_kind,
-                                    render_verdict, save_image, set_defect, set_refused)
+from maestro.codegen.assets import (asset_path, autocrop_image, check_render, landed,
+                                    read_manifest, render_kind, render_verdict, save_image,
+                                    set_defect, set_landed, set_refused)
 from maestro.codegen.staging import stage_for_play
 from maestro.state import RunState
 from tools.build_events import _emit
@@ -84,6 +85,10 @@ def _record_defect(md: Dict, dst: Path) -> None:
     set_defect(RunState(md["run_id"]).run_dir, md["asset_id"], defect)
 
 
+def _mark_landed(md: Dict) -> None:
+    set_landed(RunState(md["run_id"]).run_dir, md["asset_id"])
+
+
 def _save_sprite(md: Dict, result: Dict) -> None:
     src = _admit(md, _first_image(result))
     if src is None:
@@ -98,6 +103,7 @@ def _save_sprite(md: Dict, result: Dict) -> None:
     except Exception as e:
         logger.warning("autocrop %s failed: %s", md["asset_id"], e)
         save_image(Image.open(src).convert("RGBA"), dst)
+    _mark_landed(md)
     _record_defect(md, dst)
 
 
@@ -119,6 +125,7 @@ def _save_flat(md: Dict, result: Dict) -> None:
             logger.warning("tile quilt %s failed, saving the raw render: %s", md["asset_id"], e)
     save_image(im, dst)
     Path(src).unlink(missing_ok=True)
+    _mark_landed(md)
     _record_defect(md, dst)
 
 
@@ -130,6 +137,7 @@ def _decimate(md: Dict, result: Dict) -> None:
     dst = asset_path(md["run_id"], md["asset_id"], "glb")
     Path(dst).write_bytes(Path(src).read_bytes())
     _decimate(Path(dst), 20_000)
+    _mark_landed(md)
 
 
 OPERATIONS = {"save_sprite": _save_sprite, "save_flat": _save_flat, "decimate": _decimate}
@@ -145,13 +153,15 @@ OPERATIONS.update(_scene.OPERATIONS)
 def _finalize_assets(md: Dict, jobs: List[Dict]) -> None:
     run_id = md["run_id"]
     state = RunState(run_id)
+    entries = {e["id"]: e for e in read_manifest(state.run_dir)}
     ids, rendered = [], []
     for j in jobs:
         aid = j["metadata"].get("asset_id")
         if not aid or aid in ids:
             continue
         ids.append(aid)
-        if asset_path(run_id, aid, ext_for(j["metadata"].get("kind"))).exists():
+        entry = entries.get(aid) or {"id": aid, "kind": j["metadata"].get("kind")}
+        if landed(run_id, entry):
             rendered.append(aid)
 
     # A batch enqueued mid-build must not stage the game out from under the build's own finalize.

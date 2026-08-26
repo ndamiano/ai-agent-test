@@ -146,8 +146,13 @@ src/
                          (seed_vendor): the game folder starts holding the vendored renderer and
                          nothing else, since everything placed there steers the first list_files.
       assets.py          the ASSET stage — `request_media` is what the game's generate_media call
-                         runs: enqueue ONE `image` job, record the ask in assets.json, answer with
-                         the path. Nothing plans, rewrites or inspects the game's source. `kind`
+                         runs: enqueue ONE `image` job, record the ask in assets.json, write a
+                         PLACEHOLDER at the path (a matted disc for a sprite, an opaque frame for
+                         a tile or scene, none for a mesh) and answer with the path. The game
+                         never loads a file that is not there — a `drawImage` of a broken image
+                         throws every frame — and the manifest's `placeholder` flag, cleared by
+                         the landing op, is what "rendered" means everywhere a bare file check
+                         used to (`landed`). Nothing plans, rewrites or inspects the game's source. `kind`
                          picks the model, the workflow and what a landed render owes: sprite is
                          matted and autocropped because the game draws it ON its own background,
                          scene keeps the whole frame because it IS the background, a tile is
@@ -240,8 +245,11 @@ src/
                          again" lives in localStorage. A plain build clears any stale stage plan.
       error_gate.py      the ERROR GATE — after a playable finalize, open the staged game in a
                          headless browser (playwright chromium, an ephemeral static server, one
-                         click + Enter + Space to get past a title screen) and re-enter the fix
-                         machine with the FIRST uncaught error and its address. One error per fix
+                         click at the viewport centre + Enter + Space to get past a title screen)
+                         and re-enter the fix machine with the FIRST uncaught error and its
+                         address — a script the page asked for and did not get (an import that
+                         404s, which stops the module graph without throwing) counts as one, with
+                         the path as its address. One error per fix
                          build; node --check supplies the file:line a browser SyntaxError omits
                          (tried as module then script — authored games import three); a
                          redeclaration note lists every declaration site; a parse note says fix
@@ -401,9 +409,9 @@ code primitives. So the prompt does not tell the model to draw a plain shape at 
 does not price a render in minutes: both frame art as a thing that might not arrive, and a model
 that believes that draws a prism and moves on.
 
-What settles it is COVERAGE — how much of what the player sees got art — not call-at-all, and the
-same run has to show that a build whose art never lands still renders, since nothing now tells the
-model to draw something in the meantime.
+What settles it is COVERAGE — how much of what the player sees got art — not call-at-all. A build
+whose art never lands renders its placeholders (2026-08-24: before them, a card game drew a
+never-landed webp and was black every frame).
 
 Coverage, counted (2026-08-01, `asset_use.audit` over the 35 staged games): 352 assets asked for,
 **128 rendered and never referenced by the game's source**, and **115 `assets/…` paths referenced

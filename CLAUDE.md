@@ -222,7 +222,13 @@ What does help:
    arrows".
 3. **Give them the whole window.** The input budget rides `llm.n_ctx`, not the model category, and a
    build's input IS its transcript — set `n_ctx` to what the server was launched with.
-4. **Reasoning off by default** — `reasoning: "none"` is the floor for every build turn. Passing None
-   instead reaches the connector as "let the model pick", which skips the enable_thinking switch; a
-   measured turn then spent 16000 tokens reasoning and never called a tool. Some local models only
-   honor on/off — graded efforts collapse to the same budget.
+4. **Thinking ON, with a per-turn cap sized for it.** Measured 2026-08-25 on qwen3.8_27b (ninfer):
+   with thinking, 8 of 8 finished builds were real games of their design — notes tied to generated
+   music, a village with streets, the first playable 3D dungeon in any arm — where the same designs
+   without thinking made "something kinda close". It costs 3–4× the GPU seconds and it is worth it.
+   Thinking is front-loaded (25–36K tokens on turn 0, near zero on mechanical turns), so the
+   per-turn output cap must hold a whole think plus the answer: at 16K every opening turn ended at
+   the cap with no content and no tool call. Thinking is
+   a SERVER launch flag on the chat wire (no `--no-thinking`); ninfer has no thinking budget, so the
+   cap is the only bound. The llama.cpp path keeps `enable_thinking=false` — it has no budget either
+   and was never measured with thinking on.

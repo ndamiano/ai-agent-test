@@ -30,7 +30,9 @@ logger = logging.getLogger(__name__)
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 
 MAX_TURNS = 120
-MAX_TOKENS = 16_000
+# Per-turn output cap. Sized for a THINKING model: turn 0 of a build thinks 25-36K tokens before its
+# first tool call, and at 16K every such turn ended at the cap with no content and no call.
+MAX_TOKENS = 50_000
 # Ties to tools.MAX_READ_CHARS — a read cut here too would contradict its own truncation note.
 _MAX_TOOL_CHARS = 20_000
 # Compact when the last prompt crossed this fraction of the window, leaving room for the reply and
@@ -84,9 +86,10 @@ class Infer:
     messages: List[dict]
     schemas: List[dict]
     max_tokens: int
-    # "none" is the floor. Passing None instead reaches the connector as an explicit "let the model
-    # pick", which skips the enable_thinking switch — a measured turn then spent 16000 tokens
-    # reasoning and never called a tool.
+    # Only the `responses` wire (llama.cpp) reads this; on `chat` it is dropped and thinking is the
+    # server's launch flag, ON for ninfer. Passing None reaches the llama.cpp connector as "let the
+    # model pick", which skips the enable_thinking switch — and that server has no budget, so a
+    # turn spent 16000 tokens reasoning and never called a tool.
     reasoning: Optional[str] = "none"
     report: Optional[str] = None      # progress line emitted when this turn is enqueued
 

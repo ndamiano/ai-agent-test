@@ -582,3 +582,56 @@ def test_seed_places_the_helper_library_and_leaves_edits_alone(tmp_path):
     (lib / "input.js").write_text("// edited")
     staging.seed_vendor(tmp_path)
     assert (lib / "input.js").read_text() == "// edited"
+
+
+def _file_history(n=6):
+    h = [{"role": "user", "content": "make a game"}]
+    for i in range(n):
+        args = json.dumps({"path": f"f{i}.js", "content": "y" * 1500})
+        h.append({"role": "assistant", "content": f"step {i}",
+                  "tool_calls": [{"id": f"c{i}", "type": "function",
+                                  "function": {"name": "write_file", "arguments": args}}]})
+        h.append({"role": "tool", "tool_call_id": f"c{i}", "content": '{"ok": true}'})
+        h.append({"role": "assistant", "content": f"look {i}",
+                  "tool_calls": [{"id": f"r{i}", "type": "function",
+                                  "function": {"name": "read_file",
+                                               "arguments": json.dumps({"path": f"f{i}.js"})}}]})
+        h.append({"role": "tool", "tool_call_id": f"r{i}",
+                  "content": f'<file path="f{i}.js" lines="1-40/40">\n{"y" * 1500}\n</file>'})
+    return h
+
+
+def test_compact_trims_bodies_before_dropping_any_round(tmp_path):
+    (tmp_path / "game").mkdir()
+    cursor = _cursor(history=_file_history())
+    n_before = len(cursor.history)
+    # 12 rounds of ~1.5K each; the budget holds the 3 fresh ones whole plus 9 trimmed to stubs.
+    assert build_steps.compact(tmp_path, cursor, keep_chars=12000) > 0
+    assert len(cursor.history) == n_before                   # every round is still there
+    assert cursor.history[1]["role"] == "assistant"          # no re-grounding note: nothing dropped
+    old_write = json.loads(cursor.history[1]["tool_calls"][0]["function"]["arguments"])
+    assert old_write["path"] == "f0.js" and "1500 chars" in old_write["content"]
+    assert "read f0.js lines 1-40/40" in cursor.history[4]["content"]
+    # The newest rounds keep their bodies whole: the model is editing against them.
+    assert cursor.history[-1]["content"].count("y") == 1500
+    assert "y" * 1500 in cursor.history[-2]["tool_calls"][0]["function"]["arguments"] or \
+        "y" * 1500 in cursor.history[-4]["tool_calls"][0]["function"]["arguments"]
+
+
+def test_compact_drops_rounds_only_when_trimming_is_not_enough(tmp_path):
+    (tmp_path / "game").mkdir()
+    (tmp_path / "game" / "f0.js").write_text("x")
+    cursor = _cursor(history=_file_history())
+    assert build_steps.compact(tmp_path, cursor, keep_chars=1500) > 0
+    assert "f0.js" in cursor.history[1]["content"]           # re-grounded: rounds went
+    assert len(cursor.history) < len(_file_history())
+
+
+def test_compaction_replays_the_trim_from_the_turn_log(tmp_path):
+    (tmp_path / "game").mkdir()
+    cursor = _cursor(history=_file_history())
+    build_steps.compact(tmp_path, cursor, keep_chars=12000)
+    from maestro.codegen import turn_log
+    record = json.loads(turn_log.path(tmp_path).read_text().splitlines()[-1])
+    assert record["kind"] == "compact" and record["trimmed"] > 0 and record["dropped"] == 0
+    assert turn_log._compacted(_file_history(), record) == cursor.history

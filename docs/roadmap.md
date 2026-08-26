@@ -31,9 +31,11 @@ averaged away.
 The build loop that clears this is described in `CLAUDE.md` and is not restated here. What stands
 between us and the bar:
 
-- **No battery runs on a schedule.** Every grid so far has been a one-off experiment. Until a fixed
-  set of requests runs against a fixed configuration, "does it come back running" has no answer that
-  survives the next change to the loop. This is the single biggest gap on the track.
+- **The battery is run by hand, after every change to the loop, and that is the choice for now.**
+  A fixed set of requests against a fixed configuration is what makes "does it come back running"
+  survive the next change, and it is what happens — one grid per change, the owner playing every
+  cell. Putting it on a schedule buys nothing while every run costs GPU dollars nobody is earning
+  back; it becomes worth a few dollars a day once there is revenue to spend them from.
 - **The helper library shipped and the games it produced played worse.** `runtime/vendor/lib/`
   closed the standing defect ledger (near-black 3D, silent games, arrow-keys-only input) 6/6
   against a control arm, and on the same six requests the games that actually PLAYED went from

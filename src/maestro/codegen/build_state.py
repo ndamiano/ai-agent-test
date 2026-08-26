@@ -37,7 +37,7 @@ class BuildCursor:
     # what the SERVER reported for the last turn — an estimate of ours that drifts low would hit the
     # context window with no warning.
     prompt_tokens: int = 0
-    compacted: int = 0                            # transcript rounds dropped so far
+    compacted: int = 0                            # compactions so far
     no_call_streak: int = 0
     # hashed failing tool call -> times sent. Per call, not just the last one: a stuck model
     # re-reads between retries, and that read must not clear the failing edit's count.

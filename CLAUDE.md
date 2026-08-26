@@ -61,8 +61,10 @@ partial view and a schema, it fills the schema.
 
 ### The transcript IS the memory
 
-No context-rebuilding, no per-step minimal window. When the prompt approaches the context limit the
-OLDEST WHOLE ROUNDS are dropped and the model is re-grounded on the current file listing
+No context-rebuilding, no per-step minimal window. When the prompt approaches the context limit,
+the FILE BODIES in the old rounds are replaced by a stub naming the path and size — the round still
+says what the model wrote, read and edited, and the bytes are on disk — and only if that is not
+enough are the OLDEST WHOLE ROUNDS dropped and the model re-grounded on the current file listing
 (`build_steps.compact`). Rounds are never split — a `tool` message whose assistant `tool_calls` is
 gone is an orphan, and a chat template is entitled to 500 the turn. The re-grounding matters more
 than the trim: the dropped rounds are where the model watched itself write the files, so without it

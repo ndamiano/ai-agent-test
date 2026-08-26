@@ -46,6 +46,11 @@ class SettingsManager:
                 # budget entirely on reasoning.
                 "reasoning": os.getenv("LLM_REASONING", "none"),
                 "max_tokens": 50000,
+                # Engine launch flags, delivered to an llm pod at create and to the local leg at
+                # start, so a tuning knob (KV dtype, thinking, draft tokens) is a settings edit
+                # and never a new worker image.
+                "ninfer_args": "",
+                "llama_args": "",
                 "n_ctx": int(os.getenv("LLM_N_CTX", "32768"))
             },
             "workqueue": {

@@ -258,10 +258,15 @@ beats no pod. The image queue needs the same `["13.0"]` floor with no opt-out: `
 cu130, one engine, and an old-driver host is a dead pod on any card. The entrypoint driver gate
 stays as the belt to this suspender. That is why the volume holds the model twice
 (`models/ninfer/*.ninfer` and `models/LLM/*.gguf`, ~37 GiB together) and why an llm pod needs
-`LLM_MODEL` and `LLM_N_CTX` in its env: ninfer refuses any request whose `model` is not its
-`--model-id`, the engine preallocates the window it is given (nvfp4 + `--vision` fits a 5090 at
-65535 and dies at launch above), and the autoscaler delivers the control plane's `llm.model` and
-`llm.n_ctx` at create.
+`LLM_MODEL`, `LLM_N_CTX`, `NINFER_ARGS` and `LLAMA_ARGS` in its env: ninfer refuses any request
+whose `model` is not its `--model-id`, the engine preallocates the window it is given (nvfp4 +
+`--vision` fits a 5090 at 131072 only with `--kv-dtype int8`; bf16 KV is 450 MB short at launch),
+and the autoscaler delivers the control plane's `llm.model`, `llm.n_ctx`, `llm.ninfer_args` and
+`llm.llama_args` at create. The two `_args` strings are appended to the engine's launch line, so
+a tuning knob — KV dtype, thinking, draft tokens, a sampler override — is a `settings.json` edit
+and the next pod, never a new image tag. `scripts/local_gpu.py llm` launches with the same string,
+which is where a flag that dies at launch should die first: on a pod it bills until the
+boot-deadline reaper (`queues.<name>.boot_deadline_seconds`, 900 by default) collects it.
 The ninfer build stage compiles a pinned commit of github.com/Neroued/ninfer — it needs CUDA 13.1
 (the base image ships 12.8 for llama.cpp; only `libcudart.so.13` is added).
 

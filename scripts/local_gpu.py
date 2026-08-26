@@ -31,6 +31,7 @@ import argparse
 import datetime
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -93,7 +94,10 @@ def _leg(queue: str) -> dict:
                      "--host", "127.0.0.1", "--port", "8090",
                      "--max-context", str((_settings().get("llm") or {}).get("n_ctx", 98304)),
                      "--spec", "mtp", "--draft-tokens", "3", "--lm-head-draft",
-                     "--presence-penalty", "0", "--cors", "--vision"],
+                     "--presence-penalty", "0", "--cors", "--vision",
+                     # The same llm.ninfer_args a pod gets at create, so a flag that dies at
+                     # launch dies here first.
+                     *shlex.split((_settings().get("llm") or {}).get("ninfer_args") or "")],
             "cwd": None,
             "env": {},
         }

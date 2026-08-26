@@ -79,6 +79,15 @@ def test_pod_env_carries_the_window_the_control_plane_budgets_against():
     assert client.create_pod.call_args.kwargs["env"]["LLM_N_CTX"] == "65535"
 
 
+def test_pod_env_carries_the_engine_flags_so_tuning_is_never_a_new_image():
+    """KV dtype, thinking and the like are launch flags of the engine; the pod hears the control
+    plane's string at create and an unset one is an empty list, not a missing variable."""
+    a, client = _scaler()
+    _start(a, llm={**LLM, "ninfer_args": "--kv-dtype int8"})
+    env = client.create_pod.call_args.kwargs["env"]
+    assert env["NINFER_ARGS"] == "--kv-dtype int8" and env["LLAMA_ARGS"] == ""
+
+
 def test_only_an_llm_pod_hears_about_the_model():
     """A ComfyUI pod has no engine to name it to — the queue owns its backend."""
     a, client = _scaler()

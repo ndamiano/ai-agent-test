@@ -12,8 +12,8 @@ Three records, one JSON object per line, appended and never rewritten:
     meta     once per build — a FIX re-enters the same run dir, so it appends its own meta under
              the new build_id and the transcript restarts there
     turn     one per COMPLETED turn: what it added, what came back, what it cost
-    compact  the rounds `build_steps.compact` dropped from the live transcript plus the note it
-             re-grounded on, replayed at read time so a reconstruction shows what was really sent
+    compact  the rounds `build_steps.compact` trimmed and dropped from the live transcript plus
+             the note it re-grounded on, replayed at read time so a reconstruction shows what was really sent
 
 The line lands BEFORE the jobs row's copy is cleared. The append and the sqlite write cannot share
 a transaction, so the ORDER is the whole guarantee: a failure between them wastes disk, never the
@@ -56,8 +56,9 @@ def append_turn(run_dir, *, turn: int, job_id: str, added: List[Dict], response:
                       "error": error})
 
 
-def append_compact(run_dir, *, turn: int, dropped: int, note: str) -> None:
-    _append(run_dir, {"kind": "compact", "turn": turn, "dropped": dropped, "note": note})
+def append_compact(run_dir, *, turn: int, trimmed: int, dropped: int, note: Optional[str]) -> None:
+    _append(run_dir, {"kind": "compact", "turn": turn, "trimmed": trimmed, "dropped": dropped,
+                      "note": note})
 
 
 def _append(run_dir, record: Dict) -> None:
@@ -119,12 +120,16 @@ def _replay(run_dir) -> Iterator[Tuple[Dict, Dict, List[Dict], int]]:
 
 
 def _compacted(messages: List[Dict], record: Dict) -> List[Dict]:
-    """Replay one compaction exactly as build_steps.compact performed it: the oldest whole rounds
-    gone, the re-grounding note in their place, the request kept."""
+    """Replay one compaction exactly as build_steps.compact performed it: file bodies stubbed out
+    of the oldest rounds, then the oldest whole rounds gone with the re-grounding note in their
+    place, the request kept."""
     from maestro.codegen import build_steps   # module-level would cycle: build_steps writes here
+    if record["trimmed"]:
+        messages = build_steps.trim_bodies(messages, record["trimmed"])
     groups = build_steps.rounds(messages)
     kept = [m for g in groups[record["dropped"]:] for m in g]
-    return messages[:1] + [{"role": "user", "content": record["note"]}] + kept
+    note = [{"role": "user", "content": record["note"]}] if record["note"] else []
+    return messages[:1] + note + kept
 
 
 def _chars_of(messages: List[Dict]) -> int:

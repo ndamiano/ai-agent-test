@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Union
@@ -447,9 +448,8 @@ def _dispatch(tools, cursor, tc) -> dict:
 def _infer(run_dir, cursor, report: Optional[str] = None) -> Infer:
     ctx = _n_ctx()
     if cursor.prompt_tokens > int(ctx * _COMPACT_AT):
-        dropped = compact(run_dir, cursor, int(ctx * _COMPACT_KEEP) * 4)
-        if dropped:
-            cursor.compacted += dropped
+        if compact(run_dir, cursor, int(ctx * _COMPACT_KEEP) * 4):
+            cursor.compacted += 1
             cursor.prompt_tokens = 0   # unknown until the server reports the trimmed prompt back
     msgs = MessageBuilder(cursor.system).extend(cursor.history).build()
     # No actions means the turn called no tool: either the opening turn (the prompt has just been
@@ -457,7 +457,7 @@ def _infer(run_dir, cursor, report: Optional[str] = None) -> Infer:
     report = report or ", ".join(cursor.actions) or (
         _opening_line(cursor) if cursor.turn == 0 else "no tool call — asked again")
     if cursor.compacted:
-        report += f" ({cursor.compacted} round(s) compacted)"
+        report += f" (compacted {cursor.compacted}×)"
     cursor.actions = []
     return Infer(msgs, SCHEMAS, MAX_TOKENS, report=report)
 
@@ -477,36 +477,101 @@ def rounds(history: List[dict]) -> List[List[dict]]:
     return out
 
 
-def compact(run_dir, cursor, keep_chars: int) -> int:
-    """Drop the OLDEST whole rounds until the tail fits, then RE-GROUND on the file list.
+# Rounds whose file bodies compaction leaves whole: the newest ones are what the model is about to
+# edit against, and a stub there turns "edit what I just read" into a re-read.
+_FRESH_ROUNDS = 3
+_FILE_RESULT = re.compile(r'^<file path="([^"]*)"(?: lines="([^"]*)")?>\n(.*)\n</file>$', re.S)
 
-    Re-grounding matters more than the trim: the dropped rounds are where the model watched itself
-    write the files, so after a trim it is editing code it no longer remembers. The listing costs a
-    few dozen tokens and turns "edit blind" back into "read, then edit"."""
+
+def _stub_call(tc: dict) -> Optional[dict]:
+    fn = tc.get("function") or {}
+    name = fn.get("name")
+    if name not in ("write_file", "edit_file"):
+        return None
+    args = parse_args(fn.get("arguments"))
+    if name == "write_file":
+        body = args.get("content")
+        if not isinstance(body, str) or len(body) < 200:
+            return None
+        args["content"] = f"[{len(body)} chars, written — on disk as {args.get('path')}]"
+    else:
+        old, new = args.get("old_text"), args.get("new_text")
+        if not (isinstance(old, str) and isinstance(new, str)) or len(old) + len(new) < 200:
+            return None
+        args["old_text"] = f"[{len(old)} chars replaced in {args.get('path')}]"
+        args["new_text"] = f"[{len(new)} chars — on disk]"
+    return {**tc, "function": {**fn, "arguments": json.dumps(args, ensure_ascii=False)}}
+
+
+def _stub_result(m: dict) -> Optional[dict]:
+    hit = _FILE_RESULT.match(m.get("content") or "")
+    if not hit or len(hit.group(3)) < 200:
+        return None
+    span = f" lines {hit.group(2)}" if hit.group(2) else ""
+    return {**m, "content": f"[read {hit.group(1)}{span}, {len(hit.group(3))} chars — dropped to "
+                            "save room; read it again before editing it]"}
+
+
+def trim_bodies(history: List[dict], rounds_to_trim: int) -> List[dict]:
+    """The oldest `rounds_to_trim` rounds with their file bodies replaced by a stub naming the path
+    and size. The round keeps its shape — what was written, read and edited, in order — and loses
+    only bytes that are also on disk."""
+    groups = rounds(history)
+    out = list(history[:1])
+    for i, g in enumerate(groups):
+        for m in g:
+            if i < rounds_to_trim:
+                if m.get("tool_calls"):
+                    m = {**m, "tool_calls": [_stub_call(tc) or tc for tc in m["tool_calls"]]}
+                elif m["role"] == "tool":
+                    m = _stub_result(m) or m
+            out.append(m)
+    return out
+
+
+def compact(run_dir, cursor, keep_chars: int) -> int:
+    """Trim file bodies out of the old rounds; only if the tail still does not fit, drop the OLDEST
+    whole rounds and RE-GROUND on the file list.
+
+    A transcript is mostly file bodies that are also on disk, and dropping a round loses the
+    model's memory of having written it. Trimmed, the round still says what the model did; the
+    bytes come back on `read_file`. When rounds do go, the re-grounding matters more than the
+    trim: the dropped rounds are where the model watched itself write the files, so after one it
+    is editing code it no longer remembers. Returns the rounds changed, trimmed or dropped."""
+    size = lambda msgs: sum(len(json.dumps(m)) for m in msgs)
     groups = rounds(cursor.history)
-    total = sum(len(json.dumps(m)) for g in groups for m in g)
+    trimmed = max(0, len(groups) - _FRESH_ROUNDS)
+    history = trim_bodies(cursor.history, trimmed) if trimmed else list(cursor.history)
+    if history == cursor.history:
+        trimmed = 0
+    groups = rounds(history)
+    total = size([m for g in groups for m in g])
     dropped, removed = 0, 0
     while groups and total > keep_chars:
         g = groups.pop(0)
-        total -= sum(len(json.dumps(m)) for m in g)
+        total -= size(g)
         dropped += 1
         removed += len(g)
-    if not dropped:
+    if not trimmed and not dropped:
         return 0
-    root = game_dir(run_dir)
-    listing = "\n".join(
-        f"{p.relative_to(root)} ({p.stat().st_size} bytes)"
-        for p in sorted(root.rglob("*")) if p.is_file() and not p.name.startswith("_")) or "(empty)"
-    note = {"role": "user", "content":
-            f"[Earlier steps were dropped to save room; {dropped} of them. You cannot see what you "
-            f"wrote before, so do not assume — read a file before you edit it.]\n\n"
-            f"Files in the project directory right now:\n{listing}"}
-    cursor.history = cursor.history[:1] + [note] + [m for g in groups for m in g]
-    # The dropped messages are already in the turn log; the note takes their place there too, so
-    # the archive replays what was really sent rather than the transcript that was never re-sent.
-    turn_log.append_compact(run_dir, turn=cursor.turn, dropped=dropped, note=note["content"])
-    cursor.logged = max(1, cursor.logged - removed + 1)
-    return dropped
+    kept = [m for g in groups for m in g]
+    note = None
+    if dropped:
+        root = game_dir(run_dir)
+        listing = "\n".join(
+            f"{p.relative_to(root)} ({p.stat().st_size} bytes)"
+            for p in sorted(root.rglob("*")) if p.is_file() and not p.name.startswith("_")) or "(empty)"
+        note = {"role": "user", "content":
+                f"[Earlier steps were dropped to save room; {dropped} of them. You cannot see what "
+                f"you wrote before, so do not assume — read a file before you edit it.]\n\n"
+                f"Files in the project directory right now:\n{listing}"}
+    cursor.history = history[:1] + ([note] if note else []) + kept
+    # The changed messages are already in the turn log; the record replays the same trim and drop
+    # there too, so the archive shows what was really sent rather than the transcript never re-sent.
+    turn_log.append_compact(run_dir, turn=cursor.turn, trimmed=trimmed, dropped=dropped,
+                            note=note["content"] if note else None)
+    cursor.logged = max(1, cursor.logged - removed + (1 if note else 0))
+    return trimmed + dropped
 
 
 def _request_from(spec) -> str:

@@ -89,8 +89,8 @@ src/
                          eight schemas are byte-identical every turn, so they ride ONE `meta` record
                          and a `turn` record carries only what that turn ADDED — turn k is
                          `system + tools + concat(added[0..k])`. A `compact` record carries the
-                         rounds `build_steps.compact` dropped and the note that replaced them, so a
-                         replay shows what was really sent. A FIX appends its own meta and never
+                         rounds `build_steps.compact` trimmed to stubs and dropped, and the note
+                         that replaced the dropped ones, so a replay shows what was really sent. A FIX appends its own meta and never
                          truncates. The prompt log reads bodies from here once the row is empty.
       archive.py         the run dir's OFF-BOX copy. tools/s3.py is a minimal SigV4 client over
                          `requests` — a wrong signature is a loud 403 and the payload hash rides

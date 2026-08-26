@@ -217,3 +217,20 @@ def test_probe_still_serves_the_games_own_files(tmp_path, caplog, monkeypatch):
         errors = error_gate.probe(gdir)
     assert errors == []
     assert not any("blocked" in r.getMessage() for r in caplog.records)
+
+
+def test_parse_address_finds_files_in_subfolders_and_skips_lib(tmp_path):
+    gdir = _game(tmp_path, "<html></html>")
+    (gdir / "game").mkdir()
+    (gdir / "game" / "data.js").write_text("export const a = 'Hesper's letter';\n")
+    (gdir / "lib").mkdir()
+    (gdir / "lib" / "input.js").write_text("this is not javascript\n")
+    lines = error_gate._parse_addresses(gdir)
+    assert len(lines) == 1
+    assert lines[0].startswith("game/data.js:")
+
+
+def test_bare_browser_syntax_message_gets_the_parse_sentence(tmp_path):
+    gdir = _game(tmp_path, "<html></html>", **{"a.js": "export const a = 'it's';\n"})
+    note = error_gate.note_for({"message": "Unexpected identifier 's'", "stack": ""}, gdir)
+    assert "a.js: 1" in note and "every occurrence" in note

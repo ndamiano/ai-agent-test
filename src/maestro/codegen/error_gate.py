@@ -44,7 +44,7 @@ VENDORED = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
 
 _NOTE = (Path(__file__).parent / "prompts" / "error_gate_note.txt")
 
-_SYNTAXY = re.compile(r"SyntaxError|redeclaration|already been declared", re.IGNORECASE)
+_SYNTAXY = re.compile(r"SyntaxError|redeclaration|already been declared|Unexpected (?:token|identifier|string|number|end of input)|missing [)}\]] after", re.IGNORECASE)
 _REDECL = re.compile(r"redeclaration of (?:const|let|var|class|function)?\s*['\"]?(\w+)"
                      r"|Identifier '(\w+)' has already been declared")
 _INLINE_SCRIPT = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.IGNORECASE | re.DOTALL)
@@ -191,7 +191,11 @@ def address(error: Dict[str, str], game_dir: Path) -> str:
 
 
 def _authored_js(game_dir: Path) -> List[Path]:
-    return [p for p in sorted(game_dir.glob("*.js")) if p.name not in VENDORED]
+    """Every .js the model wrote, wherever it put it — games keep code under game/ or js/ as
+    often as at the root. The vendored renderer and lib/ beside the game are not the model's."""
+    return [p for p in sorted(game_dir.rglob("*.js"))
+            if not (p.parent == game_dir and p.name in VENDORED)
+            and "lib" not in p.relative_to(game_dir).parts[:-1]]
 
 
 def _parse_addresses(game_dir: Path) -> List[str]:
@@ -202,7 +206,7 @@ def _parse_addresses(game_dir: Path) -> List[str]:
     for path in _authored_js(game_dir):
         err = _node_check(path.read_text(encoding="utf-8", errors="replace"))
         if err:
-            out.append(f"{path.name}: {err}")
+            out.append(f"{path.relative_to(game_dir)}: {err}")
     entry = game_dir / "index.html"
     if entry.exists():
         for i, script in enumerate(_INLINE_SCRIPT.findall(
@@ -214,8 +218,13 @@ def _parse_addresses(game_dir: Path) -> List[str]:
 
 
 def _node_check(source: str) -> Optional[str]:
-    last = None
-    for suffix in (".mjs", ".js"):
+    """The module parser's first error line, or None if either parser accepts the source. Games
+    are modules, so its line is the one reported; the script pass only decides whether a file
+    that is not a module is fine as a script."""
+    first_err = None
+    # .cjs, not .js: node 22 detects `export` in a .js file and answers a CommonJS parse failure
+    # with "retry as a module" — reported as a pass, so every module file checked as .js is clean.
+    for suffix in (".mjs", ".cjs"):
         with tempfile.NamedTemporaryFile("w", suffix=suffix, delete=False) as f:
             f.write(source)
             tmp = f.name
@@ -229,9 +238,10 @@ def _node_check(source: str) -> Optional[str]:
             Path(tmp).unlink(missing_ok=True)
         if res.returncode == 0:
             return None
-        first = next((ln for ln in res.stderr.splitlines() if ln.strip()), res.stderr)
-        last = re.sub(re.escape(tmp), "", first).strip(" :")
-    return last
+        if first_err is None:
+            first = next((ln for ln in res.stderr.splitlines() if ln.strip()), res.stderr)
+            first_err = re.sub(re.escape(tmp), "", first).strip(" :")
+    return first_err
 
 
 def _declaration_sites(name: str, game_dir: Path) -> List[str]:
@@ -242,7 +252,7 @@ def _declaration_sites(name: str, game_dir: Path) -> List[str]:
             continue
         for n, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
             if pattern.search(line):
-                out.append(f"{path.name}:{n}: {line.strip()}")
+                out.append(f"{path.relative_to(game_dir)}:{n}: {line.strip()}")
     return out
 
 

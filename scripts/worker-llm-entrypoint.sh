@@ -35,24 +35,32 @@ wait_engine() {
 }
 
 start_ninfer() {
-    # --spec mtp + --lm-head-draft are speculative decode. Thinking stays ON (no --no-thinking):
-    # measured 2026-08-25, it is the one change that moved game quality by a league rather than a
-    # notch, and the build's per-turn cap is sized for it (build_steps.MAX_TOKENS). --vision is
-    # required: world refinement sends the model renders of the world. Residency is frozen at
-    # start, so what is NOT passed (dflash) is weights this process never allocates.
+    # --spec mtp + --lm-head-draft are speculative decode. Thinking stays ON (no --no-thinking
+    # here, and none in llm.ninfer_args): measured 2026-08-25, it is the one change that moved
+    # game quality by a league rather than a notch, and the build's per-turn cap is sized for it
+    # (build_steps.MAX_TOKENS). --vision is required: world refinement sends the model renders of
+    # the world. Residency is frozen at start, so what is NOT passed (dflash) is weights this
+    # process never allocates.
     #
     # --presence-penalty 0 is load-bearing, not tidying: ninfer's sampler defaults to Qwen3
     # THINKING defaults, presence-penalty 1.0 among them, and a penalty on repeated tokens
     # degrades exactly what a build turn emits — long structured output over a fixed vocabulary of
     # paths, braces and identifiers. The canonical request carries no penalty field, so the launch
     # flag is where it can be said.
+    #
+    # $NINFER_ARGS is the control plane's llm.ninfer_args, delivered at create: every flag that
+    # is a tuning choice rather than an invariant of this image (KV dtype, thinking, draft
+    # tokens, sampler overrides) lives there, so changing one is a settings edit and the next
+    # pod, not a new tag. Unquoted on purpose — it is a flag list.
+    # shellcheck disable=SC2086
     ninfer-serve "$NINFER_MODEL" \
         --model-id "$LLM_MODEL" \
         --host 127.0.0.1 --port "$NINFER_PORT" \
         --max-context "$LLM_N_CTX" \
         --spec mtp --draft-tokens 3 --lm-head-draft \
         --presence-penalty 0 \
-        --vision &
+        --vision \
+        ${NINFER_ARGS:-} &
     engine_pid=$!
     target="http://127.0.0.1:$NINFER_PORT"
     # ninfer answers nothing until the whole artifact is resident, so this waits on a 17 GiB pull
@@ -78,7 +86,8 @@ start_llama_cpp() {
         -ngl 99 -c "$LLM_N_CTX" -fa on \
         --cache-type-k q4_0 --cache-type-v q4_0 \
         --jinja --reasoning-budget 0 \
-        --chat-template-kwargs '{"enable_thinking":false}' &
+        --chat-template-kwargs '{"enable_thinking":false}' \
+        ${LLAMA_ARGS:-} &
     engine_pid=$!
     target="http://127.0.0.1:$LLAMA_PORT"
     # The router answers /models before any weights load (models load on first request), so this

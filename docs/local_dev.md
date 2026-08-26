@@ -62,7 +62,8 @@ tok/s), compiled for `sm_120a` alone. It serves `chat` only.
   --spec mtp --draft-tokens 3 --lm-head-draft \
   --presence-penalty 0 \
   --cors \
-  --vision
+  --vision \
+  --kv-dtype int8
 ```
 
 `--vision` is what lets a worldgen build show the model its own renders — the refine stages send
@@ -164,11 +165,16 @@ restarted — Node caches the ESM config, and a stale one drops every custom cla
 
 ### `llm`
 
-`model`, `n_ctx`, `max_tokens`, `reasoning`. There is no endpoint — inference rides the queue.
+`model`, `n_ctx`, `max_tokens`, `reasoning`, `ninfer_args`, `llama_args`. There is no endpoint —
+inference rides the queue.
 
-`n_ctx` is the INPUT budget: when a transcript approaches it, `build_steps.compact` drops the
-oldest whole rounds and re-grounds the model on the file listing (`CLAUDE.md`). Nothing else
-trims.
+`n_ctx` is the INPUT budget: when a transcript approaches it, `build_steps.compact` stubs the file
+bodies out of old rounds and, only if that is not enough, drops the oldest whole rounds and
+re-grounds the model on the file listing (`CLAUDE.md`). Nothing else trims.
+
+`ninfer_args` / `llama_args` are appended to the engine's launch line — by `scripts/local_gpu.py`
+here and by the pod entrypoint in prod, from the same key — so every tuning flag lives in one
+place. `--kv-dtype int8` is what lets 131072 fit a 5090.
 
 Set it to the server's `-c`. The local router never reports its window, so both errors are yours to
 avoid, and only one of them announces itself:

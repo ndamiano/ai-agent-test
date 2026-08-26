@@ -109,10 +109,13 @@ class Autoscaler:
                     # requests naming its --model-id. The pod cannot read settings, so the model
                     # string every request will carry is delivered at create.
                     env["LLM_MODEL"] = llm["model"]
-                    # The window too: the engine preallocates it, and nvfp4 + vision fits a
-                    # 5090 at 65535 and dies at launch above that (scripts/local_gpu.py). The
-                    # control plane computes its input budget from the same number.
+                    # The window too: the engine preallocates it, and the control plane computes
+                    # its input budget from the same number. The launch flags ride along so the
+                    # window's cost is tunable without an image (131072 fits a 5090 only with
+                    # --kv-dtype int8; bf16 is 450 MB short at launch).
                     env["LLM_N_CTX"] = str(llm["n_ctx"])
+                    env["NINFER_ARGS"] = llm.get("ninfer_args") or ""
+                    env["LLAMA_ARGS"] = llm.get("llama_args") or ""
                 self._start_pod(name, queue, qcfg, rp, env)
                 self._last_scale_up[queue] = now
             elif isinstance(action, TerminatePod):

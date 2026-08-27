@@ -40,6 +40,7 @@ class BuildCursor:
     compacted: int = 0                            # compactions so far
     no_call_streak: int = 0
     redriven: int = 0
+    out_cap: int = 0
     # hashed failing tool call -> times sent. Per call, not just the last one: a stuck model
     # re-reads between retries, and that read must not clear the failing edit's count.
     repeat_counts: Dict[str, int] = field(default_factory=dict)

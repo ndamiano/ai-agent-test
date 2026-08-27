@@ -107,6 +107,10 @@ def chat_to_responses_body(body: Dict) -> Dict:
 
 
 def chat_body_for_wire(body: Dict) -> Dict:
-    """A canonical chat request body -> a Chat Completions request body: identity, minus `reasoning`
-    (a Responses-only field). Sampling and thinking are launch flags on the target server."""
-    return {k: v for k, v in body.items() if k != "reasoning"}
+    """A canonical chat request body -> a Chat Completions request body: identity, with `reasoning`
+    spelled the way that endpoint takes it (`reasoning_effort`). Sampling stays a launch flag on
+    the target server."""
+    out = {k: v for k, v in body.items() if k != "reasoning"}
+    if body.get("reasoning") in REASONING_EFFORTS:
+        out["reasoning_effort"] = body["reasoning"]
+    return out

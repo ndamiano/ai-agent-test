@@ -14,8 +14,11 @@ export type GameStatus = 'idle' | 'queued' | 'building' | 'fixing' | 'paused' | 
 
 export interface GameDetail {
     run_id: string
+    // The user's request, verbatim — kept beside whatever builds.
+    ask: string
     // The text the build sends as its user message — editable here, byte for byte what runs.
-    prompt: string
+    // null while the designer is still writing it from `ask`.
+    prompt: string | null
     title: string
     built: boolean
     building: boolean

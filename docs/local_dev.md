@@ -72,11 +72,11 @@ Its fixed GPU allocations come out of the same card as the weights and KV, and t
 margin: `scripts/local_gpu.py` serves exactly `<llm.model>.ninfer` from `NINFER_MODELS` because a
 larger variant artifact of the same model left no room for them and died at launch.
 `--presence-penalty 0` is load-bearing: ninfer's sampler defaults to Qwen3 thinking defaults,
-penalty 1.0 among them, which degrades long structured output. Thinking itself stays ON — there
-is no `--no-thinking` — because a thinking build is a league better than a non-thinking one
-(`docs/experiments.md`, 2026-08-25), and ninfer has no thinking-budget flag: the build's per-turn
-output cap (`build_steps.MAX_TOKENS`, 50K) is what bounds it. `--model-id` must match `llm.model`
-in settings.json.
+penalty 1.0 among them, which degrades long structured output. There is no `--no-thinking`:
+thinking is `llm.reasoning` (below), sent as `reasoning_effort` on every call, and ninfer has no
+thinking-budget flag — the build's per-turn output cap, `n_ctx − prompt − 6K`, is what bounds it,
+because ninfer admits a request only when prompt + max_tokens fits `--max-context`. `--model-id`
+must match `llm.model` in settings.json.
 
 ### LLM — llama.cpp
 
@@ -186,14 +186,22 @@ avoid, and only one of them announces itself:
 
 `max_tokens` is only the connector's default ceiling — the build path passes its own.
 
+`reasoning` is the thinking effort of every llm call, the build included, sent to ninfer as
+`reasoning_effort`. The Qwen3.8 template takes `none`, `low`, `medium` and `xhigh`; `high` is
+rejected (`reasoning_effort_not_supported`). `none` DISABLES thinking, and a non-thinking build is
+the "something kinda close" arm of `docs/experiments.md` (2026-08-25), so a build server runs at
+`medium` or above. Prod's `LLM_REASONING` default is `none` and ships in the same deploy as the
+wire that forwards it — deploying the wire alone turns prod's thinking off.
+
 ### The wire format is the worker's, not a setting
 
 The control plane enqueues a CANONICAL chat request; the worker translates it for whatever its own
 target serves (`worker.agent --api chat|responses`, default `chat`; see `llm_clients/wire.py`).
-`responses` is the only local dialect that honors `reasoning.effort`; `chat` is the universal one.
+`responses` honors `reasoning.effort` as written; `chat` carries it as `reasoning_effort`, which
+ninfer reads and llama.cpp ignores.
 
-On `chat` a canonical body passes through minus `reasoning` — so **thinking and sampling are launch
-flags on the target server, not request fields** (see the invocations above). Adding an engine is a
+On `chat` everything else passes through — so **sampling is a launch flag on the target server,
+not a request field**, and on llama.cpp so is thinking (see the invocations above). Adding an engine is a
 branch in `worker/handlers.llm`, never a settings change.
 
 ### `workqueue`

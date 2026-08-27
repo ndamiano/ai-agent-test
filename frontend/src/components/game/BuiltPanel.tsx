@@ -107,7 +107,7 @@ export const BuiltPanel: React.FC<{
                     </div>
                 </div>
                 <FixNote note={note} setNote={setNote} onSubmit={onFix} busy={acting} />
-                <PromptBox prompt={detail.prompt} text={promptText} onChange={setPromptText} />
+                <PromptBox ask={detail.ask} prompt={detail.prompt ?? ''} text={promptText} onChange={setPromptText} />
             </div>
 
             <div className="flex flex-col gap-6 min-w-0">

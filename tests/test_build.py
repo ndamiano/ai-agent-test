@@ -270,7 +270,7 @@ def test_truncated_reply_is_told_nothing_was_saved(tmp_path, tools):
     build_steps.step({}, tmp_path, tools, cursor, {})
     build_steps.step({}, tmp_path, tools, cursor,
                      _reply(content="const x = ",
-                            usage={"completion_tokens": build_steps.MAX_TOKENS}))
+                            usage={"completion_tokens": cursor.out_cap}))
     assert "cut off" in cursor.history[-1]["content"]
 
 
@@ -646,7 +646,7 @@ def test_replies_cut_off_at_the_cap_count_toward_the_stall(tmp_path, tools):
     for _ in range(build_steps._NO_CALL_GIVE_UP):
         out = build_steps.step({}, tmp_path, tools, cursor,
                                _reply(content="const x = ",
-                                      usage={"completion_tokens": build_steps.MAX_TOKENS}))
+                                      usage={"completion_tokens": cursor.out_cap}))
     assert isinstance(out, build_steps.Done) and "stalled" in out.report
 
 

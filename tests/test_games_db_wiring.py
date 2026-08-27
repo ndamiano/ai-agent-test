@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from maestro.codegen import build_chain
+from maestro.codegen import build_chain, design
 from maestro.codegen.staging import game_dir
 from auth import store as auth_store
 from auth.billing import SECONDS_PER_CREDIT
@@ -53,20 +53,41 @@ def test_list_and_detail_come_from_the_db(client):
     assert detail["budget_pct_remaining"] is None   # uncharged → no bar
 
 
-def test_new_game_creates_the_run_from_the_prompt_and_builds(client, monkeypatch):
+def test_new_game_creates_the_run_and_starts_its_design(client, monkeypatch):
+    """Create opens the ask and enqueues the DESIGN — no build starts until the human has read the
+    design and pressed Build, so the run is charged but nothing is authored yet."""
     user, headers = _user()
-    started = []
+    started, enqueued = [], []
     monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: started.append(rid) or "bid")
+    monkeypatch.setattr(design.db_store, "enqueue_job",
+                        lambda q, p, **kw: enqueued.append(kw.get("metadata")) or "job1")
 
     r = client.post("/api/games", headers=headers,
                     json={"prompt": "an open world RPG with card combat"})
     assert r.status_code == 200
     run_id = r.json()["run_id"]
-    assert started == [run_id]
-    assert RunState(run_id).read_spec()["request"] == "an open world RPG with card combat"
+    assert r.json()["status"] == "designing" and started == []
+    spec = RunState(run_id).read_spec()
+    assert spec["ask"] == "an open world RPG with card combat" and "request" not in spec
+    assert enqueued == [{"stage": "design", "run_id": run_id}]
     assert db_store.owner_of(run_id) == user.id
     assert auth_store.balance(user.id) == 9
     assert db_store.game(run_id)["seconds_granted"] == SECONDS_PER_CREDIT
+
+
+def test_a_game_still_designing_reports_no_prompt_and_refuses_to_build(client, monkeypatch):
+    """`prompt: null` is the page's only signal for the designing state, and a build sent before
+    the design lands would send the empty box."""
+    _, headers = _user()
+    monkeypatch.setattr(design.db_store, "enqueue_job", lambda *a, **kw: "job1")
+
+    run_id = client.post("/api/games", headers=headers,
+                         json={"prompt": "a maze game"}).json()["run_id"]
+
+    detail = client.get(f"/api/games/{run_id}", headers=headers).json()
+    assert detail["prompt"] is None and detail["ask"] == "a maze game"
+    assert client.post(f"/api/games/{run_id}/build", headers=headers,
+                       json={}).status_code == 409
 
 
 def test_new_game_with_no_credits_is_402_and_creates_nothing(client, monkeypatch):

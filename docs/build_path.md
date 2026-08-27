@@ -217,6 +217,19 @@ src/
                          battery's cottage-in-the-desert; fallback is the name itself, which
                          renders right and merely reuses less. Games copy sprites out at
                          composite time and never own entries; /play never reads the store.
+      design.py          the DESIGNER — the one inference between the user's words and the build.
+                         One llm call (prompts/design.txt) turns spec.json's `ask` (the words,
+                         verbatim, kept for the human to see) into `request` (a 900–1400-word
+                         systems design: the systems named, every entity a record with fields,
+                         structure from seeded generators with verifiers, numbers given, art named
+                         as art, screens as a state machine — `CLAUDE.md`). `request` is what the
+                         box shows and what builds; it is absent while the design is pending and
+                         is the human's edit after Build. Web: an llm job tagged
+                         metadata.stage="design", whose completion writes `request` and emits
+                         `prompt_proposed`; a failed or empty design writes `request = ask`, so the
+                         box never stays empty. CLI: synchronous. Measured 2026-08-26
+                         (`docs/experiments.md`): the model's design of a plain request built a
+                         game "a million times better" than three stages of the request itself.
       stages.py          STAGED CONSTRUCTION — the hardest system gets a whole build to itself,
                          then the game grows by fix builds (measured 2026-08-02/03: a duel built
                          alone earned a dedicated AI module; the same duel inside the full
@@ -284,9 +297,11 @@ src/
                          for the admin panel. The image side of the same policy is asset_chain's
                          `_admit` above.
       prompts/           build.txt (the one system prompt every build turn reads),
-                         error_gate_note.txt (the fix note an uncaught error becomes),
-                         stage_plan.txt (the staged-construction plan call).
-      run.py             create_run / propose_prompt / set_prompt / run_build (CLI: kickoff +
+                         design.txt (the designer call), error_gate_note.txt (the fix note an
+                         uncaught error becomes), stage_plan.txt (the staged-construction plan
+                         call).
+      run.py             create_run / propose_prompt (the designer, synchronously) / set_prompt /
+                         run_build (CLI: kickoff +
                          block-poll the cursor) / fix_from_note + the CLI. The web build/fix path is
                          fire-and-forget through build_chain.kickoff, not run.py.
     services.py          parse_args — any argument shape a local model returns → a dict.
@@ -298,8 +313,8 @@ src/
                          Mistral, Llama python-tag, two XML forms, named object, arg-shape), tried
                          strictest first. A parser only wins if EVERY call it found names an offered
                          tool and carries that tool's required arguments.
-    state.py             RunState — durable per-run dir <working_dir>/runs/<run_id>/ (spec.json,
-                         game/ folder). Ownership + charge state live in db/, not the run dir.
+    state.py             RunState — durable per-run dir <working_dir>/runs/<run_id>/ (spec.json —
+                         `ask` the user's words, `request` what builds — and the game/ folder). Ownership + charge state live in db/, not the run dir.
   worldgen/              the 3D world behind the compose_world build tool: the worldclaw pipeline,
                          stage for stage, with every GPU call on maestro's queues. build.py runs the nine stages in order — scene, terrain-plan,
                          terrain-assets, construct, terrain-refine, regional-plan, objects,

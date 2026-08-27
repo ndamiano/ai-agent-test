@@ -7,7 +7,7 @@ import { useRunBuildStream } from '../../hooks/useRunBuildStream'
 import type { GameDetail, WebSocketMessage } from '../../types'
 import { Button } from '../ui/Button'
 import { Pill } from '../ui/Pill'
-import { PromptBox } from './PromptBox'
+import { AskLine, PromptBox } from './PromptBox'
 import { BuiltPanel } from './BuiltPanel'
 import { ErrorFixModal } from './ErrorFixModal'
 import { WorkingPanel } from './WorkingPanel'
@@ -66,7 +66,7 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
                 // while building, and re-seeding on each one would wipe an edit mid-keystroke.
                 // Compared against the value from BEFORE this response: a functional updater would
                 // run after the ref was reassigned and so never see a change.
-                if (shouldAdoptPrompt(serverPrompt.current, d.prompt)) setPromptText(d.prompt)
+                if (shouldAdoptPrompt(serverPrompt.current, d.prompt)) setPromptText(d.prompt ?? '')
                 serverPrompt.current = d.prompt
             })
             .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load game') })
@@ -175,7 +175,7 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
     if (!detail) return null
 
     const held = detail.status === 'held'
-    const stage = held ? 'held' : stageFor(building, detail.built)
+    const stage = held ? 'held' : stageFor(building, detail.built, detail.prompt == null)
     const pill = held ? STATUS_PILL.held
         : STATUS_PILL[building ? status : detail.built ? 'built' : 'idle']
     const budget = budgetFraction(detail.budget_pct_remaining)
@@ -226,7 +226,7 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
                     <WorkingPanel runId={runId} paused={status === 'paused'}
                         step={stream.progress?.step ?? null} summary={stream.progress?.summary ?? null}
                         elapsedSec={elapsedSec} assets={assets} assetsVersion={assetsVersion}
-                        budget={budget} prompt={detail.prompt} feed={stream.feed} />
+                        budget={budget} prompt={detail.prompt ?? detail.ask} feed={stream.feed} />
                 )}
 
                 {stage === 'built' && (
@@ -243,9 +243,24 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
                         onSend={note => sendFix(note, 'errors')} onClose={() => setErrorsOpen(false)} />
                 )}
 
+                {stage === 'designing' && (
+                    <div className="max-w-2xl flex flex-col gap-4">
+                        <AskLine ask={detail.ask} />
+                        <div role="status" className="bg-panel border border-edge rounded-md p-6 flex items-center gap-3">
+                            <span aria-hidden="true" className="w-2 h-2 rounded-full bg-ember animate-pulse" />
+                            <span className="text-sm text-slate">
+                                Writing the design from your request — a few minutes. It will appear here for you to read and edit.
+                            </span>
+                        </div>
+                        <div>
+                            <Button variant="primary" size="md" disabled>Build it · 1 credit</Button>
+                        </div>
+                    </div>
+                )}
+
                 {stage === 'ready' && (
                     <div className="max-w-2xl flex flex-col gap-4">
-                        <PromptBox prompt={detail.prompt}
+                        <PromptBox ask={detail.ask} prompt={detail.prompt ?? ''}
                             text={promptText} onChange={setPromptText} />
                         <div className="flex items-center gap-3">
                             <Button variant="primary" size="md" onClick={build} disabled={acting}>

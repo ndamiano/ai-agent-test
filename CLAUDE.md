@@ -28,13 +28,15 @@ docstring — the docstrings are the authority on contracts.
 The model writes **real browser game code** — plain HTML/CSS/JavaScript, no framework, no build
 step, no engine of ours between it and the screen. Two stages:
 
-1. **Prompt (human-gated):** the run stores the request VERBATIM as its prompt, and the human reads
-   it in the box it will be sent from. **THE PROMPT IS THE ARTIFACT** — what is on screen is byte
-   for byte the build's one user message, so approving it and building it are the same act. No
-   inference runs in this stage: a model between the person's words and the build's input would mean
-   approving one text and building another. Pressing **Build** stores the edit and starts the build,
-   so there is one action and one writer. Staged construction holds this stage by stage — the boxes'
-   contents ARE what builds.
+1. **Prompt (human-gated):** the run keeps the user's words VERBATIM as `ask` and shows them; one
+   inference — the DESIGNER (`maestro/codegen/design.py`) — turns them into a systems design, and
+   the human reads THAT in the box it will be sent from. **THE PROMPT IS THE ARTIFACT** — what is
+   on screen is byte for byte the build's one user message, so approving it and building it are the
+   same act. The designer does not break this because the design is what the box shows and the
+   design is what builds; nothing sits between the box and the build's input. A designer that fails
+   or answers empty leaves the words themselves in the box. Pressing **Build** stores the edit and
+   starts the build, so there is one action and one writer. Staged construction holds this stage by
+   stage — the boxes' contents ARE what builds.
 2. **Build:** a non-LLM **driver** (`maestro/codegen/build_chain.py`) hands the model eight tools —
    `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `compose_scene`,
    `compose_world`, `done` —
@@ -129,6 +131,23 @@ tile or scene keeps its frame, a mesh lands at a known scale. The compute budget
 how much art a build may ask for, and a refused enqueue is REPORTED as "draw this one with code
 instead" — a build that cannot have art is told to draw one, never left waiting for a file that is
 not coming. Mechanism: `assets.py` and `asset_chain.py` in `docs/build_path.md`.
+
+### The request is a SYSTEMS DESIGN, and the model writes it
+
+The ceiling of a build is the design it is given, not the model. A systems design is a list of
+systems, one paragraph each: every thing in the game is a RECORD with named fields; anything with
+structure (a track, a map, a deck, a wave list) comes from a SEEDED GENERATOR with a VERIFIER that
+re-rolls on failure, never literal content; one record is the source of truth for each kind of
+thing; numbers are GIVEN, never derived; art is named AS art ("ask for X as a sprite"); screens are
+a state machine. Measured 2026-08-26 on one request: the plain request through three stages spent
+153 turns on a track that was never a circuit; a hand-written design made a real circuit that was
+"extremely shallow"; the model's own design of the same request made race select, an
+unlock ladder, weather, fuel, damage and a podium — "a million times better". Numbers are given
+because a clause the model must DERIVE ("no bend tighter than the car can drive") costs ~150K
+characters of physics per turn; the same clause as a value ("no radius under 140 px") costs
+nothing. Two weaknesses stand open: the model's numbers carry no units, and it spends the fewest
+words on the system that needs the most (the hand design gave the track a third of its words and
+its track was better).
 
 ### Staged construction: the hardest system gets a whole build to itself
 
@@ -225,13 +244,20 @@ What does help:
    arrows".
 3. **Give them the whole window.** The input budget rides `llm.n_ctx`, not the model category, and a
    build's input IS its transcript — set `n_ctx` to what the server was launched with.
-4. **Thinking ON, with a per-turn cap sized for it.** Measured 2026-08-25 on qwen3.8_27b (ninfer):
-   with thinking, 8 of 8 finished builds were real games of their design — notes tied to generated
-   music, a village with streets, the first playable 3D dungeon in any arm — where the same designs
-   without thinking made "something kinda close". It costs 3–4× the GPU seconds and it is worth it.
-   Thinking is front-loaded (25–36K tokens on turn 0, near zero on mechanical turns), so the
-   per-turn output cap must hold a whole think plus the answer: at 16K every opening turn ended at
-   the cap with no content and no tool call. Thinking is
-   a SERVER launch flag on the chat wire (no `--no-thinking`); ninfer has no thinking budget, so the
-   cap is the only bound. The llama.cpp path keeps `enable_thinking=false` — it has no budget either
-   and was never measured with thinking on.
+4. **Thinking ON, effort a setting, the per-turn cap riding the window.** Measured 2026-08-25 on
+   qwen3.8_27b (ninfer): with thinking, 8 of 8 finished builds were real games of their design —
+   notes tied to generated music, a village with streets, the first playable 3D dungeon in any
+   arm — where the same designs without thinking made "something kinda close". It costs 3–4× the
+   GPU seconds and it is worth it. Thinking is front-loaded — 25–36K tokens on turn 0, near zero
+   on mechanical turns — and the model writes the whole game inside its think before the first
+   tool call, so the cap must hold a whole think plus the answer: at 16K every opening turn ended
+   at the cap with nothing; at 50K a turn that wanted 68K re-thought from zero on every retry, five
+   minutes each. The cap is `n_ctx − prompt − 6K` (floor 16K): ninfer admits a request only when
+   prompt + max_tokens fits its window, and with that cap the same turn stopped on its own at 47K
+   and the build finished in 24 turns. The window is not a ceiling the model cannot reach: a
+   fourteen-system design ran a 120K budget dry on turn 0 and called no tool, so what turn 0 costs
+   is set by the design's breadth, and the fix for that is the design, not a bigger cap.
+   Effort is `llm.reasoning`, forwarded as `reasoning_effort`;
+   `none` DISABLES thinking on ninfer, and ninfer has no thinking budget, so the cap is the only
+   bound. The llama.cpp path keeps `enable_thinking=false` — it has no budget either and was never
+   measured with thinking on.

@@ -41,10 +41,9 @@ class SettingsManager:
             "data_dir": default_data_dir,
             "llm": {
                 "model": os.getenv("LLM_MODEL", "local-model"),
-                # "none" is the floor the fix loop escalates FROM. Absent this key an env-configured
-                # deployment sends no reasoning field, and a thinking model spends a small token
-                # budget entirely on reasoning.
-                "reasoning": os.getenv("LLM_REASONING", "none"),
+                # Reaches the engine as `reasoning_effort`, so "none" DISABLES thinking — and a
+                # build without thinking makes "something kinda close" (docs/experiments.md).
+                "reasoning": os.getenv("LLM_REASONING", "medium"),
                 "max_tokens": 50000,
                 # Engine launch flags, delivered to an llm pod at create and to the local leg at
                 # start, so a tuning knob (KV dtype, thinking, draft tokens) is a settings edit

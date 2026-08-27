@@ -232,7 +232,7 @@ def _advance_locked(run_id: str, result: Optional[Dict], landed: Optional[Dict] 
             turn_log.append_meta(
                 rs.run_dir, run_id=run_id, build_id=cursor.build_id, system=cursor.system,
                 tools=outcome.schemas, model=get_connector().model_name,
-                max_tokens=outcome.max_tokens, reasoning=outcome.reasoning,
+                max_tokens=outcome.max_tokens, reasoning=get_connector().reasoning,
                 # The control plane enqueues the canonical chat shape and nothing else
                 # (llm_clients/wire.py); the record says so rather than a reader inferring it from
                 # whatever `llm.api` happens to be the day the log is read.
@@ -332,7 +332,7 @@ def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") ->
     compute budget first PREEMPTS the run's queued (unclaimed) asset renders — gameplay beats skin —
     then, still refused, ends the build: a broke run can't spin on refused turns."""
     conn = get_connector()
-    payload, model = conn.build_llm_job(inf.messages, inf.schemas, inf.max_tokens, inf.reasoning)
+    payload, model = conn.build_llm_job(inf.messages, inf.schemas, inf.max_tokens)
 
     def _enqueue():
         db_store.enqueue_job("llm", payload, game_id=run_id, build_id=cursor.build_id, model=model,

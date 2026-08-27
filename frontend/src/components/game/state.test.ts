@@ -13,6 +13,10 @@ describe('shouldAdoptPrompt', () => {
     it('adopts text the server changed under us', () => {
         expect(shouldAdoptPrompt('an open world RPG', 'an open world RPG with card combat')).toBe(true)
     })
+
+    it('has nothing to adopt while the design is still being written', () => {
+        expect(shouldAdoptPrompt(null, null)).toBe(false)
+    })
 })
 
 describe('formatElapsed', () => {
@@ -41,6 +45,11 @@ describe('stageFor', () => {
 
     it('is ready when nothing has been built yet', () => {
         expect(stageFor(false, false)).toBe('ready')
+    })
+
+    it('is designing until the request has a text to build', () => {
+        expect(stageFor(false, false, true)).toBe('designing')
+        expect(stageFor(true, false, true)).toBe('building')
     })
 })
 

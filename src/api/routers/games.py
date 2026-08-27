@@ -28,7 +28,7 @@ from maestro.codegen import archive, build_chain, stages as stage_plan
 from maestro.codegen.assets import (AlreadyRendering, add_assets, entry_kind, read_manifest,
                                     regenerate_asset)
 from maestro.codegen.staging import game_dir, has_authored_files, is_staged, staged_title
-from maestro.codegen.run import create_run, set_prompt
+from maestro.codegen.run import create_run, open_ask, propose_prompt, set_prompt
 from tools.safety import log_violation, screen_text
 from maestro.state import RunState
 from tools.build_events import _emit
@@ -141,8 +141,12 @@ async def list_games(user: User = Depends(get_current_user)):
 
 @router.post("", response_model=Dict)
 async def create_game(body: NewGameBody, user: User = Depends(get_current_user)):
-    """Make a new game: the prompt the user wrote becomes the run, and the build starts. Nothing
-    exists server-side until this call, so an abandoned box leaves nothing behind."""
+    """Make a new game: the words the user wrote become the run's ask, and its DESIGN starts. The
+    design lands as the prompt (`prompt_proposed`) for the user to read, edit and Build. Nothing
+    exists server-side until this call, so an abandoned box leaves nothing behind.
+
+    The credit is charged here: the design is the game's first inference, and it meters against
+    the grant it buys."""
     text = body.prompt.strip()
     if not text:
         raise HTTPException(status_code=400, detail="the prompt is empty")
@@ -157,14 +161,12 @@ async def create_game(body: NewGameBody, user: User = Depends(get_current_user))
             "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
 
     run_id = await asyncio.to_thread(create_run, user.id)
-    await asyncio.to_thread(set_prompt, run_id, text, event="prompt_proposed")
     if not store.deduct(user.id, price, "build", run_id):
         raise HTTPException(status_code=402, detail={
             "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
     db_store.charge_game(run_id, price, price * SECONDS_PER_CREDIT)
-    _require_compute(run_id)
-    await asyncio.to_thread(build_chain.kickoff, run_id, kind="build")
-    return {"run_id": run_id, "status": "building"}
+    await asyncio.to_thread(propose_prompt, text, run_id)
+    return {"run_id": run_id, "status": "designing"}
 
 
 @router.post("/enhance", response_model=Dict)
@@ -204,6 +206,7 @@ async def enhance_prompt(body: EnhanceBody, user: User = Depends(get_current_use
         db_store.charge_game(run_id, price, price * SECONDS_PER_CREDIT)
         state = RunState(run_id)
 
+    await asyncio.to_thread(open_ask, run_id, text)
     await asyncio.to_thread(set_prompt, run_id, text, event="prompt_proposed")
     plan = await asyncio.to_thread(stage_plan.plan, text, run_id)
     await asyncio.to_thread(stage_plan.save, state.run_dir, text, plan)
@@ -233,7 +236,9 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         status = "built" if built else "idle"
     return {
         "run_id": run_id,
-        "prompt": spec_data.get("request", ""),
+        "ask": spec_data.get("ask", ""),
+        # None while the design is still being written — the page's only signal for that state.
+        "prompt": spec_data.get("request"),
         "title": staged_title(run_id) or spec_data.get("title", ""),
         "built": built and not staging_on,
         "building": active is not None or staging_on,
@@ -410,6 +415,8 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
     spec_data = state.read_spec()
+    if "request" not in spec_data:
+        raise HTTPException(status_code=409, detail="the design is still being written")
     if not db_store.is_charged(run_id):
         price = cost(spec_data)
         if not store.deduct(user.id, price, "build", run_id):

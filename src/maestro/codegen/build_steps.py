@@ -34,6 +34,10 @@ MAX_TURNS = 200
 # Per-turn output cap. Sized for a THINKING model: turn 0 of a build thinks 25-36K tokens before its
 # first tool call, and at 16K every such turn ended at the cap with no content and no call.
 MAX_TOKENS = 50_000
+# The server admits a turn only if prompt + max_tokens fits the window, so the cap is what the
+# window has left after the prompt, less room for the estimate to be wrong.
+_CAP_MARGIN = 6_000
+_CAP_FLOOR = 16_000
 # Ties to tools.MAX_READ_CHARS — a read cut here too would contradict its own truncation note.
 _MAX_TOOL_CHARS = 20_000
 # A turn the driver was asked to re-send with nothing to apply (a reaper re-drive). Each one
@@ -95,11 +99,6 @@ class Infer:
     messages: List[dict]
     schemas: List[dict]
     max_tokens: int
-    # Only the `responses` wire (llama.cpp) reads this; on `chat` it is dropped and thinking is the
-    # server's launch flag, ON for ninfer. Passing None reaches the llama.cpp connector as "let the
-    # model pick", which skips the enable_thinking switch — and that server has no budget, so a
-    # turn spent 16000 tokens reasoning and never called a tool.
-    reasoning: Optional[str] = "none"
     report: Optional[str] = None      # progress line emitted when this turn is enqueued
 
 
@@ -290,7 +289,7 @@ def step(spec, run_dir, tools, cursor, result, error: Optional[str] = None) -> O
 
     # A reply that ran out of output tokens saved NOTHING — the tool call was cut off mid-argument.
     # Say so, rather than letting the model believe the file landed.
-    if not calls and (usage.get("completion_tokens") or 0) >= MAX_TOKENS - 32:
+    if not calls and (usage.get("completion_tokens") or 0) >= cursor.out_cap - 32:
         cursor.no_call_streak += 1
         cursor.history.append({"role": "assistant", "content": content[-2000:]})
         cursor.history.append({"role": "user", "content":
@@ -456,7 +455,9 @@ def _infer(run_dir, cursor, report: Optional[str] = None) -> Infer:
     if cursor.compacted:
         report += f" (compacted {cursor.compacted}×)"
     cursor.actions = []
-    return Infer(msgs, SCHEMAS, MAX_TOKENS, report=report)
+    est = max(cursor.prompt_tokens, sum(len(json.dumps(m)) for m in msgs) // 3)
+    cursor.out_cap = max(_CAP_FLOOR, ctx - est - _CAP_MARGIN)
+    return Infer(msgs, SCHEMAS, cursor.out_cap, report=report)
 
 
 def rounds(history: List[dict]) -> List[List[dict]]:

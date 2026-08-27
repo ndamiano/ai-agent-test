@@ -11,6 +11,98 @@ What lands here is the number; what lands in `src/` is the change that earned it
 
 ---
 
+## The design stage (2026-08-26, local 5090, qwen3.8_27b nvfp4 via ninfer, 131K window int8 KV, thinking on)
+
+### The question
+The 2026-08-24/25 rows say a build makes the design it is given, and that the designs that built
+were hand-written. Can the model write the design itself — the designer prompt
+(`prompts/design.txt`) on the plain request — and does the result build as well as a human's? One
+request for every arm, "Make me an f1 racing game.", the owner playing every result. All n=1.
+
+### The builds
+| arm | turns | wall | outcome |
+|---|---|---|---|
+| prod shape: plain request, staged construction (3 stages), 65K window, 50K per-turn cap | 27 + 7 (gate fix) + 28 + 91 = 153 | — | unplayable: the track was spaghetti from stage 1 |
+| hand-written 1,137-word systems design, 50K cap | stopped by hand at 58 | 31 min | turns 0, 1 and 2 each ended at the cap with no tool call |
+| same hand design, cap = window − prompt − 6K | 24 | 24 min | gate clean; closed circuit, pit branch, rivals, tyres; "extremely shallow" |
+| model-written design (1,388 words; 67,949 tokens / 7 min to write), same cap | 58 | 51 min | gate clean; race select with three circuits, unlock ladder, 6 rivals, 5 laps, weather, three tyre compounds, fuel, pit box, damage, podium and classification; "a million times better" |
+| model-written design, `llm.reasoning` = medium (1,290 words; 2,947 tokens / 33 s to write) | 20 | 19 min | gate clean and WRONG: the game crashes on its start button, the track generator returning null (below). Season of 5 seeded circuits, 8 racers, sector times, gears, championship points |
+
+### What the plain request did
+One Catmull-Rom sampler with three bugs (segment index confused with the parameter, a wrong t³
+coefficient, a wrong tangent derivative) drew the track. The original wrote `CP[i % N]` and crashed;
+the error gate's fix round changed it to `% M` — the crash gone, the geometry still wrong, which is
+the gate's contract: it detects broken, and a track that draws is not broken. Stages 2 and 3
+(rivals, tyres and pit) then built 120 turns on top of it. Three stages of the plain request bought
+nothing a design would not have said in one paragraph.
+
+### What the designs did
+The hand design's game is a real circuit and nothing else — no replayability. The model's design
+is longer by 250 words and its game has a front end, a ladder and a race weekend. Owner: track 2
+"pretty good", controls need work, and the rivals do not move — their lap counter fires at the
+start line, because the checkpoint radius surrounds a spawn at (0, 0). Two weaknesses in the
+model's design, both open: its numbers carry no units (`topSpeed 240`), and its track paragraph
+was its shortest, where the hand design gave the track a third of its words and its track was
+better. The designer does not yet know which system is the hard one.
+
+### Numbers are given, never derived
+A clause the builder must DERIVE — "no bend tighter than the car can drive at pit-lane speed" —
+sent it into ~150K characters of cornering-physics derivation per turn. The same clause as a value
+("no turn radius under 140 px") plus the design's opening sentence, "Every number below is a given
+value to write into the code as-is; none of them needs checking or deriving", removed it. Both are
+in `design.txt`.
+
+### The cap rides the window
+The model writes the whole game inside its think and verifies it there before the first tool
+call; the 50K-cap arm's tails show it 97%, ~100% and 74% of the way through when cut, one of them
+deciding its first tool call. The stall threshold is 4, so the build survived and continued, at
+five minutes a retry with nothing kept between them — a capped think re-thinks from zero. With the
+cap at `n_ctx − prompt_estimate − 6K` (floor 16K; `build_steps`), turn 0 stopped on its own at
+46,841 tokens, turn 1 (track.js) took 68,335 — a dead miss at 50K every time — and every later turn
+was under 15K. The 6K margin is ninfer's admission rule: a request is accepted only when prompt +
+max_tokens fits `--max-context`.
+
+### reasoning_effort
+ninfer's chat endpoint takes `reasoning_effort`, and the Qwen3.8 template exposes `none`, `low`,
+`medium` and `xhigh` (`high` answers `reasoning_effort_not_supported`). The chat wire forwards the
+canonical `reasoning` as `reasoning_effort`, and the build's effort is `settings.llm.reasoning`
+like every other call.
+
+`medium` buys the design for a twenty-third of the tokens: 2,947 against 67,949, 33 seconds against
+seven minutes, for a design of the same length and MORE specific (it named its own checkpoint
+indices, a rubber-band rule, and a points table). The build that followed was 20 turns against 58.
+What it did not buy is a working game, and one arm each is too thin to say whether that is the
+effort or the roll.
+
+### A verifier can be impossible, and nothing says so
+The medium design asked its track generator for "minimum corner radius of 40" and a re-roll on
+failure. The build implemented the circumradius as `6·|cross| / (a·b·c)` — the reciprocal, a
+CURVATURE — so a smooth 1,000-unit corner scored 0.003, every seed failed, and `generateTrack` fell
+out of its 200 re-rolls returning null. The first screen reads `track.points` and the game dies on
+its start button. Corrected to `a·b·c / (2·|cross|)`, 95 of every 200 seeds pass and the game plays.
+A generator that verifies must not be able to return nothing: what the design owes is a floor —
+the best candidate when the checks cannot be met — and what the harness owes is a gate that presses
+the button.
+
+### The card
+131K of int8 KV is 9–10 GB over the 21.5 GB of weights, ~70 KB per token. 1M of context would need
+~70 GB; ninfer does not offload KV to host RAM, and over PCIe 5 x16 it would run at ~8 tok/s if it
+did. The window is at the card's ceiling.
+
+### The gate pokes where the button is not
+`error_gate` clicks the viewport CENTRE and presses Enter and Space — a canvas-drawn "press to
+start". The medium build's title screen is two DOM buttons below the middle, so nothing the gate
+did reached the crash, and a game that dies the instant a person presses START passed as built.
+The gate stays a BROKEN detector either way: pressing the page's own buttons is mechanical, and
+what happens after is still the human's to judge.
+
+### What's open
+Units in the designer's numbers. Getting the design's words onto the hardest system. Whether
+`medium` costs quality or only tokens — one arm each says nothing. The rival checkpoint bug is a
+design hole — the design placed no start line — as much as a build one.
+
+---
+
 ## A 2K-word design, and the window it needs (2026-08-25/26, local 5090, qwen3.8_27b via ninfer, thinking on)
 
 ### The question

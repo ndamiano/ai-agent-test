@@ -1,14 +1,17 @@
 """Run orchestrator + CLI.
 
   create_run(user_id)          → a fresh run dir
-  propose_prompt(request, id)  → the request, verbatim, as the run's PROMPT
+  open_ask(run_id, ask)        → the user's words, verbatim, as the run's ASK (and its title)
+  propose_prompt(ask, id)      → open the ask and start the DESIGN that becomes the run's PROMPT
+                                 (maestro.codegen.design; the web path, fire-and-forget)
   set_prompt(run_id, text)     → the human's edit of that prompt
   run_build(run_id)            → kick the build off + BLOCK-poll the cursor to done (CLI only; the web
                                  path is fire-and-forget via build_chain.kickoff)
   python -m maestro.codegen.run "<request>"  → prompt → build → play path
 
 THE PROMPT IS THE ARTIFACT: what the run stores is what the build's one user message contains,
-byte for byte, so the text a human approves is the text the model reads.
+byte for byte, so the text a human approves is the text the model reads. The ask is what the
+designer read; the prompt is what the human approves.
 
 The build itself is a chain of llm jobs driven by build_chain's completion handler, so
 `run_build`/`fix_from_note` only START it and wait — the API server (where worker completions
@@ -24,7 +27,7 @@ from typing import Optional
 from auth import store
 from auth.billing import SECONDS_PER_CREDIT
 from db import store as db_store
-from maestro.codegen import build_chain, build_state, stages
+from maestro.codegen import build_chain, build_state, design, stages
 from maestro.codegen.staging import game_dir, is_staged
 from maestro.state import RunState
 from tools.build_events import _emit
@@ -62,20 +65,36 @@ def _title_of(request: str) -> str:
     return line if len(line) <= _TITLE_CHARS else line[:_TITLE_CHARS].rsplit(" ", 1)[0] + "…"
 
 
-def propose_prompt(request: str, run_id: str) -> dict:
-    """Store the request as the run's prompt, VERBATIM, and announce it for the human to read."""
-    return set_prompt(run_id, request, event="prompt_proposed")
+def open_ask(run_id: str, ask: str) -> dict:
+    """Store the user's words, VERBATIM, as the run's ask. No `request` yet: its absence is what
+    says the design is still being written."""
+    ask = ask.strip()
+    if not ask:
+        raise ValueError("the prompt is empty")
+    spec = {"ask": ask, "title": _title_of(ask)}
+    RunState(run_id).write_spec(spec)
+    db_store.update_prompt_meta(run_id, spec["title"])
+    return spec
+
+
+def propose_prompt(ask: str, run_id: str) -> dict:
+    """Open the ask and start its design — the run's prompt lands when the design does."""
+    spec = open_ask(run_id, ask)
+    design.enqueue(run_id, ask)
+    return spec
 
 
 def set_prompt(run_id: str, text: str, *, event: str = "prompt_updated") -> dict:
-    """Write the run's prompt — the text the build will send as its user message."""
+    """Write the run's prompt — the text the build will send as its user message. Only `request`
+    moves: the ask and the title stay what the user wrote."""
     text = text.strip()
     if not text:
         raise ValueError("the prompt is empty")
-    spec = {"request": text, "title": _title_of(text)}
-    RunState(run_id).write_spec(spec)
-    db_store.update_prompt_meta(run_id, spec["title"])
-    _emit(event, run_id, title=spec["title"])
+    state = RunState(run_id)
+    spec = state.read_spec() or {}
+    spec["request"] = text
+    state.write_spec(spec)
+    _emit(event, run_id, title=spec.get("title", ""))
     return spec
 
 
@@ -108,7 +127,8 @@ def _await_build(run_id: str) -> BuildResult:
 
 
 def _new_run(request: str) -> Optional[str]:
-    """A fresh run holding the request as its prompt. None when there is no account to own it."""
+    """A fresh run whose prompt is the DESIGN of the request, written synchronously. None when
+    there is no account to own it."""
     users = store.list_users()
     if not users:
         print("no accounts yet — create one first: python -m auth.cli create <handle>")
@@ -117,8 +137,11 @@ def _new_run(request: str) -> Optional[str]:
     # The CLI is the employee path — no credit charge, but the compute budget still gates every
     # enqueue, so grant the same seconds a charged build would get or step 1 is refused.
     db_store.charge_game(run_id, 0, SECONDS_PER_CREDIT)
-    propose_prompt(request, run_id)
-    print(f"run: {run_id}\nprompt: {request!r}")
+    open_ask(run_id, request)
+    print(f"run: {run_id}\nask: {request!r}\ndesigning...")
+    prompt = design.generate(run_id, request)
+    print(f"design: {len(prompt.split())} words" if prompt != request.strip()
+          else "design: none — the ask is the prompt")
     return run_id
 
 
@@ -159,12 +182,13 @@ def _cli_staged(request: str) -> int:
     run_id = _new_run(request)
     if run_id is None:
         return 1
+    prompt = RunState(run_id).read_spec()["request"]
     print("\nplanning stages...")
-    plan = stages.plan(request, run_id)
+    plan = stages.plan(prompt, run_id)
     for i, s in enumerate(plan, 1):
         print(f"\nSTAGE {i}: {s}")
     if len(plan) > 1:
-        stages.save(RunState(run_id).run_dir, request, plan)
+        stages.save(RunState(run_id).run_dir, prompt, plan)
         set_prompt(run_id, plan[0])
     print("\nbuilding stage 1...\n")
     result = run_build(run_id)
@@ -260,9 +284,9 @@ def _cli_restore(run_id: str, ref: str) -> int:
 _HELP = """maestro — write a prompt, build a game, render its art.
 
 usage:
-  python -m maestro.codegen.run "<request>"   the request IS the prompt → build → play
-  python -m maestro.codegen.run --staged "<request>"      plan stages, then build them in sequence
-  python -m maestro.codegen.run --new "<request>"         write the prompt and stop (edit it first)
+  python -m maestro.codegen.run "<request>"   design the request → the design IS the prompt → build → play
+  python -m maestro.codegen.run --staged "<request>"      design, plan stages, then build them in sequence
+  python -m maestro.codegen.run --new "<request>"         design and stop (edit the prompt first)
   python -m maestro.codegen.run --build <run_id>          build the prompt on disk
   python -m maestro.codegen.run --fix <run_id> "<note>"   apply a human-note fix to a built run
   python -m maestro.codegen.run --assets <run_id>         render the art the game declared

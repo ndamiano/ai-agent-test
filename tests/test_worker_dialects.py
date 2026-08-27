@@ -53,10 +53,10 @@ def test_chat_passes_messages_and_tools_through_untranslated():
     sent = a.session.post.call_args[1]["json"]
     assert sent["messages"] == CANONICAL["messages"]
     assert sent["tools"] == CANONICAL["tools"]
-    assert "reasoning" not in sent                    # meaningless on this endpoint
-    # Nothing else is added: thinking and sampling are LAUNCH FLAGS on the server this worker
-    # points at, so a request-level default here would override whatever the operator chose.
-    assert set(sent) == set(CANONICAL) - {"reasoning"}
+    assert sent["reasoning_effort"] == CANONICAL["reasoning"]
+    # Nothing else is added: sampling is a LAUNCH FLAG on the server this worker points at, so a
+    # request-level default here would override whatever the operator chose.
+    assert set(sent) == (set(CANONICAL) - {"reasoning"}) | {"reasoning_effort"}
 
 
 def test_responses_dialect_translates_both_ways():
@@ -90,10 +90,10 @@ def test_the_canonical_body_is_never_mutated():
     assert json.dumps(body, sort_keys=True) == before
 
 
-@pytest.mark.parametrize("effort", ["none", "high"])
-def test_reasoning_reaches_only_the_dialect_that_has_it(effort):
-    """`reasoning.effort` is a Responses field. On chat it is dropped — thinking is a server flag
-    there (`llama-server --chat-template-kwargs`, `ninfer-serve --no-thinking`)."""
+@pytest.mark.parametrize("effort", ["none", "medium"])
+def test_reasoning_is_spelled_for_each_dialect(effort):
+    """One canonical `reasoning` value; Responses takes it as `reasoning.effort`, Chat Completions
+    as `reasoning_effort`. Neither dialect gets it under the other's name."""
     body = {**CANONICAL, "reasoning": effort}
     a = _agent("responses", RESPONSES_REPLY)
     llm(a, {"body": dict(body)})
@@ -102,4 +102,5 @@ def test_reasoning_reaches_only_the_dialect_that_has_it(effort):
     a = _agent("chat", CHAT_REPLY)
     llm(a, {"body": dict(body)})
     sent = a.session.post.call_args[1]["json"]
+    assert sent["reasoning_effort"] == effort
     assert "reasoning" not in sent and "chat_template_kwargs" not in sent

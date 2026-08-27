@@ -2,7 +2,7 @@
   "llm": {
     "model": "local-model",
     "max_tokens": 50000,
-    "reasoning": "none",
+    "reasoning": "medium",
     "n_ctx": 32768
   },
   "play": {

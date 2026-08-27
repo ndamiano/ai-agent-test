@@ -45,7 +45,7 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
         try {
             const detail = await api.getGame(resumable)
             if (!detail.plan) { setResumable(null); return }
-            setText(detail.prompt)
+            setText(detail.prompt ?? detail.ask)
             setPlanRunId(detail.run_id)
             setStages(detail.plan)
             setResumable(null)

@@ -192,4 +192,4 @@ def test_a_second_world_is_refused(run, pipeline):
 
 def test_a_description_is_required(run, pipeline):
     tools = build_tools(run)
-    assert tools["compose_world"]()["error"].startswith("KeyError")
+    assert "needs the argument 'description'" in tools["compose_world"]()["error"]

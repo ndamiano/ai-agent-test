@@ -25,7 +25,7 @@ from typing import Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 STATE_FILE = "stages.json"
-STAGE_MAX_STEPS = 100   # the fix default of 40 nearly truncated a measured overworld stage
+STAGE_MAX_STEPS = 100
 
 _PROMPT = Path(__file__).parent / "prompts" / "stage_plan.txt"
 _STAGE = re.compile(r"STAGE (\d+):\s*(.*?)(?=STAGE \d+:|$)", re.S)

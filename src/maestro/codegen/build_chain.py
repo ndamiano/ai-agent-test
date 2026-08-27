@@ -340,7 +340,7 @@ def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") ->
 
     try:
         return _enqueue()
-    except db_store.InsufficientCompute:
+    except db_store.InsufficientCompute as e:
         released = db_store.abandon_pending_batch_jobs(
             run_id, "preempted: the build needs the remaining compute")
         if released:

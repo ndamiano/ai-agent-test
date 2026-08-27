@@ -635,3 +635,52 @@ def test_compaction_replays_the_trim_from_the_turn_log(tmp_path):
     record = json.loads(turn_log.path(tmp_path).read_text().splitlines()[-1])
     assert record["kind"] == "compact" and record["trimmed"] > 0 and record["dropped"] == 0
     assert turn_log._compacted(_file_history(), record) == cursor.history
+
+
+def test_replies_cut_off_at_the_cap_count_toward_the_stall(tmp_path, tools):
+    """A model looping on one oversized write burned every turn to the cap: the cut-off branch never
+    advanced the stall streak, so the give-up that ends every other no-call loop never fired."""
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    out = None
+    for _ in range(build_steps._NO_CALL_GIVE_UP):
+        out = build_steps.step({}, tmp_path, tools, cursor,
+                               _reply(content="const x = ",
+                                      usage={"completion_tokens": build_steps.MAX_TOKENS}))
+    assert isinstance(out, build_steps.Done) and "stalled" in out.report
+
+
+def test_a_turn_re_sent_forever_ends_the_build(tmp_path, tools):
+    """A re-drive with nothing to apply enqueues a fresh job each time; a worker that dies on every
+    one of them would otherwise re-drive without end."""
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    out = None
+    for _ in range(build_steps._REDRIVE_GIVE_UP):
+        out = build_steps.step({}, tmp_path, tools, cursor, None)
+    assert isinstance(out, build_steps.Done) and "never ran" in out.report
+
+
+def test_the_last_nudge_never_tells_a_fix_to_write_a_fresh_page(tmp_path, tools):
+    """On a fix or a later stage the game already has its index.html; telling the model to write a
+    minimal one would overwrite the finished game."""
+    (tmp_path / "game" / "index.html").write_text("<h1>done</h1>")
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    for _ in range(3):
+        build_steps.step({}, tmp_path, tools, cursor, _reply(content="hmm"))
+    said = cursor.history[-1]["content"]
+    assert "minimal page" not in said and "edit_file" in said
+    assert (tmp_path / "game" / "index.html").read_text() == "<h1>done</h1>"
+
+
+def test_a_misnamed_argument_is_named_back(tmp_path, tools):
+    """Seen in prod: `read — failed: KeyError: 'path'` for a read sent as `file`. The model copies
+    exact feedback, so the error names the argument it needs and the ones it sent."""
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _reply(calls=[("read_file", {"file": "lib/input.js"})]))
+    said = cursor.history[-1]["content"]
+    assert "KeyError" not in said
+    assert "needs the argument 'path'" in said and "file" in said

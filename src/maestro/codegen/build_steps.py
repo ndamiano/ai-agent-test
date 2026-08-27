@@ -30,12 +30,15 @@ logger = logging.getLogger(__name__)
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 
-MAX_TURNS = 120
+MAX_TURNS = 200
 # Per-turn output cap. Sized for a THINKING model: turn 0 of a build thinks 25-36K tokens before its
 # first tool call, and at 16K every such turn ended at the cap with no content and no call.
 MAX_TOKENS = 50_000
 # Ties to tools.MAX_READ_CHARS — a read cut here too would contradict its own truncation note.
 _MAX_TOOL_CHARS = 20_000
+# A turn the driver was asked to re-send with nothing to apply (a reaper re-drive). Each one
+# enqueues a fresh job, so a worker that dies every time would re-drive forever.
+_REDRIVE_GIVE_UP = 8
 # Compact when the last prompt crossed this fraction of the window, leaving room for the reply and
 # the next tool result; keep this fraction of it afterwards.
 _COMPACT_AT = 0.62
@@ -49,9 +52,14 @@ _NUDGES = [
     "Still no tool call landed. Call write_file with path \"index.html\" and a minimal page as "
     "content, then build the rest.",
 ]
+# The third nudge on a game that already has its page (a fix, a later stage) would overwrite it.
+_NUDGE_EXISTING = ("Still no tool call landed. Call list_files, then read_file the file you mean "
+                   "to change and edit_file it.")
 
 
-def _nudge(streak: int) -> str:
+def _nudge(streak: int, run_dir) -> str:
+    if streak >= len(_NUDGES) and (game_dir(run_dir) / "index.html").exists():
+        return _NUDGE_EXISTING
     return _NUDGES[min(streak, len(_NUDGES)) - 1]
 
 
@@ -265,6 +273,9 @@ def step(spec, run_dir, tools, cursor, result, error: Optional[str] = None) -> O
         return _infer(run_dir, cursor, report=f"turn rejected by the server: {_clip(error, 80)}")
 
     if result is None:
+        cursor.redriven += 1
+        if cursor.redriven >= _REDRIVE_GIVE_UP:
+            return Done(f"stalled: {cursor.redriven} turns never ran")
         return _infer(run_dir, cursor, report="re-sent the turn that never ran")
 
     usage = result.get("usage") or {}
@@ -280,17 +291,21 @@ def step(spec, run_dir, tools, cursor, result, error: Optional[str] = None) -> O
     # A reply that ran out of output tokens saved NOTHING — the tool call was cut off mid-argument.
     # Say so, rather than letting the model believe the file landed.
     if not calls and (usage.get("completion_tokens") or 0) >= MAX_TOKENS - 32:
+        cursor.no_call_streak += 1
         cursor.history.append({"role": "assistant", "content": content[-2000:]})
         cursor.history.append({"role": "user", "content":
                                "Your last response was cut off by the output token limit, so "
                                f"nothing was saved. {_TOO_BIG}"})
+        if cursor.no_call_streak >= _NO_CALL_GIVE_UP:
+            return Done(f"stalled: {cursor.no_call_streak} turns cut off by the output limit")
         return _infer(run_dir, cursor)
 
     if not calls:
         # The same nudge produces the same reply, so each one differs and the streak gives up.
         cursor.no_call_streak += 1
         cursor.history.append({"role": "assistant", "content": content})
-        cursor.history.append({"role": "user", "content": _nudge(cursor.no_call_streak)})
+        cursor.history.append({"role": "user", "content":
+                               _nudge(cursor.no_call_streak, run_dir)})
         if cursor.no_call_streak >= _NO_CALL_GIVE_UP:
             return Done(f"stalled: {cursor.no_call_streak} turns with no tool call")
     else:
@@ -421,28 +436,10 @@ def _apply(tools, cursor, tc) -> None:
 
 def _dispatch(tools, cursor, tc) -> dict:
     name = tc["function"]["name"]
-    args = parse_args(tc["function"].get("arguments"))
     fn = tools.get(name)
     if fn is None:
-        res = {"ok": False, "error": f"unknown tool: {name!r}"}
-    elif name == "read_file":
-        res = fn(path=args.get("path"), offset=args.get("offset"))
-    elif name == "write_file":
-        res = fn(path=args.get("path"), content=args.get("content"))
-    elif name == "edit_file":
-        res = fn(path=args.get("path"), old_text=args.get("old_text"),
-                 new_text=args.get("new_text"))
-    elif name == "generate_media":
-        res = fn(id=args.get("id"), prompt=args.get("prompt"), kind=args.get("kind"))
-    elif name == "compose_scene":
-        res = fn(id=args.get("id"), archetype=args.get("archetype"), style=args.get("style"),
-                 seed=args.get("seed"), width_cells=args.get("width_cells"),
-                 height_cells=args.get("height_cells"))
-    elif name == "compose_world":
-        res = fn(description=args.get("description"), seed=args.get("seed"))
-    else:
-        res = fn()
-    return res
+        return {"ok": False, "error": f"unknown tool: {name!r}"}
+    return fn(**parse_args(tc["function"].get("arguments")))
 
 
 def _infer(run_dir, cursor, report: Optional[str] = None) -> Infer:

@@ -32,13 +32,10 @@ import re
 from typing import Dict, List
 
 from maestro.codegen.assets import read_manifest
-from maestro.codegen.staging import game_dir
+from maestro.codegen.staging import game_dir, is_vendored
 
 logger = logging.getLogger(__name__)
 
-# The renderer we seed every game folder with. It is not the game's source and it talks about
-# `assets/` paths in its own comments, which is exactly the false positive to avoid.
-VENDORED = {"three.module.js", "GLTFLoader.js", "BufferGeometryUtils.js"}
 SOURCE_SUFFIXES = {".html", ".js", ".css"}
 
 _ASSET_REF = re.compile(r"assets/[A-Za-z0-9_./-]+\.(?:png|glb|jpg|jpeg|webp|gif|svg)")
@@ -51,7 +48,7 @@ def _source(run_dir) -> str:
     game = game_dir(run_dir)
     parts = []
     for p in sorted(game.rglob("*")):
-        if p.suffix.lower() in SOURCE_SUFFIXES and p.name not in VENDORED and p.is_file():
+        if p.suffix.lower() in SOURCE_SUFFIXES and p.is_file() and not is_vendored(p, game):
             try:
                 parts.append(p.read_text(encoding="utf-8", errors="ignore"))
             except OSError as e:

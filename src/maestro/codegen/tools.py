@@ -14,7 +14,6 @@ from maestro.codegen.staging import RUNTIME_DIR, game_dir
 _VENDOR_FILES = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
 
 MAX_READ_CHARS = 20_000   # one read's ceiling; past this the read returns a WINDOW and says so.
-                          # Higher than build_steps._MAX_TOOL_CHARS is a promise the transcript cuts.
 
 
 _ESCAPES = {"\\r\\n": "\n", "\\n": "\n", "\\t": "\t", "\\\"": "\"", "\\'": "'"}
@@ -189,6 +188,10 @@ def build_tools(state) -> dict:
         def call(**kw):
             try:
                 return fn(**kw)
+            except KeyError as e:
+                sent = ", ".join(sorted(kw)) or "no arguments"
+                return {"ok": False, "error": f"{fn.__name__} needs the argument {e.args[0]!r}; "
+                                              f"this call sent {sent}."}
             except Exception as e:
                 return {"ok": False, "error": f"{type(e).__name__}: {e}"}
         return call

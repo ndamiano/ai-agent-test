@@ -185,7 +185,8 @@ declaring done.
 ### Documentation
 Keep the docs a change invalidates in the same commit as the code. Doctrine here, modules in
 `docs/build_path.md`, measurements in `docs/experiments.md`, operations in `docs/local_dev.md`. Task
-lists live outside the repo entirely.
+lists and experiment harnesses live outside the repo entirely (`~/Documents/Labs`); only their
+results come in.
 
 ### Comments
 Default: none. Only when the WHY is non-obvious (hidden constraint, workaround, subtle invariant).

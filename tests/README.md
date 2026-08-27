@@ -1,6 +1,6 @@
 # Tests — conventions
 
-484 unit tests across 47 files, green in ~13s. The threat isn't weak asserts — it's **structural
+~790 unit tests across 77 files, green in under a minute. The threat isn't weak asserts — it's **structural
 bloat**: adding coverage by cloning whole files. These conventions keep the suite growing in
 quality, not count.
 

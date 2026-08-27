@@ -6,6 +6,9 @@ belongs here once it has been RUN; a shape that has only been argued about stays
 The rule this file exists to serve: **measure before changing the loop.** A change that cannot point
 at a row here has not earned its place.
 
+Experiment harnesses, battery runners and renders live in `~/Documents/Labs`, never in this repo.
+What lands here is the number; what lands in `src/` is the change that earned it.
+
 ---
 
 ## A 2K-word design, and the window it needs (2026-08-25/26, local 5090, qwen3.8_27b via ninfer, thinking on)

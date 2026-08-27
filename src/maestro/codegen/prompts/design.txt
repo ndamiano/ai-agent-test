@@ -17,7 +17,7 @@ Then one paragraph per system, in that order, each starting with the system's na
 The last three paragraphs are always:
 - SCREENS: the game's screens as a state machine, "title (what it shows) → ... → game over (what it offers)", with what each key or button leads to, and what Escape does.
 - AUDIO: generated with the Web Audio API, naming each sound and when it plays.
-- ART: name what is AI art, as "ask for <thing> as a sprite/tile/scene" with how many, and end with "Everything else — <list> — is drawn in code."
+- ART: name what is AI art, as "ask for <thing> as a sprite/tile/scene", one image per distinct thing. An image holds ONE subject: never a sheet, atlas, grid, strip or set of several things in one image, and never one image serving things that must look different on screen — those are that many images, named one by one. End with "Everything else — <list> — is drawn in code."
 
 Write for the game the user asked for, at the depth of a real design document: the core loop, the opponent or challenge, progression, and the win. Include what the user said and what a good version of this game obviously needs. Plain prose, no headers other than the system names, no bullet points, no code. Do not mention files, libraries, engines, frameworks or the builder.
 

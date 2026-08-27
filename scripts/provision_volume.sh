@@ -59,14 +59,16 @@ VOL = sys.argv[1]
 # The SAME model ships twice, one artifact per engine: ninfer (sm_120a, a 5090 on an r580+ driver)
 # reads only its own artifact; llama.cpp reads only the GGUF and runs on any card. The GGUF is
 # stored under the model id because llama.cpp's router names a model by its file stem, and
-# LLM_MODEL is what every request carries.
+# LLM_MODEL is what every request carries — so the ninfer artifact and the GGUF share a stem.
+# The ninfer artifact is QUASAR (every linear layer NVFP4; the fork pinned in
+# Dockerfile.worker-llm is what reads it), stored under the name that image's NINFER_MODEL names.
 FILES = [
     (f"{VOL}/models/LLM", "unsloth/Qwen3.8-27B-GGUF",
      "Qwen3.8-27B-UD-Q4_K_XL.gguf", 17559178144,
-     "4ca720788d1e01f1bff70c033e0d0028fd02e502", "qwen3.8_27b.gguf"),
-    (f"{VOL}/models/ninfer", "neroued/Qwen3.8-27B-nvfp4-NInfer",
-     "qwen3_8_27b_nvfp4.ninfer", 21492695040,
-     "d6d0b3b61a38262e57217e64e7f44cf4ce98bda1"),
+     "4ca720788d1e01f1bff70c033e0d0028fd02e502", "qwen3.8_27b_quasar.gguf"),
+    (f"{VOL}/models/ninfer", "MirkoCovizzi/Qwen3.8-27B-QUASAR-NVFP4-NInfer",
+     "qwen3_8_27b_nvfp4.ninfer", 17555331072,
+     "16ccfe7c18f232fd44c56a61e05678ad9bbd711c", "qwen3_8_27b_quasar_nvfp4.ninfer"),
     # The image queue's four checkpoints, one per kind (see maestro/codegen: sprites/scenes ->
     # NetaYume, tiles + scene-chain terrain -> DreamShaperXL Turbo, scene-chain subjects ->
     # Qwen-Image-2512, the scene embed -> Qwen-Image-Edit-2511). The two Qwen graphs share the

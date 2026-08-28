@@ -1100,3 +1100,186 @@ Standalone lab, qwen3.8_27b local, DreamShaperXL Turbo. 14 places total across t
   NetaYume with a bare one-word prompt gave a briefcase for a fisherman and deck chairs for a
   pier. The subject leg keeps its existing prompt for now; the bench is the evidence for the
   next pass.
+
+## 2026-08-27/28 — Qwen3.8-Flash-Next (180B MoE, NVFP4) on a rented B200, the 10-cell battery
+
+Question: is a frontier-class open model, served remotely, worth ~5× the per-hour cost of the
+27B on a 5090? Ten one-shot builds through the unchanged pipeline (designer → build_chain →
+gate), LLM-only like the prior arms, `reasoning: medium`, 131K window, 200-step cap.
+
+Serving. `RadixArk/Qwen3.8-Flash-Next-NVFP4` (135 GB) on SGLang branch `qwen4-main-squashed`,
+1× B200, `--language-only`, README launch flags. Decode 148–163 tok/s at the client, 189 at
+the server, single stream; 60K-token prefill in seconds. Maestro needed zero code changes —
+the worker's `--target` is the whole integration. Tool calls and the reasoning split both
+worked out of the box. Cold start on a fresh pod: weights 2:41 from local disk, then ~10 min of
+JIT + autotune (cached after).
+
+Not viable on SM120 (2× RTX PRO 6000): vLLM has no `qwen4_exp` at all; SGLang's branch hung in
+three successive unported kernels (QSA decode, vision tower, PLE n-gram hash) after CUDA-13
+toolchain surgery — 13 launches, no first token. B200 is what the checkpoint was qualified on.
+
+| cell | steps | ok | wall | Nick |
+|---|---|---|---|---|
+| arcade | 77 | yes | 12 min | fine (the 27B is also fine here) |
+| indoor3d | 200 (cap) | no | 23 min | dies on load: `no castle layout found` — generator's verifier rejected every seed |
+| cards | 101 | yes | 16 min | "an *actual prototype* … the kind of thing (with some art) I'd put in front of someone" — nothing else has done this |
+| npcs | 139 | yes | 19 min | "still not good" |
+| rhythm | 179 | yes | 32 min | fine |
+| platformer | 181 | yes | 22 min | reachability — not winnable |
+| voxel | 200 (cap) | no | 26 min | loads clean |
+| f1 | 200 (cap) | no | 26 min | "by *far* the best one we've gotten" — lapped every prior F1 |
+| idle | 74 | yes | 11 min | too busy, no unfolding, long stretch with nothing for the player to do (likely the request, not the model) |
+| openworld3d | 200 (cap) | no | 37 min | loads clean; not yet played |
+
+- 6/10 called `done`; 4/10 ran to the cap. Every capped build was in a self-audit loop —
+  "everything looks consistent, one thing…" — reading files in chunks and making small real
+  edits, 2–3 s a turn, never deciding it was finished. The cap, not a crash, ended them; a
+  capped build skips the gate and staging, so the one load-dead game (indoor3d) was the one
+  the pipeline never judged. All nine others load clean under the headless probe.
+- Verdict (Nick): "The quality when it works, is wayy better, but it still fails a buncha."
+  Two cells (cards, f1) are the best of their kind Maestro has produced; the rest sit at or
+  near the 27B, with the same failure modes — verifiers that never pass, levels that can't be
+  won, cap-outs. Whether that clears 5× per inference-hour is open; the ceiling is real.
+- Art never landed: 126 `generate_media` calls across the ten builds, 0 renders (LLM-only arm,
+  no image worker), so every requested sprite and tile shipped as the checkerboard
+  placeholder — voxel is a pink void, f1's grass and kerbs are checkerboards. A confound on
+  every "feel" judgement, not on "unwinnable". Backfilled 2026-08-28 on the local 5090: the 126
+  jobs requeued (status → pending AND `created_at` → now, or the 1800 s reaper re-fails them on
+  sight) and drained at ~10.5 s/sprite, 6 s/tile, 126/126 landed; the six staged games re-staged.
+  Flash-Next's art requests differ from the 27B's: a per-game style prefix, hex colours inline,
+  the view named ("seen from BEHIND"), and "transparent background, isolated single subject" on
+  every sprite — the matting came out clean where the 27B's prompts usually don't.
+- What the run says about the pipeline rather than the model: the seeded-generator +
+  verifier clause is where games die on every model (castle layout, platform reachability), and
+  the first-`done`-is-answered rule assumes a model that calls `done`; this one audits until
+  stopped, so a "you are finished" nudge — not a bigger cap — is the untested arm.
+- Ops: two pods burned before a token was served — an Iceland RunPod DC with 250 kB/s to
+  PyPI, and a network-volume `/workspace` that made venv unpack and weight load 10× slower.
+  Probe a pod's DC bandwidth and `mount` in its first minute.
+
+## 2026-08-28 — The Flash-Next DESIGNS built by the local 27B (arm `transplant27b`)
+
+Question: how much of Flash-Next's ceiling is the design it wrote, and how much the builder?
+The ten Flash-Next systems designs (`spec.request` of the flashnext runs, 8.6–9.4K chars each)
+were copied verbatim into fresh runs — no designer call, ask preserved — and built by
+qwen3.8_27b QUASAR NVFP4 on the local 5090 (ninfer fork, thinking on, xhigh, 131K int8 KV),
+serially, with the image and mesh queues drained between builds by `local_gpu.py auto`.
+
+| cell | Flash-Next own build | 27B on Flash-Next's design |
+|---|---|---|
+| arcade | 77 steps, ok, 12 min | 27 steps, ok, 9 min |
+| indoor3d | cap (200), load-dead | 40 steps, ok, 27 min (castle generator's verifier passes) |
+| cards | 101 steps, ok, 16 min | build + 11-step gate fix (`undefined.slice`), ok, 35 min |
+| npcs | 139 steps, ok, 19 min | build + 22-step gate fix, ok, 29 min |
+| rhythm | 179 steps, ok, 32 min | 28 steps, ok, 19 min |
+| platformer | 181 steps, ok, 22 min | 21 steps, ok, 20 min |
+| voxel | cap (200) | build + 19-step gate fix, ok, 38 min — `sfx.select is not a function` on input, past the gate |
+| f1 | cap (200) | 40 steps, ok, 34 min |
+| idle | 74 steps, ok, 11 min | build + 9-step gate fix, ok, 20 min |
+| openworld3d | cap (200) | build + 8-step gate fix (terrain `height` missing from record), ok, 25 min |
+
+- 10/10 called `done` and passed the gate; 5/10 needed a gate fix round (Flash-Next: 0/6 of
+  its finished builds did). 126/126 art requests landed and were staged (`auto` swapped the
+  card to the image queue between builds, ~1 min a swap, 5 meshes for indoor3d).
+- Every Flash-Next cap-out (indoor3d, voxel, f1, openworld3d) finished on the 27B in 40 steps
+  or fewer, from the same design. The self-audit loop is the big model's habit, not the
+  design's fault.
+- The 27B runs are single-turn-per-file: 21–40 build steps against Flash-Next's 74–181. The
+  compaction count is 0–1 against Flash-Next's 1–8.
+- Times are wall-clock including the image swaps, so not comparable to the B200 numbers.
+- Play verdicts (Nick): arcade fine — the only one. rhythm fine but thin ("we need to ask for
+  more"). cards about 70% of the way there. npcs did what was asked but is poorly designed.
+  platformer: invisible enemies, extremely floaty player. idle: the passive-income upgrades do
+  not work. voxel: looks bad, crashes on switching to a block. f1 did not load (the headless
+  gate passed it — swiftshader vs real WebGL). indoor3d: the same issues as before.
+  openworld3d bad.
+- Verdict: **the design alone does not carry.** The cells split two ways. Where Flash-Next's
+  own build played and the 27B's did not on the SAME design (cards, platformer, idle), the
+  builder is the ceiling — the design named the system and the 27B shipped it dead. Where
+  both models failed or came out thin (indoor3d, voxel, f1, openworld3d; npcs, rhythm), the
+  design itself is the ceiling and no builder downstream fixes it — those are the cells to
+  take to the designer prompt, not to a bigger model. The 27B on Flash-Next's designs plays
+  about where the 27B on its own designs plays, so at this model size the designer swap buys
+  nothing; the 5× is in the build.
+- Ops: `scripts/local_gpu.py` defaults `NINFER_BIN` to mainline ninfer, which refuses the
+  QUASAR artifact (`tensor descriptor does not match target contract: text/token_embedding`);
+  the fork at `ninfer-quasar` serves it. `local_gpu.py llm` exits the moment the queue empties
+  (between builds); `--idle-exit` is `auto`-only.
+
+---
+
+## 2026-08-28 — The gate asks where the button is (local 5090, qwen3.8_27b via ninfer `--vision`)
+
+### The question
+A one-line ask ("a village mystery where I talk to villagers to find who stole something") built
+in 64 turns, the gate reported clean, and the game died the instant a person pressed PLAY — twice
+over, on two successive fix rounds (`g.gain.exponentialRampToTimeValue is not a function`, then
+`Village generation failed for seed 101`). PLAY was a DOM button at (550, 396); the poke clicked
+(640, 360) and pressed Enter and Space, which the title ignored. Can the model read the screenshot
+and say where to press, and would that have caught the two deaths?
+
+### The naked call
+One request to ninfer, the 1280×720 title screenshot as an `image_url` part, `reasoning_effort`
+low, the JSON skeleton in the prompt. 2.1 s, 243 tokens: the three buttons with centres inside
+each one. Then five games end to end (screenshot → model → click each target on a fresh page):
+
+| game | title | model's answer | secs |
+|---|---|---|---|
+| npcs (DOM buttons) | Play / Continue / Help | 3 targets, all inside their buttons | 2.9 |
+| arcade (canvas) | "press Space" | no targets, keys [Space] | 2.3 |
+| cards (canvas) | START DUEL | 1 target at (640, 505), keys [Space] | 1.6 |
+| rhythm (canvas) | lane keys | keys [D, F, J, K] | 2.7 |
+| transplant RPG (canvas) | Begin | 1 target at (640, 535), keys [W, A, S, D, E, J, Esc] | 4.1 |
+
+Every click and key changed the screen except the ones a title legitimately ignores (Continue with
+no save; WASD before Begin). One wart: the model names keys as a screen prints them (`Esc`), and
+playwright wants its own names — a table maps them.
+
+### Against the deaths
+The two pre-fix snapshots of the npcs run, through the real `error_gate.probe` on the queue:
+
+| snapshot | fixed poke | model-named press |
+|---|---|---|
+| after the build (audio typo) | clean | `g.gain.exponentialRampToTimeValue is not a function` on Play |
+| after fix round 1 (literal layout) | clean | `Village generation failed for seed 101` on Play |
+| after fix round 3 | clean | clean |
+
+24 s per probe (three page loads at 3 s settle each; the llm turn is 2–3 s of it).
+
+### What shipped
+`error_gate.probe` screenshots the loaded page, asks `prompts/probe_targets.txt`, and presses each
+answer on its own fresh page — a title that leaves on the first press would otherwise hide what the
+rest do. At most six clicks and six keys. The fixed poke stays as the fallback when the model cannot
+be asked. The gate still detects BROKEN only: pressing what the screen offers is mechanical, and
+what happens after remains the human's to judge.
+
+### Not measured
+Whether a second screen (the one PLAY leads to) is worth a second ask — the two deaths here were
+both on the first press. A model that lists the HUD as targets on a game that starts without a
+title; the cap bounds the cost, not the aim.
+
+---
+
+## 2026-08-28 — Broad strokes first (local 5090, qwen3.8_27b via ninfer, thinking on, 131K window)
+
+### The question
+"build minecraft" through the designer made an 18-system, 3,051-word design. Built, turn 0 spent
+102K tokens of reasoning — the whole game thought through in its head — and ended with no tool
+call and no content (run `e5351a382355`, killed). The doctrine's answer was "the fix is the
+design"; the owner's was to try the loop first: tell the builder to think in broad strokes before
+the first call and in depth when each file is written.
+
+### The line
+One line in `build.txt`, beside "Work in small steps": *The first reply settles only the file
+layout and the records the files share, in broad strokes; each system is thought through in depth
+when its own file is written, not before.*
+
+### The builds
+| arm | turn 0 | outcome |
+|---|---|---|
+| control: same design, no line | 102K reasoning tokens, no tool call | killed at turn 1 |
+| broad strokes | 78K tokens, a file layout in the reply and 18 tool calls (list_files + 17 art asks) | ok, 44 steps, 32 min; ten modules at 2–17K tokens each; one gate round (three.js imported from `js/`), then clean |
+
+Turn 0 still drafted every system in its think — "Let me plan carefully… Main systems: WORLD…
+PLAYER…" — but stopped short of writing the code there and acted. n=1, one request; the line
+holds its place only if it survives a request it was not written for, with and without.

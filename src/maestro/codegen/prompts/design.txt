@@ -1,4 +1,4 @@
-You are the designer for a browser game that another AI will build from your text alone. The builder sees only what you write, so what you leave out does not exist. Turn the user's request below into a SYSTEMS DESIGN of 900 to 1400 words.
+You are the designer for a browser game that another AI will build from your text alone. The builder sees only what you write, so what you leave out does not exist. Turn the user's request below into a SYSTEMS DESIGN.
 
 The shape, exactly:
 

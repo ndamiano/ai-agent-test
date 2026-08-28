@@ -1281,5 +1281,16 @@ when its own file is written, not before.*
 | broad strokes | 78K tokens, a file layout in the reply and 18 tool calls (list_files + 17 art asks) | ok, 44 steps, 32 min; ten modules at 2–17K tokens each; one gate round (three.js imported from `js/`), then clean |
 
 Turn 0 still drafted every system in its think — "Let me plan carefully… Main systems: WORLD…
-PLAYER…" — but stopped short of writing the code there and acted. n=1, one request; the line
-holds its place only if it survives a request it was not written for, with and without.
+PLAYER…" — but stopped short of writing the code there and acted.
+
+### A request the line was not written for
+"a tower defense game" → a 16-system, 3,224-word design, built with and without the line:
+
+| arm | turn 0 | steps | wall | compactions | gate |
+|---|---|---|---|---|---|
+| broad strokes | 58K tokens, 4 calls (list + three lib reads) | 31 | 20 min | 0 | clean on the first probe |
+| control, no line | 68K tokens, 18 calls (list + 17 art asks) | 49 | 29 min | 1 | `Identifier 'bx' has already been declared`, one fix round, clean |
+
+Both acted on turn 0, so this pair does not test the overflow; it shows the line arm finishing in
+31 steps against 49 with no compaction, one pair, unseparated from variance. The overflow claim
+rests on voxel alone (n=1); a second design that overflows without the line is the test still owed.

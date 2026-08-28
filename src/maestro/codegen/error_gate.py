@@ -9,10 +9,12 @@ aimed at the line named fixes one instance per round and grinds.
 
 An uncaught exception is one of the few signals that satisfies the BROKEN-not-bad guardrail:
 `this._doIdle is not a function` can only be met by defining it. The gate does not simulate
-play — it loads the page and pokes past a title screen, and whether the game PLAYS right stays
-a human question. 404s are excluded deliberately: art lands after the code that draws it, and
-a missing file is not a broken game (a crash while DRAWING the missing art still throws, and
-that is caught).
+play — it loads the page, shows the model one screenshot and presses what the model says the
+title screen offers (prompts/probe_targets.txt), each on a fresh page, and whether the game PLAYS
+right stays a human question. A model that cannot be asked leaves the fixed poke (centre click,
+Enter, Space) in place — losing the model is never a reason to lose the gate. 404s are excluded
+deliberately: art lands after the code that draws it, and a missing file is not a broken game (a
+crash while DRAWING the missing art still throws, and that is caught).
 
 The gate is a BOUNDARY like snapshots: a probe that cannot run is logged and the build stands —
 losing the gate is never a reason to lose a game.
@@ -20,6 +22,7 @@ losing the gate is never a reason to lose a game.
 
 from __future__ import annotations
 
+import base64
 import functools
 import http.server
 import json
@@ -32,6 +35,8 @@ import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from llm_clients.connector import get_connector
+from llm_clients.message_builder import MessageBuilder
 from maestro.codegen.staging import RUNTIME_DIR
 
 logger = logging.getLogger(__name__)
@@ -39,10 +44,22 @@ logger = logging.getLogger(__name__)
 MAX_ROUNDS = 8            # measured convergence was <= 6 rounds on the worst cell
 PROBE_SECONDS = 6.0       # settle time after load + pokes; boot errors land well inside it
 STATE_FILE = "error_gate.json"
+MAX_TARGETS = 6           # a title screen offers a few things; more is the model listing the HUD
+VIEWPORT = {"width": 1280, "height": 720}
 
 VENDORED = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
 
 _NOTE = (Path(__file__).parent / "prompts" / "error_gate_note.txt")
+_TARGETS = (Path(__file__).parent / "prompts" / "probe_targets.txt")
+
+# The model names keys the way a screen prints them; playwright wants its own names.
+_KEY_NAMES = {"esc": "Escape", "escape": "Escape", "return": "Enter", "enter": "Enter",
+              "space": "Space", "spacebar": "Space", "tab": "Tab", "shift": "Shift",
+              "up": "ArrowUp", "down": "ArrowDown", "left": "ArrowLeft", "right": "ArrowRight",
+              "up arrow": "ArrowUp", "down arrow": "ArrowDown", "left arrow": "ArrowLeft",
+              "right arrow": "ArrowRight", "arrowup": "ArrowUp", "arrowdown": "ArrowDown",
+              "arrowleft": "ArrowLeft", "arrowright": "ArrowRight", "any key": "Enter"}
+_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
 _SYNTAXY = re.compile(r"SyntaxError|redeclaration|already been declared|Unexpected (?:token|identifier|string|number|end of input)|missing [)}\]] after", re.IGNORECASE)
 _REDECL = re.compile(r"redeclaration of (?:const|let|var|class|function)?\s*['\"]?(\w+)"
@@ -55,9 +72,9 @@ _INLINE_SCRIPT = re.compile(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", re.IG
 def probe(game_dir: Path) -> List[Dict[str, str]]:
     """Serve the game folder, load it headless, and return the uncaught errors in arrival order.
 
-    Each error is {"message": ..., "stack": ...}. The page gets a click at the viewport centre
-    (where a canvas-drawn PLAY button sits) and the two keys any title screen answers to (Enter,
-    Space) — enough to get past "press to start", deliberately no more. A script the page asked
+    Each error is {"message": ..., "stack": ...}. The loaded page is screenshotted and the model
+    names what the title screen offers (`_targets`); each click and key is pressed on its own
+    fresh page — enough to get past "press to start", deliberately no more. A script the page asked
     for and did not get is an error too: a module import that 404s stops the whole module graph
     without throwing, so nothing else would ever report it. An environment with no browser
     answers [] and logs why, per the boundary rule. The page has NO network egress: every request
@@ -82,50 +99,29 @@ def probe(game_dir: Path) -> List[Dict[str, str]]:
                 browser = pw.chromium.launch(
                     proxy={"server": "http://127.0.0.1:9", "bypass": "127.0.0.1"},
                     args=["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"])
-                page = browser.new_page()
-
-                def _no_egress(route):
-                    url = route.request.url
-                    if url.startswith(f"{base_url}/"):
-                        route.continue_()
-                    else:
-                        blocked.append(url)
-                        route.abort()
-
-                page.route("**/*", _no_egress)
-                page.on("pageerror", lambda e: errors.append(
-                    {"message": str(e), "stack": getattr(e, "stack", "") or ""}))
-
-                def _missing_script(response):
-                    req = response.request
-                    if response.status < 400 or req.resource_type != "script":
-                        return
-                    path = req.url[len(base_url) + 1:]
-                    referrer = (req.headers.get("referer") or "")[len(base_url) + 1:]
-                    who = f" ({referrer} asked for it)" if referrer and referrer != "index.html" else ""
-                    errors.append({"message": f"the page asked for {path} and it does not exist "
-                                              f"(HTTP {response.status}){who} — the path in the "
-                                              f"script tag or import that names it is wrong",
-                                   "stack": ""})
-
-                page.on("response", _missing_script)
-                try:
-                    page.goto(f"{base_url}/index.html", timeout=15_000, wait_until="load")
-                except Exception as e:
-                    # A page that cannot finish loading (script hangs the parser, endless loop
-                    # in module init) is itself the finding when nothing threw first.
-                    if not errors:
-                        errors.append({"message": f"page did not finish loading: {e}", "stack": ""})
-                page.wait_for_timeout(PROBE_SECONDS * 500)
-                size = page.viewport_size or {"width": 1280, "height": 720}
-                for poke in (lambda: page.mouse.click(size["width"] // 2, size["height"] // 2),
-                             lambda: page.keyboard.press("Enter"),
-                             lambda: page.keyboard.press("Space")):
+                page = _open(browser, base_url, errors, blocked)
+                actions = _targets(page.screenshot()) if page is not None else None
+                if page is not None:
+                    page.close()
+                if actions is None:
+                    w, h = VIEWPORT["width"], VIEWPORT["height"]
+                    actions = [("click", (w // 2, h // 2)), ("key", "Enter"), ("key", "Space")]
+                # Each press on its own fresh page: a title that leaves on the first press would
+                # otherwise hide what every later press does, and a crash on one press would be
+                # blamed on the next.
+                for kind, what in actions:
+                    page = _open(browser, base_url, errors, blocked)
+                    if page is None:
+                        break
                     try:
-                        poke()
+                        if kind == "click":
+                            page.mouse.click(*what)
+                        else:
+                            page.keyboard.press(what)
                     except Exception:
                         pass
-                page.wait_for_timeout(PROBE_SECONDS * 500)
+                    page.wait_for_timeout(PROBE_SECONDS * 500)
+                    page.close()
                 browser.close()
         except Exception as e:
             logger.warning("error gate: probe could not run (%s) — build stands", e)
@@ -134,6 +130,94 @@ def probe(game_dir: Path) -> List[Dict[str, str]]:
         logger.warning("error gate: %s: blocked %d external request(s): %s",
                        game_dir, len(blocked), ", ".join(sorted(set(blocked))[:5]))
     return _dedup(errors)
+
+
+def _open(browser, base_url: str, errors: List[Dict[str, str]], blocked: List[str]):
+    """One fresh page on the game, wired to report: uncaught errors, a script the page asked for
+    and did not get, every request that tried to leave. None when the page could not load — the
+    failure to load is itself the error, and it is already recorded."""
+    page = browser.new_page(viewport=VIEWPORT)
+
+    def _no_egress(route):
+        url = route.request.url
+        if url.startswith(f"{base_url}/"):
+            route.continue_()
+        else:
+            blocked.append(url)
+            route.abort()
+
+    page.route("**/*", _no_egress)
+    page.on("pageerror", lambda e: errors.append(
+        {"message": str(e), "stack": getattr(e, "stack", "") or ""}))
+
+    def _missing_script(response):
+        req = response.request
+        if response.status < 400 or req.resource_type != "script":
+            return
+        path = req.url[len(base_url) + 1:]
+        referrer = (req.headers.get("referer") or "")[len(base_url) + 1:]
+        who = f" ({referrer} asked for it)" if referrer and referrer != "index.html" else ""
+        errors.append({"message": f"the page asked for {path} and it does not exist "
+                                  f"(HTTP {response.status}){who} — the path in the "
+                                  f"script tag or import that names it is wrong",
+                       "stack": ""})
+
+    page.on("response", _missing_script)
+    try:
+        page.goto(f"{base_url}/index.html", timeout=15_000, wait_until="load")
+    except Exception as e:
+        # A page that cannot finish loading (script hangs the parser, endless loop in module
+        # init) is itself the finding when nothing threw first.
+        if not errors:
+            errors.append({"message": f"page did not finish loading: {e}", "stack": ""})
+        page.close()
+        return None
+    page.wait_for_timeout(PROBE_SECONDS * 500)
+    return page
+
+
+def _targets(png: bytes) -> Optional[List[tuple]]:
+    """What the title screen offers, as the model reads it from a screenshot: a list of
+    ("click", (x, y)) and ("key", name), at most MAX_TARGETS of each. None when the model could not
+    be asked or did not answer in shape — the caller falls back to the fixed poke."""
+    prompt = _TARGETS.read_text(encoding="utf-8").format(**VIEWPORT)
+    content = [{"type": "text", "text": prompt},
+               {"type": "image_url", "image_url": {
+                   "url": "data:image/png;base64," + base64.b64encode(png).decode()}}]
+    try:
+        reply = get_connector().generate_with_tools(
+            MessageBuilder("You read screenshots of browser games.").add_user(content).build(),
+            [], max_tokens=4000, reasoning="low")
+        msg = (reply.get("choices") or [{}])[0].get("message", {}) or {}
+        return _parse_targets(msg.get("content") or "")
+    except Exception as e:
+        logger.warning("error gate: could not ask where to press (%s) — fixed poke", e)
+        return None
+
+
+def _parse_targets(text: str) -> Optional[List[tuple]]:
+    try:
+        data = json.loads(_FENCE.sub("", text.strip()))
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    actions: List[tuple] = []
+    for t in (data.get("targets") or [])[:MAX_TARGETS]:
+        try:
+            x, y = int(t["x"]), int(t["y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 0 <= x < VIEWPORT["width"] and 0 <= y < VIEWPORT["height"]:
+            actions.append(("click", (x, y)))
+    for k in (data.get("keys") or [])[:MAX_TARGETS]:
+        if not isinstance(k, str) or not k.strip():
+            continue
+        name = _KEY_NAMES.get(k.strip().lower(), k.strip())
+        if len(name) == 1:
+            name = name.lower() if name.isalpha() else name
+        actions.append(("key", name))
+    return actions
 
 
 class _Quiet(http.server.SimpleHTTPRequestHandler):
@@ -297,12 +381,14 @@ def after_build(run_id: str) -> bool:
     from maestro.codegen import build_chain     # late import — build_chain imports this module
     from maestro.state import RunState
     from maestro.codegen.staging import game_dir as staged_game_dir
+    from tools.execution_context import run_scope
 
     rs = RunState(run_id)
     gdir = staged_game_dir(rs.run_dir)
     state = _load_state(rs.run_dir)
 
-    errors = probe(gdir)
+    with run_scope(run_id):
+        errors = probe(gdir)
     if not errors:
         if state["rounds"]:
             logger.info("error gate: %s clean after %d fix round(s)", run_id, state["rounds"])

@@ -1,0 +1,5 @@
+This is a screenshot of a browser game, {width} by {height} pixels, as it first loads. List every thing a player could click or press on this screen to get INTO the game or change what it shows: buttons, menu items, "press any key" hints. Answer with JSON only, in this exact shape:
+
+{{"targets": [{{"label": "<what it says or is>", "x": <pixel x of its centre>, "y": <pixel y of its centre>}}], "keys": ["<a key the screen says to press, e.g. Enter, Space, or a letter>"]}}
+
+Give x and y as integers in screenshot pixels. If nothing is clickable, answer {{"targets": [], "keys": []}}.

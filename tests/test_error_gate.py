@@ -150,11 +150,16 @@ def test_round_cap_stops(wired, monkeypatch):
 
 # ---------------------------------------------------------------- the real probe
 
+@pytest.fixture
+def no_model(monkeypatch):
+    """The fixed poke: no model to ask where to press."""
+    monkeypatch.setattr(error_gate, "_targets", lambda png: None)
+
 @pytest.mark.parametrize("body,expect", [
     ("<html><body><script>\nundefinedFunction();\n</script></body></html>", 1),
     ("<html><body><script>\ndocument.title = 'fine';\n</script></body></html>", 0),
 ])
-def test_headless_probe_hears_boot_errors(tmp_path, body, expect):
+def test_headless_probe_hears_boot_errors(tmp_path, body, expect, no_model):
     pytest.importorskip("playwright.sync_api")
     gdir = _game(tmp_path, body)
     errors = error_gate.probe(gdir)
@@ -163,7 +168,7 @@ def test_headless_probe_hears_boot_errors(tmp_path, body, expect):
         assert "undefinedFunction" in errors[0]["message"]
 
 
-def test_probe_hears_a_module_the_page_asked_for_and_did_not_get(tmp_path):
+def test_probe_hears_a_module_the_page_asked_for_and_did_not_get(tmp_path, no_model):
     """A module import that 404s stops the whole graph without throwing — a game that never ran
     a line read clean until the probe listened for the failed fetch."""
     pytest.importorskip("playwright.sync_api")
@@ -175,9 +180,8 @@ def test_probe_hears_a_module_the_page_asked_for_and_did_not_get(tmp_path):
     assert "js/lib/input.js" in errors[0]["message"] and "does not exist" in errors[0]["message"]
 
 
-def test_probe_clicks_the_viewport_centre(tmp_path):
-    """A canvas-drawn PLAY button sits at the centre; a build died on one an off-centre click
-    never reached."""
+def test_probe_clicks_the_viewport_centre_without_a_model(tmp_path, no_model):
+    """The fixed poke, when the model cannot be asked: a canvas-drawn PLAY at the centre."""
     pytest.importorskip("playwright.sync_api")
     gdir = _game(tmp_path, "<html><body><script>\n"
                  "addEventListener('click', e => { const w = innerWidth, h = innerHeight;\n"
@@ -187,7 +191,7 @@ def test_probe_clicks_the_viewport_centre(tmp_path):
     assert len(errors) == 1 and "startTurn" in errors[0]["message"]
 
 
-def test_probe_blocks_external_egress_and_logs_it(tmp_path, caplog, monkeypatch):
+def test_probe_blocks_external_egress_and_logs_it(tmp_path, caplog, monkeypatch, no_model):
     """The probe runs the game's own JS on the control-plane box — a request to anything but the
     game's ephemeral server must die inside the browser."""
     import logging
@@ -203,7 +207,7 @@ def test_probe_blocks_external_egress_and_logs_it(tmp_path, caplog, monkeypatch)
                for r in caplog.records)
 
 
-def test_probe_still_serves_the_games_own_files(tmp_path, caplog, monkeypatch):
+def test_probe_still_serves_the_games_own_files(tmp_path, caplog, monkeypatch, no_model):
     import logging
     pytest.importorskip("playwright.sync_api")
     monkeypatch.setattr(error_gate, "PROBE_SECONDS", 0.4)
@@ -234,3 +238,77 @@ def test_bare_browser_syntax_message_gets_the_parse_sentence(tmp_path):
     gdir = _game(tmp_path, "<html></html>", **{"a.js": "export const a = 'it's';\n"})
     note = error_gate.note_for({"message": "Unexpected identifier 's'", "stack": ""}, gdir)
     assert "a.js: 1" in note and "every occurrence" in note
+
+
+# ---------------------------------------------------------------- where to press
+
+def test_parse_targets_reads_fenced_json_clamps_and_names_keys():
+    text = ('```json\n{"targets": [{"label": "PLAY", "x": 550, "y": 396}, {"label": "off", "x": 5000, "y": 1},'
+            ' {"label": "bad", "x": "no"}], "keys": ["Esc", "space", "d", "Left arrow", ""]}\n```')
+    assert error_gate._parse_targets(text) == [
+        ("click", (550, 396)), ("key", "Escape"), ("key", "Space"), ("key", "d"), ("key", "ArrowLeft")]
+
+
+def test_parse_targets_caps_each_kind():
+    data = {"targets": [{"label": str(i), "x": i, "y": i} for i in range(20)],
+            "keys": [chr(65 + i) for i in range(20)]}
+    actions = error_gate._parse_targets(json.dumps(data))
+    assert len([a for a in actions if a[0] == "click"]) == error_gate.MAX_TARGETS
+    assert len([a for a in actions if a[0] == "key"]) == error_gate.MAX_TARGETS
+
+
+@pytest.mark.parametrize("text", ["", "not json", "[1, 2]", "```\n{\n```"])
+def test_parse_targets_answers_none_off_shape(text):
+    assert error_gate._parse_targets(text) is None
+
+
+def test_probe_presses_what_the_model_names(tmp_path, monkeypatch):
+    """Two builds died on a PLAY button that was not at the viewport centre; the fixed poke never
+    reached it. The model reads the screenshot and names the button, and the probe presses THAT."""
+    pytest.importorskip("playwright.sync_api")
+    gdir = _game(tmp_path, "<html><body><script>\n"
+                 "addEventListener('click', e => { if (Math.abs(e.clientX - 550) < 5 && Math.abs(e.clientY - 396) < 5) startCase(); });\n"
+                 "addEventListener('keydown', e => { if (e.key === 'h') openHelp(); });\n"
+                 "</script></body></html>")
+    seen = {}
+    def fake_targets(png):
+        seen["png"] = png
+        return [("click", (550, 396)), ("key", "h")]
+    monkeypatch.setattr(error_gate, "_targets", fake_targets)
+    errors = error_gate.probe(gdir)
+    assert seen["png"][:8] == b"\x89PNG\r\n\x1a\n"
+    assert [e["message"].split(":")[-1].strip() for e in errors] == \
+        ["startCase is not defined", "openHelp is not defined"]
+
+
+def test_probe_presses_each_on_a_fresh_page(tmp_path, monkeypatch):
+    """A title that leaves on the first press would hide what the later ones do."""
+    pytest.importorskip("playwright.sync_api")
+    gdir = _game(tmp_path, "<html><body><script>\n"
+                 "let gone = false;\n"
+                 "addEventListener('keydown', e => { if (gone) return; gone = true; if (e.key === 'Enter') a(); if (e.key === ' ') b(); });\n"
+                 "</script></body></html>")
+    monkeypatch.setattr(error_gate, "_targets", lambda png: [("key", "Enter"), ("key", "Space")])
+    errors = error_gate.probe(gdir)
+    assert sorted(e["message"].split(":")[-1].strip() for e in errors) == ["a is not defined", "b is not defined"]
+
+
+def test_probe_asks_with_the_screenshot_and_the_prompt(monkeypatch):
+    calls = {}
+    class FakeConn:
+        def generate_with_tools(self, messages, tools, max_tokens=None, reasoning=None):
+            calls["messages"] = messages
+            return {"choices": [{"message": {"content": '{"targets": [{"label": "GO", "x": 1, "y": 2}], "keys": []}'}}]}
+    monkeypatch.setattr(error_gate, "get_connector", lambda: FakeConn())
+    assert error_gate._targets(b"\x89PNG fake") == [("click", (1, 2))]
+    user = calls["messages"][-1]["content"]
+    assert user[0]["type"] == "text" and "1280 by 720" in user[0]["text"]
+    assert user[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_probe_falls_back_to_the_fixed_poke_when_the_model_cannot_be_asked(monkeypatch):
+    class DeadConn:
+        def generate_with_tools(self, *a, **k):
+            raise RuntimeError("no worker")
+    monkeypatch.setattr(error_gate, "get_connector", lambda: DeadConn())
+    assert error_gate._targets(b"\x89PNG fake") is None

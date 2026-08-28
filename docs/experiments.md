@@ -1291,6 +1291,9 @@ PLAYER…" — but stopped short of writing the code there and acted.
 | broad strokes | 58K tokens, 4 calls (list + three lib reads) | 31 | 20 min | 0 | clean on the first probe |
 | control, no line | 68K tokens, 18 calls (list + 17 art asks) | 49 | 29 min | 1 | `Identifier 'bx' has already been declared`, one fix round, clean |
 
-Both acted on turn 0, so this pair does not test the overflow; it shows the line arm finishing in
-31 steps against 49 with no compaction, one pair, unseparated from variance. The overflow claim
-rests on voxel alone (n=1); a second design that overflows without the line is the test still owed.
+Both acted on turn 0, so this pair does not test the overflow. The owner played both: both do
+what the design says, and the CONTROL plays better — the design's systems were poor to begin with
+("pretty poor"), and the arm that spent 18 more steps on them shipped the better game. Fewer
+steps is not the number. The line's one win is the overflow case (voxel, n=1); on a design that
+fits the cap it may cost depth, which is the trade the owner said not to make. Verdict on the line
+waits on a second overflowing design; if a fitting design again plays worse with it, it goes.

@@ -283,9 +283,8 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
     cursor.ok = ok and held is None
     build_state.save(rs.run_dir, cursor)
     if held is not None:
-        # A held game exists only in its run dir: not staged, not snapshotted, not archived, and
-        # no stage is stacked onto it. The owner sees a neutral status; the violation row is what
-        # the admin panel reads.
+        # A held game exists only in its run dir: not staged, not snapshotted, not archived. The
+        # owner sees a neutral status; the violation row is what the admin panel reads.
         path, violation = held
         log_violation(violation, run_id=run_id, source=f"artifact:{path}")
         db_store.set_status(run_id, "held")
@@ -312,18 +311,16 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
     if ok and attempt is None:
         # Post-finalize runs AFTER the lock this finalize holds is released — a kickoff blocks on
         # the same lock, so running it inline here would deadlock. A build stopped by hand gets
-        # neither gate nor stage: the human ended it, and an auto-build would restart what they
-        # stopped.
+        # no gate: the human ended it, and an auto-build would restart what they stopped.
         threading.Thread(target=_post_finalize, args=(run_id,), daemon=True).start()
 
 
 def _post_finalize(run_id: str) -> None:
-    """The error gate first, the next stage only on a clean probe — a stage is never stacked onto
-    a game that does not load. A gate fix's own finalize re-enters here, so the stage advances as
-    soon as the gate converges — and only a SETTLED chain (no fix kicked, no stage left) is
-    archived, so the bucket holds finished games rather than one snapshot per intermediate."""
-    from maestro.codegen import archive, stages
-    if not error_gate.after_build(run_id) and not stages.advance(run_id):
+    """The error gate, then the archive. A gate fix's own finalize re-enters here, so only a
+    SETTLED chain (no fix kicked) is archived — the bucket holds finished games rather than one
+    snapshot per intermediate."""
+    from maestro.codegen import archive
+    if not error_gate.after_build(run_id):
         archive.archive(run_id)
 
 

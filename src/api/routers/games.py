@@ -24,11 +24,11 @@ from auth.store import User
 from config.settings_manager import settings_manager
 from db import store as db_store
 from db.estimates import cheapest_seconds
-from maestro.codegen import archive, build_chain, stages as stage_plan
+from maestro.codegen import archive, build_chain
 from maestro.codegen.assets import (AlreadyRendering, add_assets, entry_kind, read_manifest,
                                     regenerate_asset)
 from maestro.codegen.staging import game_dir, has_authored_files, is_staged, staged_title
-from maestro.codegen.run import create_run, open_ask, propose_prompt, set_prompt
+from maestro.codegen.run import create_run, propose_prompt, set_prompt
 from tools.safety import log_violation, screen_text
 from maestro.state import RunState
 from tools.build_events import _emit
@@ -41,17 +41,8 @@ class NewGameBody(BaseModel):
     prompt: str
 
 
-class EnhanceBody(BaseModel):
-    prompt: str
-    # Re-plan an already-charged run (the user went back to their words) — no second charge.
-    run_id: Optional[str] = None
-
-
 class BuildBody(BaseModel):
     prompt: Optional[str] = None
-    # The user's edit of an ENHANCED plan: stage texts, exactly as shown in the box. Stage 1 is
-    # the build's prompt and the rest auto-advance after it — the box's contents ARE what builds.
-    stages: Optional[List[str]] = None
     # Start over on an EMPTY game folder instead of carrying the last attempt's files forward.
     fresh: bool = False
 
@@ -117,23 +108,14 @@ async def list_games(user: User = Depends(get_current_user)):
         active = build_chain.status_of(row["id"])
         held = row["status"] == "held"
         built = _built(row["id"]) and not held
-        pressed = bool(db_store.builds_for(row["id"]))
-        # A stage finalize stages a playable game, but the chain isn't done — reporting built
-        # between stages flashes a play button that reads as done-then-not. A held run's chain
-        # is over: the hold froze it, so it must not read as still summoning.
-        staging_on = pressed and not held and stage_plan.mid_chain(RunState(row["id"]).run_dir)
         games.append({
             "run_id": row["id"],
             "title": staged_title(row["id"]) or row["title"],
             "status": row["status"],
-            "built": built and not staging_on,
-            "building": active is not None or staging_on,
+            "built": built,
+            "building": active is not None,
             "paused": bool(active and active["paused"]),
             "mtime": row["updated_at"],
-            # A charged plan whose build was never pressed — the create page offers to resume it.
-            "unstarted_plan": (active is None and not built and row.get("credits_spent", 0) > 0
-                               and not pressed
-                               and (RunState(row["id"]).run_dir / stage_plan.STATE_FILE).exists()),
         })
     games.sort(key=lambda g: g["mtime"], reverse=True)
     return games
@@ -169,50 +151,6 @@ async def create_game(body: NewGameBody, user: User = Depends(get_current_user))
     return {"run_id": run_id, "status": "designing"}
 
 
-@router.post("/enhance", response_model=Dict)
-async def enhance_prompt(body: EnhanceBody, user: User = Depends(get_current_user)):
-    """Plan the user's request into build stages, WITHOUT building. Returns the run, the original
-    text, and the stage texts for the user to read and edit — pressing Build on them is the
-    approval, so nothing here is hidden rewriting.
-
-    Planning is where the credit is charged: it is the game's first inference, and it meters
-    against the grant it buys. `run_id` re-plans an already-charged run — the user went back to
-    their words and pressed Plan again, and their credit covers every re-plan. The plan is SAVED
-    beside the run, so an abandoned plan can be picked back up from the create page."""
-    text = body.prompt.strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="the prompt is empty")
-    violation = screen_text(text)
-    if violation is not None:
-        log_violation(violation, user_id=user.id, source="enhance")
-        raise HTTPException(status_code=400, detail="this prompt can't be built")
-
-    if body.run_id is not None:
-        state = _require_state(body.run_id, user)
-        if not db_store.is_charged(body.run_id):
-            raise HTTPException(status_code=409, detail="this run was never planned")
-        if build_chain.is_active(body.run_id):
-            raise HTTPException(status_code=409, detail="build already in progress")
-        run_id = body.run_id
-    else:
-        price = cost({"request": text})
-        if store.balance(user.id) < price:
-            raise HTTPException(status_code=402, detail={
-                "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
-        run_id = await asyncio.to_thread(create_run, user.id)
-        if not store.deduct(user.id, price, "build", run_id):
-            raise HTTPException(status_code=402, detail={
-                "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
-        db_store.charge_game(run_id, price, price * SECONDS_PER_CREDIT)
-        state = RunState(run_id)
-
-    await asyncio.to_thread(open_ask, run_id, text)
-    await asyncio.to_thread(set_prompt, run_id, text, event="prompt_proposed")
-    plan = await asyncio.to_thread(stage_plan.plan, text, run_id)
-    await asyncio.to_thread(stage_plan.save, state.run_dir, text, plan)
-    return {"run_id": run_id, "prompt": text, "stages": plan}
-
-
 @router.get("/{run_id}", response_model=Dict)
 async def get_game(run_id: str, user: User = Depends(get_current_user)):
     """Full detail for one game: the build prompt, built/building state, and live status."""
@@ -221,17 +159,12 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
     row = db_store.game(run_id) or {}
     built = _built(run_id)
     active = build_chain.status_of(run_id)
-    staging_on = (row.get("status") != "held"
-                  and stage_plan.mid_chain(state.run_dir)
-                  and bool(db_store.builds_for(run_id)))
     if active:
         live = "fixing" if active["kind"] == "fix" else "building"
         status = "paused" if active["paused"] else live
     elif row.get("status") == "held":
         # A held game may still have an older staged copy on disk; held wins so nothing offers it.
         status, built = "held", False
-    elif staging_on:
-        status = "building"     # between stages: the chain is the build, not the last finalize
     else:
         status = "built" if built else "idle"
     return {
@@ -240,8 +173,8 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         # None while the design is still being written — the page's only signal for that state.
         "prompt": spec_data.get("request"),
         "title": staged_title(run_id) or spec_data.get("title", ""),
-        "built": built and not staging_on,
-        "building": active is not None or staging_on,
+        "built": built,
+        "building": active is not None,
         "status": status,
         "assets_exist": (game_dir(state.run_dir) / "assets.json").exists(),
         # Whether a previous attempt left files behind — what the from-scratch build would discard.
@@ -250,9 +183,6 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         # Compute budget as a fraction remaining (0..1), never raw seconds — seconds_used is
         # deliberately not surfaced (it would expose actual GPU spend). None ⇒ uncharged, no bar.
         "budget_pct_remaining": _budget_pct(row, run_id),
-        # The saved stage plan, for resuming a charged-but-never-built enhancement.
-        "plan": (stage_plan.saved(state.run_dir) or {}).get("stages")
-                if (status == "idle" and not built) else None,
     }
 
 
@@ -388,32 +318,15 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
         raise HTTPException(status_code=409, detail="build already in progress")
     # A build or fix on an evicted run must open on its real files, not an empty seed.
     await asyncio.to_thread(archive.ensure_local, run_id)
-    if body.stages is not None:
-        texts = [s.strip() for s in body.stages if s.strip()]
-        if not texts:
-            raise HTTPException(status_code=400, detail="the stage list is empty")
-        for text in texts:
-            violation = screen_text(text)
-            if violation is not None:
-                log_violation(violation, user_id=user.id, source="stage_edit")
-                raise HTTPException(status_code=400, detail="this prompt can't be built")
-        original = (state.read_spec() or {}).get("request", texts[0])
-        if len(texts) > 1:
-            await asyncio.to_thread(stage_plan.save, state.run_dir, original, texts)
-        await asyncio.to_thread(set_prompt, run_id, texts[0])
-    else:
-        # A build without a stage list is the user choosing the plain flow — a plan left by an
-        # earlier enhancement must not auto-advance under it.
-        (state.run_dir / stage_plan.STATE_FILE).unlink(missing_ok=True)
-        if body.prompt is not None:
-            violation = screen_text(body.prompt)
-            if violation is not None:
-                log_violation(violation, user_id=user.id, source="prompt_edit")
-                raise HTTPException(status_code=400, detail="this prompt can't be built")
-            try:
-                await asyncio.to_thread(set_prompt, run_id, body.prompt)
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
+    if body.prompt is not None:
+        violation = screen_text(body.prompt)
+        if violation is not None:
+            log_violation(violation, user_id=user.id, source="prompt_edit")
+            raise HTTPException(status_code=400, detail="this prompt can't be built")
+        try:
+            await asyncio.to_thread(set_prompt, run_id, body.prompt)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     spec_data = state.read_spec()
     if "request" not in spec_data:
         raise HTTPException(status_code=409, detail="the design is still being written")

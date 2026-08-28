@@ -4,7 +4,6 @@ import { track } from '../../api/track'
 import { useAuth } from '../../contexts/AuthContext'
 import { Button } from '../ui/Button'
 import { TextArea } from '../ui/Field'
-import { EnhanceNotice, shouldShowNotice } from './EnhanceNotice'
 
 // Openings that produce games, shown so an empty box is a starting line rather than a blank.
 const EXAMPLES = [
@@ -22,96 +21,19 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
     const [text, setText] = useState('')
     const [busy, setBusy] = useState(false)
     const [error, setError] = useState<string | null>(null)
-    const [enhance, setEnhance] = useState(true)
-    const [notice, setNotice] = useState(false)
-    // A returned plan puts the page in review: the user reads and edits the stages, and pressing
-    // Build on them is the approval — what is on screen is byte for byte what builds. The plan is
-    // already paid for, so leaving review and planning again reuses the same run.
-    const [planRunId, setPlanRunId] = useState<string | null>(null)
-    const [stages, setStages] = useState<string[] | null>(null)
-    const [resumable, setResumable] = useState<string | null>(null)
     const { refreshBalance } = useAuth()
 
-    useEffect(() => {
-        track('create_opened')
-        api.listGames()
-            .then(games => setResumable(games.find(g => g.unstarted_plan)?.run_id ?? null))
-            .catch(() => { /* the banner is best-effort */ })
-    }, [])
+    useEffect(() => { track('create_opened') }, [])
 
-    const resume = async () => {
-        if (!resumable) return
-        setBusy(true); setError(null)
-        try {
-            const detail = await api.getGame(resumable)
-            if (!detail.plan) { setResumable(null); return }
-            setText(detail.prompt ?? detail.ask)
-            setPlanRunId(detail.run_id)
-            setStages(detail.plan)
-            setResumable(null)
-        } catch (e) {
-            setError(buildErrorMessage(e, 'Could not load the unstarted build'))
-        } finally { setBusy(false) }
-    }
-
-    const createPlain = async () => {
+    const create = async () => {
         setBusy(true); setError(null)
         try {
             const { run_id } = await api.createGame(text)
-            track('enhance_skipped', { run_id })
-            track('build_started', { run_id, source: 'create', staged: false })
             onCreated(run_id)
         } catch (e) {
-            setError(buildErrorMessage(e, 'Could not start the build'))
+            setError(buildErrorMessage(e, 'Could not start the design'))
         } finally { setBusy(false); refreshBalance() }
     }
-
-    const plan = async () => {
-        setBusy(true); setError(null); setEnhance(true)
-        try {
-            const res = await api.enhancePrompt(text, planRunId ?? undefined)
-            track('enhance_planned', { run_id: res.run_id, stages: res.stages.length })
-            setPlanRunId(res.run_id)
-            setStages(res.stages)
-        } catch (e) {
-            setError(buildErrorMessage(e, 'Could not plan the build'))
-        } finally { setBusy(false); refreshBalance() }
-    }
-
-    const buildPlanned = async () => {
-        if (!planRunId || !stages) return
-        setBusy(true); setError(null)
-        try {
-            const { run_id } = await api.buildStages(planRunId, stages)
-            track('build_started', { run_id, source: 'create', staged: stages.length > 1 })
-            onCreated(run_id)
-        } catch (e) {
-            setError(buildErrorMessage(e, 'Could not start the build'))
-        } finally { setBusy(false); refreshBalance() }
-    }
-
-    // A paid plan builds plain on ITS run — a fresh createGame here would charge a second credit.
-    const buildPaidPlain = async () => {
-        if (!planRunId) return
-        setBusy(true); setError(null)
-        try {
-            const { run_id } = await api.buildGame(planRunId, text)
-            track('enhance_skipped', { run_id })
-            track('build_started', { run_id, source: 'create', staged: false })
-            onCreated(run_id)
-        } catch (e) {
-            setError(buildErrorMessage(e, 'Could not start the build'))
-        } finally { setBusy(false); refreshBalance() }
-    }
-
-    const create = () => {
-        if (enhance) { void plan(); return }
-        if (planRunId) { void buildPaidPlain(); return }
-        if (shouldShowNotice()) { setNotice(true); return }
-        void createPlain()
-    }
-
-    const reviewing = stages !== null
 
     return (
         <div className="h-full overflow-y-auto">
@@ -122,101 +44,41 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
                 </button>
 
                 <div className="flex flex-col gap-1.5 text-center">
-                    <h2 className="font-display text-3xl">{reviewing ? 'The build plan' : 'What should exist?'}</h2>
+                    <h2 className="font-display text-3xl">What should exist?</h2>
                     <p className="text-sm text-slate">
-                        {reviewing
-                            ? 'Your words, planned into stages. Edit anything — these exact texts are what builds.'
-                            : 'This exact text is the only thing the model is given.'}
+                        Your words become a design you read and edit before anything builds.
                     </p>
                 </div>
 
-                {resumable && !reviewing && (
-                    <div className="flex items-center gap-3 border border-edge rounded px-3 py-2">
-                        <span className="text-sm text-slate flex-1">You have an unstarted build in progress.</span>
-                        <Button variant="quiet" size="sm" onClick={resume} disabled={busy}>Open it</Button>
-                    </div>
-                )}
+                <TextArea value={text} onChange={e => setText(e.target.value)} disabled={busy}
+                    rows={5} autoFocus spellCheck={false}
+                    placeholder="A snail racing game where the race runs over four in-game days."
+                    className="border-l-2 border-l-ember" />
 
-                {reviewing ? (
-                    <>
-                        <div className="flex flex-col gap-1">
-                            <span className="text-xs text-dim">You asked for</span>
-                            <p className="text-sm text-slate border-l-2 border-edge pl-3 whitespace-pre-wrap">{text}</p>
-                        </div>
-                        {stages.map((s, i) => (
-                            <div key={i} className="flex flex-col gap-1">
-                                <span className="text-xs text-dim">
-                                    {stages.length === 1 ? 'The build request'
-                                        : i === 0 ? 'Stage 1 — built first, playable on its own'
-                                            : `Stage ${i + 1} — added once the game runs`}
-                                </span>
-                                <TextArea value={s} disabled={busy} rows={4} spellCheck={false}
-                                    onChange={e => setStages(stages.map((t, j) => (j === i ? e.target.value : t)))}
-                                    className="border-l-2 border-l-ember" />
-                            </div>
-                        ))}
-                        <div className="flex items-center gap-3 flex-wrap">
-                            <Button variant="primary" size="md" onClick={buildPlanned}
-                                disabled={busy || stages.every(s => !s.trim())}>
-                                {busy ? 'Starting…' : 'Build it'}
-                            </Button>
-                            <Button variant="ghost" size="md" disabled={busy}
-                                onClick={() => setStages(null)}>
-                                Back to my words
-                            </Button>
-                            <span className="text-xs text-dim">Already paid for — building starts no new charge.</span>
-                        </div>
-                    </>
-                ) : (
-                    <>
-                        <TextArea value={text} onChange={e => setText(e.target.value)} disabled={busy}
-                            rows={5} autoFocus spellCheck={false}
-                            placeholder="A snail racing game where the race runs over four in-game days."
-                            className="border-l-2 border-l-ember" />
-
-                        <div className="flex items-center gap-3 flex-wrap">
-                            <Button variant="primary" size="md" onClick={create} disabled={busy || !text.trim()}>
-                                {busy ? (enhance ? 'Planning…' : 'Starting…')
-                                    : enhance ? (planRunId ? 'Plan it again' : 'Plan it · 1 credit')
-                                        : planRunId ? 'Build it' : 'Build it · 1 credit'}
-                            </Button>
-                            <label className="flex items-center gap-2 text-xs text-dim cursor-pointer">
-                                <input type="checkbox" checked={enhance} disabled={busy}
-                                    onChange={e => setEnhance(e.target.checked)} />
-                                Plan the build first (recommended)
-                            </label>
-                        </div>
-                        <span className="text-xs text-dim">
-                            It writes the whole game, then tells you when it can be played.
-                        </span>
-                    </>
-                )}
+                <div className="flex items-center gap-3 flex-wrap">
+                    <Button variant="primary" size="md" onClick={create} disabled={busy || !text.trim()}>
+                        {busy ? 'Starting…' : 'Design it · 1 credit'}
+                    </Button>
+                    <span className="text-xs text-dim">
+                        The design takes a few minutes. Building it starts no new charge.
+                    </span>
+                </div>
 
                 {error && <p className="text-fail text-sm">{error}</p>}
 
-                {!reviewing && (
-                    <div className="flex flex-col gap-2 mt-2">
-                        <span className="text-xs text-dim">Or start from one of these</span>
-                        <div className="flex flex-wrap gap-2">
-                            {EXAMPLES.map(e => (
-                                <button key={e} onClick={() => setText(e)} disabled={busy}
-                                    className="text-sm text-slate border border-edge rounded-full px-3 py-1
-                                               hover:text-bone hover:border-ember/50 transition-colors disabled:opacity-40">
-                                    {shorten(e)}
-                                </button>
-                            ))}
-                        </div>
+                <div className="flex flex-col gap-2 mt-2">
+                    <span className="text-xs text-dim">Or start from one of these</span>
+                    <div className="flex flex-wrap gap-2">
+                        {EXAMPLES.map(e => (
+                            <button key={e} onClick={() => setText(e)} disabled={busy}
+                                className="text-sm text-slate border border-edge rounded-full px-3 py-1
+                                           hover:text-bone hover:border-ember/50 transition-colors disabled:opacity-40">
+                                {shorten(e)}
+                            </button>
+                        ))}
                     </div>
-                )}
+                </div>
             </div>
-
-            {notice && (
-                <EnhanceNotice
-                    onEnhance={() => { setNotice(false); void plan() }}
-                    onBuildAnyway={() => { setNotice(false); void createPlain() }}
-                    onClose={() => setNotice(false)}
-                />
-            )}
         </div>
     )
 }

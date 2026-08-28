@@ -2,7 +2,7 @@
 
 Unauthenticated and read-only, limited to the run ids the OWNER listed in settings
 (`demo_games`): curation is a deploy-time decision, never a flag a build can set. The list is
-TIERED — `showcase` is what the machine can achieve (staged builds, playtest notes), `oneshot`
+TIERED — `showcase` is what the machine can achieve (playtest notes, fix rounds), `oneshot`
 is what a single sentence gets, kept as it first came out — and the tier is the owner's claim,
 curated exactly like membership. Playing costs nothing meterable — the files are static and the
 grant is an in-memory entry — and the games run on the play origin, which holds no API and no
@@ -16,7 +16,6 @@ from fastapi.responses import FileResponse
 from auth import playgrants
 from config.settings_manager import settings_manager
 from db import store as db_store
-from maestro.codegen import stages
 from maestro.codegen.staging import RUNTIME_DIR, is_staged, staged_title
 from maestro.state import RunState
 
@@ -66,12 +65,11 @@ async def list_demos():
             row = db_store.game(run_id) or {}
             state = RunState(run_id)
             spec = state.read_spec() or {}
-            # A staged run's spec.request is stage-1 machine text; the person's own words live
-            # in the stage plan, and the card's whole claim is "these words made this game".
-            plan = stages.saved(state.run_dir) or {}
+            # spec.request is the machine's design; the card's whole claim is "these words made
+            # this game", so it carries the person's own ask.
             out.append({"run_id": run_id,
                         "title": staged_title(run_id) or row.get("title") or run_id,
-                        "prompt": plan.get("request") or spec.get("request", ""),
+                        "prompt": spec.get("ask") or spec.get("request", ""),
                         "tier": tier,
                         "thumb_url": f"/api/demos/{run_id}/thumb" if entry.get("thumb") else None})
     return out

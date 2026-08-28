@@ -22,8 +22,7 @@ from db import store as db_store
 router = APIRouter()
 
 KINDS = frozenset({
-    "page_view", "create_opened", "enhance_planned", "enhance_skipped",
-    "build_started", "game_played", "fix_sent",
+    "page_view", "create_opened", "build_started", "game_played", "fix_sent",
 })
 MAX_BATCH = 100
 MAX_PAYLOAD_CHARS = 2048

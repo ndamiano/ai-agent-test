@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { GameView } from './GameView'
 import { AuthProvider } from '../../contexts/AuthContext'
 import { api } from '../../api/client'
@@ -20,7 +20,7 @@ const DESIGN = 'RACE LOOP: four snails crawl a lane each day.\n\nDAY CYCLE: the 
 
 const detail = (over: Partial<GameDetail> = {}): GameDetail => ({
     run_id: 'r1', ask: ASK, prompt: DESIGN, title: '', built: false, building: false, status: 'idle',
-    has_game: false, budget_pct_remaining: null, plan: null, ...over,
+    has_game: false, budget_pct_remaining: null, ...over,
 })
 
 const mount = (first: GameDetail, ...later: GameDetail[]) => {
@@ -37,15 +37,35 @@ const mount = (first: GameDetail, ...later: GameDetail[]) => {
 }
 
 const buildButton = () => screen.getByRole('button', { name: /build it/i })
+const editButton = () => screen.getByRole('button', { name: /^edit$/i })
 
 describe('GameView before the first build', () => {
-    it('shows the design in the box with the ask above it', async () => {
+    it('shows the design as headed sections with the ask above it', async () => {
         mount(detail())
 
-        const box = await screen.findByPlaceholderText(/describe the game/i) as HTMLTextAreaElement
-        expect(box.value).toBe(DESIGN)
+        expect(await screen.findByText('RACE LOOP')).toBeTruthy()
+        expect(screen.getByText('DAY CYCLE')).toBeTruthy()
+        expect(screen.getByText(/four snails crawl a lane each day/)).toBeTruthy()
         expect(screen.getByText(ASK)).toBeTruthy()
+        expect(screen.queryByPlaceholderText(/describe the game/i)).toBeNull()
         expect(buildButton().hasAttribute('disabled')).toBe(false)
+    })
+
+    it('edits the same text the sections are read from, and builds exactly that', async () => {
+        mount(detail())
+        const build = vi.spyOn(api, 'buildGame').mockResolvedValue({ run_id: 'r1', status: 'building' })
+        await screen.findByText('RACE LOOP')
+
+        fireEvent.click(editButton())
+        const box = screen.getByPlaceholderText(/describe the game/i) as HTMLTextAreaElement
+        expect(box.value).toBe(DESIGN)
+        fireEvent.change(box, { target: { value: `${DESIGN}\n\nWEATHER: rain slows every snail.` } })
+        fireEvent.click(screen.getByRole('button', { name: /done editing/i }))
+
+        expect(screen.getByText('WEATHER')).toBeTruthy()
+        expect(screen.getByText(/rebuild uses this text/i)).toBeTruthy()
+        fireEvent.click(buildButton())
+        await waitFor(() => expect(build).toHaveBeenCalledWith('r1', `${DESIGN}\n\nWEATHER: rain slows every snail.`))
     })
 
     it('is designing while the spec has no request — even on a reload', async () => {
@@ -65,8 +85,9 @@ describe('GameView before the first build', () => {
 
         act(() => { listener?.({ type: 'prompt_proposed', run_id: 'r1' }) })
 
-        const box = await screen.findByPlaceholderText(/describe the game/i) as HTMLTextAreaElement
-        await waitFor(() => expect(box.value).toBe(DESIGN))
+        expect(await screen.findByText('RACE LOOP')).toBeTruthy()
+        fireEvent.click(editButton())
+        expect((screen.getByPlaceholderText(/describe the game/i) as HTMLTextAreaElement).value).toBe(DESIGN)
         expect(screen.queryByRole('status')).toBeNull()
         expect(buildButton().hasAttribute('disabled')).toBe(false)
     })

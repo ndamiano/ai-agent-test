@@ -95,7 +95,7 @@ src/
       archive.py         the run dir's OFF-BOX copy. tools/s3.py is a minimal SigV4 client over
                          `requests` — a wrong signature is a loud 403 and the payload hash rides
                          the request, so a signing bug cannot silently succeed. A settled finalize
-                         (no gate fix kicked, no stage left) uploads the run dir as one tar.gz,
+                         (no gate fix kicked) uploads the run dir as one tar.gz,
                          minus a world's `world_build/` — the world a game plays was published
                          into the game folder, and the stages' working material is hundreds of
                          megabytes nothing reads back. `evict` reclaims local disk and REFUSES without a verified remote
@@ -227,40 +227,24 @@ src/
                          is the human's edit after Build. Web: an llm job tagged
                          metadata.stage="design", whose completion writes `request` and emits
                          `prompt_proposed`; a failed or empty design writes `request = ask`, so the
-                         box never stays empty. CLI: synchronous. Measured 2026-08-26
+                         box never stays empty. The web page renders `request` as headed
+                         sections read from its shape (the lead line, the SYSTEMS list, one
+                         section per NAME: paragraph) over the SAME string the edit box holds
+                         and Build sends — a view, never a second copy. CLI: synchronous. The
+                         create call is where the CREDIT is charged: the design is the game's
+                         first inference and meters against the grant it buys, and the build
+                         that follows never charges again. Measured 2026-08-26
                          (`docs/experiments.md`): the model's design of a plain request built a
                          game "a million times better" than three stages of the request itself.
-      stages.py          STAGED CONSTRUCTION — the hardest system gets a whole build to itself,
-                         then the game grows by fix builds (measured 2026-08-02/03: a duel built
-                         alone earned a dedicated AI module; the same duel inside the full
-                         request earned zero opponent code — seven staged chains produced the
-                         battery's strongest games). `plan` is one small llm call
-                         (prompts/stage_plan.txt): stage 1 a complete playable game of the core
-                         system, each later stage ADDS one system and names what must keep
-                         working; a plan that fails degrades to one stage, the request as-is.
-                         The plan lives in runs/<id>/stages.json WITH the original request.
-                         Stage advance rides the post-finalize seam strictly AFTER the error
-                         gate: a stage is only stacked onto a game that loads clean. CLI:
-                         `run --staged "<request>"`. Web: POST /api/games/enhance plans WITHOUT
-                         building, and planning is where the CREDIT is charged — it is the game's
-                         first inference, and any free inference path is a cost leak (a one-off
-                         llm call on the autoscaled queue bills ~40s of pod wall-clock for ~3s of
-                         work). The plan call meters against the grant it just bought; re-planning
-                         the same run (body run_id) never charges again, and a paid plan builds on
-                         ITS run whether staged or plain. The plan is saved beside the run, so the
-                         create page offers a charged-but-never-built plan for resume
-                         ("unstarted_plan" on the list, "plan" on the detail). The SPA shows the
-                         user's text and the editable stage list side by side; a one-stage plan
-                         still shows review — nothing builds unseen. Build sends the stage texts
-                         to /build — the boxes' contents ARE what builds, so THE PROMPT IS THE
-                         ARTIFACT holds stage by stage. Enhancement is a checkbox (default on);
-                         opting out gets a one-time recommendation notice whose "don't show
-                         again" lives in localStorage. A plain build clears any stale stage plan.
       error_gate.py      the ERROR GATE — after a playable finalize, open the staged game in a
-                         headless browser (playwright chromium, an ephemeral static server, one
-                         click at the viewport centre + Enter + Space to get past a title screen)
-                         and re-enter the fix machine with the FIRST uncaught error and its
-                         address — a script the page asked for and did not get (an import that
+                         headless browser (playwright chromium, an ephemeral static server),
+                         screenshot it, ask the model what the title screen offers
+                         (prompts/probe_targets.txt: buttons as pixel centres, keys the screen
+                         names — at most MAX_TARGETS of each, one llm turn at low effort,
+                         charged to the game), press each on its own fresh page, and re-enter
+                         the fix machine with the FIRST uncaught error and its address. A model
+                         that cannot be asked or answers off-shape leaves the fixed poke (one
+                         click at the viewport centre + Enter + Space). The address — a script the page asked for and did not get (an import that
                          404s, which stops the module graph without throwing) counts as one, with
                          the path as its address. One error per fix
                          build; node --check supplies the file:line a browser SyntaxError omits
@@ -297,9 +281,9 @@ src/
                          for the admin panel. The image side of the same policy is asset_chain's
                          `_admit` above.
       prompts/           build.txt (the one system prompt every build turn reads),
-                         design.txt (the designer call), error_gate_note.txt (the fix note an
-                         uncaught error becomes), stage_plan.txt (the staged-construction plan
-                         call).
+                         design.txt (the designer call), probe_targets.txt (the gate asking
+                         where to press), error_gate_note.txt (the fix note an
+                         uncaught error becomes).
       run.py             create_run / propose_prompt (the designer, synchronously) / set_prompt /
                          run_build (CLI: kickoff +
                          block-poll the cursor) / fix_from_note + the CLI. The web build/fix path is

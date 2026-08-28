@@ -27,7 +27,7 @@ from typing import Optional
 from auth import store
 from auth.billing import SECONDS_PER_CREDIT
 from db import store as db_store
-from maestro.codegen import build_chain, build_state, design, stages
+from maestro.codegen import build_chain, build_state, design
 from maestro.codegen.staging import game_dir, is_staged
 from maestro.state import RunState
 from tools.build_events import _emit
@@ -175,32 +175,6 @@ def _cli(request: str) -> int:
     return _cli_build(run_id)
 
 
-def _cli_staged(request: str) -> int:
-    """Plan stages, show the plan, build stage 1 and block through the WHOLE chain — later stages
-    auto-advance off each clean finalize, so the CLI just waits for quiet."""
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
-    run_id = _new_run(request)
-    if run_id is None:
-        return 1
-    prompt = RunState(run_id).read_spec()["request"]
-    print("\nplanning stages...")
-    plan = stages.plan(prompt, run_id)
-    for i, s in enumerate(plan, 1):
-        print(f"\nSTAGE {i}: {s}")
-    if len(plan) > 1:
-        stages.save(RunState(run_id).run_dir, prompt, plan)
-        set_prompt(run_id, plan[0])
-    print("\nbuilding stage 1...\n")
-    result = run_build(run_id)
-    while True:
-        time.sleep(5)
-        if not build_chain.is_active(run_id):
-            time.sleep(30)
-            if not build_chain.is_active(run_id):
-                break
-    return _report(run_id, RunState(run_id), result)
-
-
 def _report(run_id: str, state: RunState, result: BuildResult) -> int:
     mins, secs = divmod(int(result.elapsed), 60)
     print(f"\nok={result.ok}  steps={result.steps}  elapsed={mins}m{secs:02d}s")
@@ -285,7 +259,6 @@ _HELP = """maestro — write a prompt, build a game, render its art.
 
 usage:
   python -m maestro.codegen.run "<request>"   design the request → the design IS the prompt → build → play
-  python -m maestro.codegen.run --staged "<request>"      design, plan stages, then build them in sequence
   python -m maestro.codegen.run --new "<request>"         design and stop (edit the prompt first)
   python -m maestro.codegen.run --build <run_id>          build the prompt on disk
   python -m maestro.codegen.run --fix <run_id> "<note>"   apply a human-note fix to a built run
@@ -303,10 +276,6 @@ if __name__ == "__main__":
     if len(sys.argv) >= 2 and sys.argv[1] in ("--help", "-h"):
         print(_HELP)
         sys.exit(0)
-    if len(sys.argv) >= 2 and sys.argv[1] == "--staged":
-        if len(sys.argv) < 3:
-            sys.exit('usage: python -m maestro.codegen.run --staged "<request>"')
-        sys.exit(_cli_staged(" ".join(sys.argv[2:])))
     if len(sys.argv) >= 2 and sys.argv[1] == "--new":
         if len(sys.argv) < 3:
             sys.exit('usage: python -m maestro.codegen.run --new "<request>"')

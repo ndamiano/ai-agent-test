@@ -91,7 +91,6 @@ A GPU serves one backend. Running the LLM and ComfyUI on one card means both mus
 
 ```bash
 cd src && python -m maestro.codegen.run "<request>"            # the request is the prompt → build
-cd src && python -m maestro.codegen.run --staged "<request>"   # plan stages first, then build them in order
 ```
 
 Play a build by opening `runtime/games/<run_id>/index.html`. Serve a 3D one over http rather than `file://` — `<script type="module">` is CORS-blocked from a file origin.
@@ -120,7 +119,7 @@ src/
   maestro/
     codegen/    the build path — build_chain (driver), build_steps (turn machine),
                 build_state (cursor), tools, staging, assets, asset_chain, asset_store,
-                asset_use, scene_chain, stages, error_gate, artifact_screen, snapshots,
+                asset_use, scene_chain, error_gate, artifact_screen, snapshots,
                 archive, turn_log, prompts/, run (CLI)
     worldgen/   the 3D world behind compose_world: planning, terrain, objects, backends
     services.py, state.py, tool_calls.py

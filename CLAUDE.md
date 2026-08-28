@@ -35,8 +35,8 @@ step, no engine of ours between it and the screen. Two stages:
    same act. The designer does not break this because the design is what the box shows and the
    design is what builds; nothing sits between the box and the build's input. A designer that fails
    or answers empty leaves the words themselves in the box. Pressing **Build** stores the edit and
-   starts the build, so there is one action and one writer. Staged construction holds this stage by
-   stage — the boxes' contents ARE what builds.
+   starts the build, so there is one action and one writer. The page renders the design as headed
+   sections read from its shape, over the same string the edit box holds — a view, never a copy.
 2. **Build:** a non-LLM **driver** (`maestro/codegen/build_chain.py`) hands the model eight tools —
    `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `compose_scene`,
    `compose_world`, `done` —
@@ -87,8 +87,9 @@ Measured 2026-07-30 after a 25-game day shipped five load-dead games the
 pipeline never saw — nine of nine broken cells went to zero unattended, and the rules that made it
 converge are all load-bearing.
 
-The gate loads and pokes past a title screen, nothing more. Teaching it to play would be a "must DO
-X" gate in disguise. Everything past that is a HUMAN judgement: a game that runs but plays wrong is
+The gate loads the game, shows the model one screenshot, and presses what the model says the title
+screen offers — nothing more. Teaching it to play would be a "must DO X" gate in disguise.
+Everything past that is a HUMAN judgement: a game that runs but plays wrong is
 obvious to a person and near-impossible for code, so the gap stays VISIBLE rather than filled with a
 proxy.
 
@@ -149,12 +150,12 @@ nothing. Two weaknesses stand open: the model's numbers carry no units, and it s
 words on the system that needs the most (the hand design gave the track a third of its words and
 its track was better).
 
-### Staged construction: the hardest system gets a whole build to itself
+### A system starves when it is one clause among many — the design stage is what feeds it
 
-Measured 2026-08-02/03: a duel built alone earned a dedicated AI module; the same duel inside the
-full request earned zero opponent code. Stage 1 is a complete playable game of the core system; each
-later stage ADDS one system and names what must keep working. A stage is only stacked onto a game
-that loads clean.
+Measured 2026-08-02/03, as staged construction: a duel built alone earned a dedicated AI module; the
+same duel inside the full request earned zero opponent code. Staging fixed that by giving the
+hardest system a whole build; the systems design fixes it in one build, by giving every system its
+own paragraph, and superseded staging.
 
 ---
 

@@ -9,6 +9,7 @@ import api.app
 from auth import playgrants
 from auth import store as auth_store
 from maestro.codegen.run import create_run, set_prompt
+from maestro.state import RunState
 
 
 @pytest.fixture(autouse=True)
@@ -79,13 +80,10 @@ def test_demo_list_is_public_and_carries_the_prompt(client, staged_game, demo_li
     assert rows[0]["prompt"] == "a demo game"
 
 
-def test_a_staged_demo_shows_the_persons_words_not_stage_one(client, staged_game, demo_listed):
-    from maestro.codegen import stages as stages_mod
-    from maestro.state import RunState
-
+def test_a_demo_shows_the_persons_words_not_the_design(client, staged_game, demo_listed):
     run_id = _game(staged_game)
-    stages_mod.save(RunState(run_id).run_dir, "make me a fox game",
-                    ["Build a complete browser game where…", "Add a hunger system…"])
+    RunState(run_id).write_spec({"ask": "make me a fox game", "title": "Fox",
+                                 "request": "Build this fox game. It is made of these systems…"})
     demo_listed["oneshot"].append({"id": run_id})
 
     assert client.get("/api/demos").json()[0]["prompt"] == "make me a fox game"

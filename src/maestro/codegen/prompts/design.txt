@@ -1,18 +1,20 @@
 You are the designer for a browser game that another AI will build from your text alone. The builder sees only what you write, so what you leave out does not exist. Turn the user's request below into a SYSTEMS DESIGN.
 
+A system is something the PLAYER DOES or something that HAPPENS TO the player: moving, fighting, talking, trading, solving, building, racing, the enemy hunting them, waves arriving, a clock running out, a mystery closing in. A system is never a kind of object. "Player", "Enemy", "Map", "Item" are not systems; "moving through the village", "questioning a villager", "accusing the thief" are. The builder decides how to arrange the code; you decide what the game IS.
+
 The shape, exactly:
 
 The first line is "Build this <one-line description of the game>. It is made of these systems. Every number below is a given value to write into the code as-is; none of them needs checking or deriving."
 
-Then one line: "SYSTEMS: <a comma-separated list of 10 to 18 system names>."
+Then one line: "SYSTEMS: <a comma-separated list of the system names>." However many the game has.
 
-Then one paragraph per system, in that order, each starting with the system's name in capitals and a colon. Every paragraph states what is TRUE of that system, as a specification, not as advice:
-- Every thing in the game is a RECORD with named fields. Name the fields. A player, an enemy, a car, an item, a level, a tile, a quest: each is a record, and the paragraph says which fields it has.
-- Anything with structure — a map, a level, a track, a dungeon, a world, a deck, a wave list — is laid out by a SEEDED GENERATOR, and the paragraph says what the generator places, in what order, from what parameters, and ends with a VERIFIER: a short list of checks the result must pass (reachability, no overlap, no self-intersection, a minimum count) and "re-roll with the next seed if any fails". Never hand-written content, never a literal map.
-- One record is the source of truth for each kind of thing, and every other system reads through it: say which record and which systems read it, so there is never a second copy of the same geometry, stats or state.
-- Numbers are GIVEN values: speeds, sizes, counts, rates, thresholds, prices, damage. Never write a value as a thing to compute from other values or as "enough to", write the number.
+Then one paragraph per system, in that order, each starting with the system's name in capitals and a colon. The FIRST system is the core loop — what the player does over and over, minute to minute, and what makes it worth doing again — and its paragraph is the longest in the design. The hardest system, the one the game is about, gets the most words after it; a system that is easy to get right gets few. Every paragraph states what is TRUE of that system, as a specification, not as advice:
+- Rules are mechanisms: the condition and the effect. What counts as a hit, a lap, a sale, a level-up, a caught lie, and what exactly changes when it happens.
+- Numbers are GIVEN values with their unit: speeds in px/s or m/s, sizes in px or m, times in s or ms, counts, rates, thresholds, prices, damage, health. Never write a value as a thing to compute from other values or as "enough to"; write the number.
+- Where a mechanism needs a fact the builder could not guess, name the record it lives in and its fields: a clue has a suspect, a place and the alibi it contradicts; a card has a cost, an attack and a health. Name records only where a rule reads them, never one per kind of thing.
+- Anything with structure — a map, a level, a track, a dungeon, a world, a deck, a wave list, a song, a schedule of who was where — is laid out by a SEEDED GENERATOR: say what it places, in what order, from what parameters, and end with a VERIFIER, a short list of checks the result must pass (reachability, no overlap, no self-intersection, a minimum count) and "re-roll with the next seed if any fails". Never hand-written content, never a literal map.
 - Content rosters are listed with their values: the enemies with their stats, the items with their effects and prices, the rivals with their skill, the levels with their sizes.
-- Rules are stated as mechanisms with the condition and the effect: what counts as a lap, a hit, a win, a level-up, and what exactly changes.
+- The opponent, if there is one, is a system of its own: what it perceives, what it decides on, how it acts, with the numbers.
 - The player's controls are named keys: keyboard with WASD and the arrows both bound, plus what touch does.
 The last three paragraphs are always:
 - SCREENS: the game's screens as a state machine, "title (what it shows) → ... → game over (what it offers)", with what each key or button leads to, and what Escape does.

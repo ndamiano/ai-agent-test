@@ -1297,3 +1297,57 @@ what the design says, and the CONTROL plays better — the design's systems were
 steps is not the number. The line's one win is the overflow case (voxel, n=1); on a design that
 fits the cap it may cost depth, which is the trade the owner said not to make. Verdict on the line
 waits on a second overflowing design; if a fitting design again plays worse with it, it goes.
+
+---
+
+## 2026-08-29 — Systems are verbs (local 5090, qwen3.8_27b via ninfer, thinking on, 131K window)
+
+### The question
+The 2026-08-28 transplant grid split its cells two ways, and in the cells where the DESIGN was the
+ceiling (npcs, rhythm) the designs read the same: `CASE FILE, VILLAGE, VILLAGER, SCHEDULE,
+DIALOGUE, CLUE, SUSPICION, THIEF, ACCUSATION, PROGRESSION, PLAYER` — every noun in the game a
+system, each paragraph a field list, and the thing the player actually does (question, catch a
+lie, accuse) owned by no paragraph. The prompt asked for it: "one paragraph per system" beside
+"every thing in the game is a RECORD with named fields" and a 10–18 count. The designer resolved
+that by making the records the systems. The owner's read: two kinds of thing are mixed — game
+systems (journal, accusation) and code systems (player, NPC, dialogue) — and the code ones are the
+builder's job.
+
+### The change
+`design.txt` rewritten around one law: a system is what the player DOES or what happens to them,
+never a kind of object. No count. The first system is the core loop and its paragraph is the
+longest; the hardest system gets the most words after it. Numbers carry units. Records are named
+only where a rule reads their fields. The opponent is a system of its own. Generators + verifiers,
+rosters, screens/audio/art kept as they were. Old prompt kept in the lab as
+`design_prompt_nouns.txt`.
+
+### The arm
+The two design-ceiling cells, one-line asks, designed and built by the 27B; control = the `short`
+builds of 2026-08-28 (same asks, noun designer, already played).
+
+| cell | design | build | gate |
+|---|---|---|---|
+| npcs `a8a5f99a5c95` | 2,747 w, 278 s; systems: TALKING AND CROSS-EXAMINING VILLAGERS (698 w), MOVING THROUGH THE VILLAGE, SEARCHING FOR EVIDENCE, THE VILLAGE CLOCK, THE THIEF'S COVER-UP, ACCUSING THE THIEF, CASE PROGRESSION | 60 turns, 1 compaction, 32 art landed, 12 js files / 71 KB | `Cannot read properties of null (reading 'seed')` — one fix round, 11 turns, clean |
+| rhythm `1929bf18eb4e` | 2,668 w, 330 s; PLAYING A SONG (473 w), NOTE TIMING AND JUDGMENT (484 w), SONG SELECT AND UNLOCKS, GENERATED MUSIC, NOTE CHART GENERATOR, RESULTS AND PROGRESSION | 17 turns, 11 min, 5 art | clean on the first probe |
+
+The npcs loop paragraph is mechanics end to end: six dialogue options with time costs (5 s / 8 s /
+10 s), "Show a clue" gated on a clue found, a contradiction = a held clue whose
+`contradictedAlibiPlace` matches the stated alibi → suspicion +30, villagers of reliability 1/2/3
+leaking different truths, the thief lying below suspicion 30. One villager record, named once, with
+the fields those rules read. The control's ACCUSATION paragraph was 130 words of field names.
+
+### Verdict
+Owner played both against their controls: "the system ones are way better". Shipped.
+
+### What the gate caught
+The npcs design wrote a verifier its own numbers cannot pass: unique alibi times across 7–9
+villagers from a roster of 3 times, so every seed re-rolled and the case generator returned null.
+The fix round deleted the check. Same class as the control's "Village generation failed for seed
+101" — the designer's counts are not checked against each other, and a verifier the given values
+cannot satisfy is a crash the gate sees, not a design the builder can save. Open.
+
+### Also shipped
+`run --fix` renamed `run --change` (`/api/games/{id}/change`, status `changing`, cursor kind
+`change`). A person who played a game that works asks for a change; a fix is what the error gate
+sends. The request text now says "asked for this change… keeping everything else playing as it
+does" instead of "reported this… fix exactly that". Not measured — a name, not a mechanism.

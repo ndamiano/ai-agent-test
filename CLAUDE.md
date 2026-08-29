@@ -146,9 +146,17 @@ a state machine. Measured 2026-08-26 on one request: the plain request through t
 unlock ladder, weather, fuel, damage and a podium — "a million times better". Numbers are given
 because a clause the model must DERIVE ("no bend tighter than the car can drive") costs ~150K
 characters of physics per turn; the same clause as a value ("no radius under 140 px") costs
-nothing. Two weaknesses stand open: the model's numbers carry no units, and it spends the fewest
-words on the system that needs the most (the hand design gave the track a third of its words and
-its track was better).
+nothing.
+
+A system is something the player DOES or something that happens to them — questioning a villager,
+accusing the thief, a wave arriving — never a kind of object. Asked for "one paragraph per system"
+and "every thing is a record", the designer made every noun a system (Map, Player, NPC, Clue,
+Journal) and the loop the player lives in owned no paragraph; the words went to field lists.
+Measured 2026-08-29 on the two cells where the design was the ceiling (npcs, rhythm): the same
+request through a designer whose systems are verbs, the core loop first and longest, made games
+the owner called "way better" than the noun designs, on the same builder. The designer sets no
+count of systems; the count falls out of the game. Records are named only where a rule reads
+their fields — the decomposition into code is the builder's, and it is better at it.
 
 ### A system starves when it is one clause among many — the design stage is what feeds it
 

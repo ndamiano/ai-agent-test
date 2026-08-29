@@ -48,7 +48,7 @@ The nightly sweep behind the finalize-time uploads:
 ```
 
 `--evict <run_id>` reclaims the local disk (refusing without a verified remote copy);
-`--rehydrate <run_id>` pulls a run back and re-stages it, and play/build/fix do the same on touch.
+`--rehydrate <run_id>` pulls a run back and re-stages it, and play/build/change do the same on touch.
 
 ---
 
@@ -101,7 +101,7 @@ the app first serves traffic with them.
    "
    ```
 
-   (Games can also be left to rehydrate lazily — play/build/fix pull them on touch — but the
+   (Games can also be left to rehydrate lazily — play/build/change pull them on touch — but the
    drill restores eagerly so the verification below means something.) A game with no archive in
    the bucket reports not-built after restore — its rows survive, its files do not. `runs/` in
    the bucket only holds what archived: keep the nightly `--archive-all` sweep honest, because

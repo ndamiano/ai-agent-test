@@ -14,7 +14,7 @@ byte for byte, so the text a human approves is the text the model reads. The ask
 designer read; the prompt is what the human approves.
 
 The build itself is a chain of llm jobs driven by build_chain's completion handler, so
-`run_build`/`fix_from_note` only START it and wait — the API server (where worker completions
+`run_build`/`change_from_note` only START it and wait — the API server (where worker completions
 land) must be up, same as every other queue stage.
 """
 
@@ -106,10 +106,10 @@ def run_build(run_id: str, max_steps: int = build_state.DEFAULT_MAX_STEPS) -> Bu
     return _await_build(run_id)
 
 
-def fix_from_note(run_id: str, note: str, max_steps: int = 40) -> BuildResult:
-    """Patch a built game from a HUMAN playtest note. The note becomes the build's request and the
-    same turn machine reads its way in and changes what's wrong."""
-    build_chain.kickoff(run_id, kind="fix", note=note, max_steps=max_steps)
+def change_from_note(run_id: str, note: str, max_steps: int = 40) -> BuildResult:
+    """Change a built game from a HUMAN playtest note ("let's change X"). The note becomes the
+    build's request and the same turn machine reads its way in and makes the change."""
+    build_chain.kickoff(run_id, kind="change", note=note, max_steps=max_steps)
     return _await_build(run_id)
 
 
@@ -186,10 +186,10 @@ def _report(run_id: str, state: RunState, result: BuildResult) -> int:
     return 0 if result.ok else 1
 
 
-def _cli_fix(run_id: str, note: str) -> int:
+def _cli_change(run_id: str, note: str) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
-    print(f"fixing {run_id} from note: {note!r}\n")
-    return _report(run_id, RunState(run_id), fix_from_note(run_id, note))
+    print(f"changing {run_id} from note: {note!r}\n")
+    return _report(run_id, RunState(run_id), change_from_note(run_id, note))
 
 
 def _await_batch(batch_id: str, run_id: str) -> list:
@@ -261,7 +261,7 @@ usage:
   python -m maestro.codegen.run "<request>"   design the request → the design IS the prompt → build → play
   python -m maestro.codegen.run --new "<request>"         design and stop (edit the prompt first)
   python -m maestro.codegen.run --build <run_id>          build the prompt on disk
-  python -m maestro.codegen.run --fix <run_id> "<note>"   apply a human-note fix to a built run
+  python -m maestro.codegen.run --change <run_id> "<note>"   change a built run from a play note
   python -m maestro.codegen.run --assets <run_id>         render the art the game declared
   python -m maestro.codegen.run --evict <run_id>          archive to the bucket, reclaim the disk
   python -m maestro.codegen.run --rehydrate <run_id>      pull an evicted run back and re-stage
@@ -284,10 +284,10 @@ if __name__ == "__main__":
         if len(sys.argv) < 3:
             sys.exit("usage: python -m maestro.codegen.run --build <run_id>")
         sys.exit(_cli_build(sys.argv[2]))
-    if len(sys.argv) >= 2 and sys.argv[1] == "--fix":
+    if len(sys.argv) >= 2 and sys.argv[1] == "--change":
         if len(sys.argv) < 4:
-            sys.exit('usage: python -m maestro.codegen.run --fix <run_id> "<what is wrong>"')
-        sys.exit(_cli_fix(sys.argv[2], " ".join(sys.argv[3:])))
+            sys.exit('usage: python -m maestro.codegen.run --change <run_id> "<what to change>"')
+        sys.exit(_cli_change(sys.argv[2], " ".join(sys.argv[3:])))
     if len(sys.argv) >= 2 and sys.argv[1] == "--assets":
         if len(sys.argv) < 3:
             sys.exit('usage: python -m maestro.codegen.run --assets <run_id>')
@@ -297,7 +297,7 @@ if __name__ == "__main__":
             sys.exit("usage: python -m maestro.codegen.run --evict <run_id>")
         from maestro.codegen import archive as _archive
         _archive.evict(sys.argv[2])
-        print(f"evicted {sys.argv[2]} — rehydrates on play/fix, or --rehydrate")
+        print(f"evicted {sys.argv[2]} — rehydrates on play/change, or --rehydrate")
         sys.exit(0)
     if len(sys.argv) >= 2 and sys.argv[1] == "--rehydrate":
         if len(sys.argv) < 3:
@@ -318,5 +318,5 @@ if __name__ == "__main__":
             sys.exit("usage: python -m maestro.codegen.run --restore <run_id> <ref>")
         sys.exit(_cli_restore(sys.argv[2], sys.argv[3]))
     if len(sys.argv) < 2:
-        sys.exit('usage: python -m maestro.codegen.run "<request>"   |   --fix <run_id> "<note>"')
+        sys.exit('usage: python -m maestro.codegen.run "<request>"   |   --change <run_id> "<note>"')
     sys.exit(_cli(" ".join(sys.argv[1:])))

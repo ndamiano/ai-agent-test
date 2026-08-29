@@ -182,7 +182,7 @@ def test_build_with_no_credits_is_402_and_uncharged(client, monkeypatch):
 
 
 def test_a_game_out_of_compute_is_402_on_every_gpu_endpoint(client, monkeypatch):
-    """Credits buy a grant ONCE; the grant is what each later build/fix/skin spends. A game that
+    """Credits buy a grant ONCE; the grant is what each later build/change/skin spends. A game that
     has burned it must be refused before it takes the GPU slot, not after."""
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
@@ -191,7 +191,7 @@ def test_a_game_out_of_compute_is_402_on_every_gpu_endpoint(client, monkeypatch)
     assert client.post(f"/api/games/{run_id}/build", headers=headers).status_code == 200
     _burn(run_id, SECONDS_PER_CREDIT)
 
-    for path, body in (("build", None), ("fix", {"note": "a"}), ("assets", None), ("resume", None)):
+    for path, body in (("build", None), ("change", {"note": "a"}), ("assets", None), ("resume", None)):
         r = client.post(f"/api/games/{run_id}/{path}", headers=headers, json=body)
         assert r.status_code == 402, path
         assert r.json()["detail"]["reason"] == "compute_exhausted"

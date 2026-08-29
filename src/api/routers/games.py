@@ -3,7 +3,7 @@
 A "game" is a games row in the platform db plus its run dir under
 <working_directory>/runs/<run_id>/. The list reads the db only; the detail view reads the prompt
 from disk (source of truth) and derives live status from the durable build cursor.
-Build (which also stores the prompt it was given), pause/resume/stop, fix-from-note, and asset
+Build (which also stores the prompt it was given), pause/resume/stop, change-from-note, and asset
 skinning all live here.
 """
 
@@ -47,7 +47,7 @@ class BuildBody(BaseModel):
     fresh: bool = False
 
 
-class FixBody(BaseModel):
+class ChangeBody(BaseModel):
     note: str = ""
 
 
@@ -89,7 +89,7 @@ def _require_compute(run_id: str) -> None:
 
 
 def _require_not_held(run_id: str) -> None:
-    """A held game is frozen — no play, no build, no fix — until a human has looked at it. The
+    """A held game is frozen — no play, no build, no change — until a human has looked at it. The
     message is deliberately neutral: what the screen matched is for the admin panel, not the
     person probing it."""
     if (db_store.game(run_id) or {}).get("status") == "held":
@@ -160,7 +160,7 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
     built = _built(run_id)
     active = build_chain.status_of(run_id)
     if active:
-        live = "fixing" if active["kind"] == "fix" else "building"
+        live = {"fix": "fixing", "change": "changing"}.get(active["kind"], "building")
         status = "paused" if active["paused"] else live
     elif row.get("status") == "held":
         # A held game may still have an older staged copy on disk; held wins so nothing offers it.
@@ -316,7 +316,7 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
     _require_not_held(run_id)
     if build_chain.is_active(run_id):
         raise HTTPException(status_code=409, detail="build already in progress")
-    # A build or fix on an evicted run must open on its real files, not an empty seed.
+    # A build or change on an evicted run must open on its real files, not an empty seed.
     await asyncio.to_thread(archive.ensure_local, run_id)
     if body.prompt is not None:
         violation = screen_text(body.prompt)
@@ -380,23 +380,23 @@ async def resume_game(run_id: str, user: User = Depends(get_current_user)):
     return {"status": "building", "run_id": run_id}
 
 
-@router.post("/{run_id}/fix", response_model=Dict)
-async def fix_game(run_id: str, body: FixBody, user: User = Depends(get_current_user)):
-    """Patch a built game from a free-text note ('the player falls through the floor'). It re-enters
-    the same turn machine a build runs, so the two can't run at once. Progress + completion stream
+@router.post("/{run_id}/change", response_model=Dict)
+async def change_game(run_id: str, body: ChangeBody, user: User = Depends(get_current_user)):
+    """Change a built game from a free-text note ('make the enemies faster'). It re-enters the
+    same turn machine a build runs, so the two can't run at once. Progress + completion stream
     over the websocket as a build's own events (build_started, build_step, build_done)."""
     _require_state(run_id, user)
     _require_not_held(run_id)
     violation = screen_text(body.note)
     if violation is not None:
-        log_violation(violation, user_id=user.id, source="fix_note", run_id=run_id)
+        log_violation(violation, user_id=user.id, source="change_note", run_id=run_id)
         raise HTTPException(status_code=400, detail="this note can't be applied")
     _require_compute(run_id)
     if build_chain.is_active(run_id):
-        raise HTTPException(status_code=409, detail="a build or fix is already running for this run")
+        raise HTTPException(status_code=409, detail="a build or change is already running for this run")
     await asyncio.to_thread(archive.ensure_local, run_id)
-    await asyncio.to_thread(build_chain.kickoff, run_id, kind="fix", note=body.note)
-    return {"status": "fixing", "run_id": run_id}
+    await asyncio.to_thread(build_chain.kickoff, run_id, kind="change", note=body.note)
+    return {"status": "changing", "run_id": run_id}
 
 
 @router.post("/{run_id}/assets", response_model=Dict)

@@ -130,8 +130,9 @@ def status_of(run_id: str) -> Optional[Dict]:
 def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = "",
                 fresh: bool = False, max_steps: int = DEFAULT_MAX_STEPS) -> None:
     """Kick a build off: write the initial cursor and advance once (which enqueues the first llm
-    turn, then returns). A FIX re-enters the same turn machine with the note as its request — the
-    model lists and reads the files itself, so there is nothing to hand it up front."""
+    turn, then returns). A FIX (the error gate's note) and a CHANGE (a person's note after playing)
+    both re-enter the same turn machine with the note as its request — the model lists and reads
+    the files itself, so there is nothing to hand it up front."""
     rs = RunState(run_id)
     if rs.read_spec() is None:
         raise ValueError(f"no prompt for run {run_id!r}")
@@ -145,6 +146,12 @@ def start_build(run_id: str, build_id: str, *, kind: str = "build", note: str = 
         cursor.request = ("The game is already written and playable. A person played it and "
                           f"reported this:\n{note}\n\nRead the files and fix exactly that. Call "
                           "done when it is fixed.")
+    elif kind == "change":
+        snapshots.take(rs.run_dir, "before-change")
+        cursor.request = ("The game is already written and playable. A person played it and asked "
+                          f"for this change:\n{note}\n\nRead the files and make exactly that "
+                          "change, keeping everything else playing as it does. Call done when it "
+                          "is made.")
     build_state.save(rs.run_dir, cursor)
     db_store.set_status(run_id, "building")
     _emit("build_started", run_id, build_id=build_id, max_steps=max_steps, started_at=cursor.t0)

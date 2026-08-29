@@ -100,7 +100,7 @@ src/
                          into the game folder, and the stages' working material is hundreds of
                          megabytes nothing reads back. `evict` reclaims local disk and REFUSES without a verified remote
                          copy or under an active build; `rehydrate` pulls it back and re-stages;
-                         `ensure_local` hooks play-session/build/fix so an evicted game is a
+                         `ensure_local` hooks play-session/build/change so an evicted game is a
                          download away. A boundary like snapshots: an unconfigured bucket logs and
                          stands aside.
       snapshots.py       the game folder's HISTORY, in git: `runs/<id>/game.git` is the repo and
@@ -276,7 +276,7 @@ src/
                          recorded as a violation — a refused mesh source never reaches TRELLIS.
       artifact_screen.py the artifact TEXT gate — the game folder's authored text through the same
                          narrow screen as every input seam, at finalize before staging. A hit
-                         HOLDS the build: status `held`, not staged, not archived, play/build/fix
+                         HOLDS the build: status `held`, not staged, not archived, play/build/change
                          refused, a neutral message to the owner, a row in the violations table
                          for the admin panel. The image side of the same policy is asset_chain's
                          `_admit` above.
@@ -286,7 +286,7 @@ src/
                          uncaught error becomes).
       run.py             create_run / propose_prompt (the designer, synchronously) / set_prompt /
                          run_build (CLI: kickoff +
-                         block-poll the cursor) / fix_from_note + the CLI. The web build/fix path is
+                         block-poll the cursor) / change_from_note + the CLI. The web build/change path is
                          fire-and-forget through build_chain.kickoff, not run.py.
     services.py          parse_args — any argument shape a local model returns → a dict.
                          parse_args_checked also says whether anything was READABLE: a call cut off

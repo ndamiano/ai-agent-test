@@ -24,14 +24,14 @@ DEFAULT_MAX_STEPS = 200
 @dataclass
 class BuildCursor:
     build_id: str
-    kind: str = "build"                           # "build" | "fix"
+    kind: str = "build"                           # "build" | "fix" | "change"
     phase: str = "build"                          # "build" | "done"
     step: int = 0
     max_steps: int = DEFAULT_MAX_STEPS
     paused: bool = False
     t0: float = 0.0
     ok: Optional[bool] = None
-    request: str = ""                             # overrides the spec-rendered request (a fix note)
+    request: str = ""                             # overrides the spec-rendered request (a gate fix or a change note)
     started: bool = False
     turn: int = 0
     # what the SERVER reported for the last turn — an estimate of ours that drifts low would hit the

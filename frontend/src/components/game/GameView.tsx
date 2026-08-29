@@ -18,6 +18,7 @@ import { budgetFraction, shouldAdoptPrompt, stageFor } from './state'
 const STATUS_PILL: Record<string, { label: string; tone: 'live' | 'wait' | 'idle' }> = {
     running: { label: 'summoning', tone: 'wait' },
     fixing: { label: 'mending', tone: 'wait' },
+    changing: { label: 'changing', tone: 'wait' },
     paused: { label: 'paused', tone: 'idle' },
     built: { label: 'built', tone: 'live' },
     held: { label: 'unavailable', tone: 'idle' },
@@ -148,10 +149,10 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
     const sendFix = (note: string, source = 'note') => {
         closePlay()
         act(async () => {
-            await api.fixGame(runId, note)
-            track('fix_sent', { run_id: runId, source, length: note.length })
-            setBuilding(true); setStatus('fixing')
-        }, 'Fix failed', false)
+            await api.changeGame(runId, note)
+            track('change_sent', { run_id: runId, source, length: note.length })
+            setBuilding(true); setStatus('changing')
+        }, 'Change failed', false)
     }
     const submitFix = () => {
         const note = fixNote.trim()
@@ -196,7 +197,7 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
                     </div>
 
                     <div className="flex gap-2 flex-wrap items-center">
-                        {building && (status === 'running' || status === 'fixing') && (
+                        {building && (status === 'running' || status === 'fixing' || status === 'changing') && (
                             <Button onClick={pause} disabled={acting}>Pause</Button>
                         )}
                         {building && status === 'paused' && (

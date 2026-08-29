@@ -25,7 +25,7 @@ Press **Make a new game**, describe the game you want, and press **Build**. What
 
 A non-LLM **driver** then hands the model eight tools — `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `compose_scene`, `compose_world`, `done` — plus a running transcript, and lets it write the game. The model decides the file layout, the systems, and what art gets drawn; it calls `done` when the game is playable. Output is **plain browser HTML/CSS/JavaScript**, served as written. Every game folder is seeded with the vendored three.js, GLTFLoader, BufferGeometryUtils and `world.js` (the loader for a `compose_world` world), plus `lib/` — a helper library for input, audio, a scaling canvas and lights, each file's header comment its API.
 
-A build reaches `built` when `index.html` exists and the error gate — the staged game opened headless — finds no uncaught exception. A gate may only detect BROKEN, never "bad", so whether a game is any *good* stays a human judgement. Play it, then say what to change: `python -m maestro.codegen.run --fix <run_id> "<note>"`.
+A build reaches `built` when `index.html` exists and the error gate — the staged game opened headless — finds no uncaught exception. A gate may only detect BROKEN, never "bad", so whether a game is any *good* stays a human judgement. Play it, then say what to change: `python -m maestro.codegen.run --change <run_id> "<note>"`.
 
 The game asks for its own art as it writes the code that uses it: `generate_media(id, prompt, kind)` enqueues one render and answers immediately with the path the file will appear at, so the GPU draws while the model keeps writing.
 

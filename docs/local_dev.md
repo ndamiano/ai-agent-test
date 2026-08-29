@@ -138,7 +138,7 @@ cd src && python -m maestro.codegen.run "<request>"     # prompt → build
 
 - `--new "<request>"` stops with the prompt on disk so it can be edited first
 - `--build <run_id>` builds that stored prompt
-- `--fix <run_id> "<note>"` applies a playtest note
+- `--change <run_id> "<note>"` changes a built game from a play note
 - `--assets <run_id>` re-renders the art the game asked for and never got
 - `--history <run_id>` lists a run's snapshots; `--restore <run_id> <ref>` puts the game back to one
 - `--evict <run_id>` / `--rehydrate <run_id>` move a run dir to and from S3

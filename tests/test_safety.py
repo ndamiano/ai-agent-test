@@ -132,11 +132,11 @@ def owned_game(client, tmp_runs, monkeypatch):
 def test_a_blocked_fix_note_is_refused_and_recorded(client, owned_game):
     from db import store as db_store
     run_id, headers = owned_game
-    r = client.post(f"/api/games/{run_id}/fix", headers=headers,
+    r = client.post(f"/api/games/{run_id}/change", headers=headers,
                     json={"note": "add a nude schoolgirl"})
     assert r.status_code == 400
     rows = db_store.list_violations()
-    assert rows and rows[0]["source"] == "fix_note" and rows[0]["game_id"] == run_id
+    assert rows and rows[0]["source"] == "change_note" and rows[0]["game_id"] == run_id
 
 
 def test_a_held_game_is_frozen(client, owned_game):
@@ -144,7 +144,7 @@ def test_a_held_game_is_frozen(client, owned_game):
     from db import store as db_store
     run_id, headers = owned_game
     db_store.set_status(run_id, "held")
-    for path, body in [("play-session", {}), ("build", {}), ("fix", {"note": "make it fun"})]:
+    for path, body in [("play-session", {}), ("build", {}), ("change", {"note": "make it fun"})]:
         r = client.post(f"/api/games/{run_id}/{path}", headers=headers, json=body)
         assert r.status_code == 423, path
     detail = client.get(f"/api/games/{run_id}", headers=headers).json()

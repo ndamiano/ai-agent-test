@@ -348,7 +348,7 @@ def _opening_line(cursor) -> str:
     """The opening turn's feed line carries the text that was sent — the whole build follows from
     it, and the feed is where a person checks that what they typed is what went."""
     sent = _clip(cursor.history[0]["content"] if cursor.history else "", 300)
-    label = "sent the fix note" if cursor.kind == "fix" else "sent the prompt"
+    label = {"fix": "sent the fix note", "change": "sent the change note"}.get(cursor.kind, "sent the prompt")
     return f"{label}: {sent}" if sent else label
 
 

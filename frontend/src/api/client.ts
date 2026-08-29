@@ -190,8 +190,8 @@ export const api = {
         request<{ status: string }>(`/api/games/${runId}/resume`, { method: 'POST' }),
     stopGame: (runId: string) =>
         request<{ status: string }>(`/api/games/${runId}/stop`, { method: 'POST' }),
-    fixGame: (runId: string, note: string) =>
-        request<{ status: string; run_id: string }>(`/api/games/${runId}/fix`, { method: 'POST', body: JSON.stringify({ note }) }),
+    changeGame: (runId: string, note: string) =>
+        request<{ status: string; run_id: string }>(`/api/games/${runId}/change`, { method: 'POST', body: JSON.stringify({ note }) }),
     renderAssets: (runId: string) =>
         request<{ status: string; run_id: string }>(`/api/games/${runId}/assets`, { method: 'POST' }),
     // The batch's assets_done fires on completion, which is what refetches the gallery.

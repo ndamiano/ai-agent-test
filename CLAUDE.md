@@ -113,7 +113,7 @@ be the second telling that starts the inventing.
 ### "Did it deliver?" is a HUMAN question
 
 A build ends when the model calls `done` twice (or hits its step cap) and nothing machine-side judges
-the result. The human plays it and says what to change — `run --fix <run_id> "<note>"` re-enters the
+the result. The human plays it and says what to change — `run --change <run_id> "<note>"` re-enters the
 same turn machine with the note as its request, and the model lists and reads the files itself, so
 there is nothing to hand it up front.
 

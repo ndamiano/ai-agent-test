@@ -16,7 +16,7 @@ the ones we reject, because "why we didn't switch" is the expensive thing to rel
 | Sprites + scenes | NetaYume Lumina v4 | ComfyUI | `workflows/txt2img_item.json` |
 | Tiles | DreamShaperXL Turbo v2.1 → min-cut quilting | ComfyUI + `tools/quilting.py` | `workflows/txt2img_tile.json` |
 | Scene-chain subjects | Qwen-Image 2512 | ComfyUI | `workflows/txt2img_subject.json` |
-| Scene-chain terrain | DreamShaperXL Turbo v2.1 (masked img2img) | ComfyUI | `workflows/img2img_terrain.json` |
+| Scene-chain terrain | DreamShaperXL Turbo v2.1 (masked img2img) | ComfyUI | graph built in `scenegen/paint.py` |
 | Scene-chain embed | Qwen-Image-Edit 2511 | ComfyUI | `workflows/imgedit_scene.json` |
 | 3D meshes | TRELLIS 2 | home-rolled runtime, `tools/trellis_server.py` | — |
 | Render safety scoring | small timm ViT, locally exported | in the image worker | `scripts/export_safety_model.py` |

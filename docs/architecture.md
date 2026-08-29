@@ -58,9 +58,12 @@ job row's `game_id`; a job without one is neither metered nor gated.
 
 ## Request paths
 
-**Create a game.** `POST /api/games` takes the typed prompt, creates the run, charges credits, and
-kicks off the build in one call. There is no conversational surface — every `llm` job on the queue
-belongs to a game that is paying for it.
+**Create a game.** `POST /api/games` takes the typed prompt, creates the run, charges it twice —
+the credit ledger (`auth`) and the compute-seconds grant (`db_store.charge_game`) the queue meters
+against — and enqueues the DESIGN. The build starts at `POST /api/games/{id}/build`, once the human
+has read the design. There is no conversational surface — every `llm` job on the queue belongs to a
+game that is paying for it. Metering rides `tools/execution_context.run_scope`: every enqueue inside
+it debits the named game.
 
 **Build as a chain of jobs.** A build is not a resident loop. `build_chain.advance()` runs all local
 work synchronously (tool dispatch, staging, cursor writes) and suspends at the one point that needs
@@ -68,8 +71,8 @@ a GPU: it enqueues a single `llm` job tagged `metadata.stage="build"` and return
 then free to die. `/worker/complete` routes on `metadata.stage` back into `build_chain`, which
 reloads the durable cursor, applies the result, and advances again.
 
-Crash recovery falls out of this: a build with no job in flight and no terminal phase is re-advanced
-by the reaper. Job metadata carries only `{stage, run_id, build_id}` — the cursor file is the single
+Crash recovery falls out of this: a build with no job in flight and no terminal phase for 60s is
+re-advanced by the reaper (`db/reaper.py`), which also sweeps asset batches awaiting finalize. Job metadata carries only `{stage, run_id, build_id}` — the cursor file is the single
 source that a completion reloads, advances, and rewrites.
 
 A landed turn is appended to the run's own `turns.jsonl` and its jobs row is then emptied, so the
@@ -81,8 +84,8 @@ will appear at. Chained work is named in the job's `metadata.then` (`mesh_from_i
 operations, the batch finalize) and dispatched by `asset_chain`, so the queue stays a generic
 transport that never learns what an asset is.
 
-**Adding a stage** beyond build/asset means registering a driver keyed on `metadata.stage` in the
-`/worker/complete` dispatch.
+**Adding a stage** beyond build/design/asset means one more branch on `metadata.stage` in
+`/worker/complete` (`api/routers/workqueue.py`); the else-branch is the asset chain.
 
 ---
 
@@ -119,7 +122,8 @@ These are load-bearing; breaking one is a redesign, not a bug fix.
    `build_state.json`; a control plane that restarts mid-build holds nothing while its turns keep
    completing.
 4. **A gate may only detect broken, never "bad."** Two things stand between a build and `built`:
-   `index.html` exists, and the error gate finds no uncaught exception. See `CLAUDE.md`.
+   `index.html` exists, and the error gate — run against the run dir's `game/` — finds no uncaught
+   exception. See `CLAUDE.md`.
 5. **The prompt is the artifact.** No inference runs between the person's words and the build's
    user message.
 6. **Nothing proprietary in the loop.** MIT/Apache-2.0 weights and tooling only (`vision.md`).

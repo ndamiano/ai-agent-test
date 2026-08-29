@@ -380,11 +380,11 @@ def after_build(run_id: str) -> bool:
     change next round either)."""
     from maestro.codegen import build_chain     # late import — build_chain imports this module
     from maestro.state import RunState
-    from maestro.codegen.staging import game_dir as staged_game_dir
+    from maestro.codegen.staging import game_dir
     from tools.execution_context import run_scope
 
     rs = RunState(run_id)
-    gdir = staged_game_dir(rs.run_dir)
+    gdir = game_dir(rs.run_dir)
     state = _load_state(rs.run_dir)
 
     with run_scope(run_id):

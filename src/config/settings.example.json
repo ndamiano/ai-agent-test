@@ -1,9 +1,12 @@
 {
+  "working_directory": "/data",
   "llm": {
     "model": "local-model",
     "max_tokens": 50000,
     "reasoning": "medium",
-    "n_ctx": 32768
+    "n_ctx": 32768,
+    "ninfer_args": "",
+    "llama_args": ""
   },
   "play": {
     "origin": "",

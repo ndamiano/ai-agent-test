@@ -106,7 +106,8 @@ def run_build(run_id: str, max_steps: int = build_state.DEFAULT_MAX_STEPS) -> Bu
     return _await_build(run_id)
 
 
-def change_from_note(run_id: str, note: str, max_steps: int = 40) -> BuildResult:
+def change_from_note(run_id: str, note: str,
+                     max_steps: int = build_state.DEFAULT_MAX_STEPS) -> BuildResult:
     """Change a built game from a HUMAN playtest note ("let's change X"). The note becomes the
     build's request and the same turn machine reads its way in and makes the change."""
     build_chain.kickoff(run_id, kind="change", note=note, max_steps=max_steps)

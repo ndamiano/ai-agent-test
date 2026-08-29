@@ -151,7 +151,13 @@ def test_round_cap_stops(wired, monkeypatch):
 # ---------------------------------------------------------------- the real probe
 
 @pytest.fixture
-def no_model(monkeypatch):
+def fast_probe(monkeypatch):
+    """The settle after each load and press is PROBE_SECONDS/2; a test page throws on boot or on
+    the press itself, so the production 6s (21s per fixed poke) buys nothing here."""
+    monkeypatch.setattr(error_gate, "PROBE_SECONDS", 0.4)
+
+@pytest.fixture
+def no_model(monkeypatch, fast_probe):
     """The fixed poke: no model to ask where to press."""
     monkeypatch.setattr(error_gate, "_targets", lambda png: None)
 
@@ -262,7 +268,7 @@ def test_parse_targets_answers_none_off_shape(text):
     assert error_gate._parse_targets(text) is None
 
 
-def test_probe_presses_what_the_model_names(tmp_path, monkeypatch):
+def test_probe_presses_what_the_model_names(tmp_path, monkeypatch, fast_probe):
     """Two builds died on a PLAY button that was not at the viewport centre; the fixed poke never
     reached it. The model reads the screenshot and names the button, and the probe presses THAT."""
     pytest.importorskip("playwright.sync_api")
@@ -281,7 +287,7 @@ def test_probe_presses_what_the_model_names(tmp_path, monkeypatch):
         ["startCase is not defined", "openHelp is not defined"]
 
 
-def test_probe_presses_each_on_a_fresh_page(tmp_path, monkeypatch):
+def test_probe_presses_each_on_a_fresh_page(tmp_path, monkeypatch, fast_probe):
     """A title that leaves on the first press would hide what the later ones do."""
     pytest.importorskip("playwright.sync_api")
     gdir = _game(tmp_path, "<html><body><script>\n"

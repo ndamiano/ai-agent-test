@@ -95,7 +95,8 @@ src/
       archive.py         the run dir's OFF-BOX copy. tools/s3.py is a minimal SigV4 client over
                          `requests` — a wrong signature is a loud 403 and the payload hash rides
                          the request, so a signing bug cannot silently succeed. A settled finalize
-                         (no gate fix kicked) uploads the run dir as one tar.gz,
+                         (no gate fix kicked, not stopped by hand) uploads the run dir as one
+                         tar.gz,
                          minus a world's `world_build/` — the world a game plays was published
                          into the game folder, and the stages' working material is hundreds of
                          megabytes nothing reads back. `evict` reclaims local disk and REFUSES without a verified remote
@@ -144,7 +145,8 @@ src/
                          `has_authored_files` discounts the seed, so it says whether a BUILD wrote
                          anything — which is what offers the from-scratch button. Also the SEED
                          (seed_vendor): the game folder starts holding the vendored renderer and
-                         nothing else, since everything placed there steers the first list_files.
+                         `lib/` and nothing else, since everything placed there steers the
+                         first list_files. It runs on EVERY kickoff and never overwrites.
       assets.py          the ASSET stage — `request_media` is what the game's generate_media call
                          runs: enqueue ONE `image` job, record the ask in assets.json, write a
                          PLACEHOLDER at the path (a matted disc for a sprite, an opaque frame for
@@ -231,13 +233,14 @@ src/
                          sections read from its shape (the lead line, the SYSTEMS list, one
                          section per NAME: paragraph) over the SAME string the edit box holds
                          and Build sends — a view, never a second copy. CLI: synchronous. The
-                         create call is where the CREDIT is charged: the design is the game's
-                         first inference and meters against the grant it buys, and the build
-                         that follows never charges again. Measured 2026-08-26
+                         create call is where the game is charged — the credit, and the
+                         compute-seconds grant the queue meters against (`db_store.charge_game`,
+                         through `tools/execution_context.run_scope`): the design is the game's
+                         first inference and the build that follows never charges again. Measured 2026-08-26
                          (`docs/experiments.md`): the model's design of a plain request built a
                          game "a million times better" than three stages of the request itself.
-      error_gate.py      the ERROR GATE — after a playable finalize, open the staged game in a
-                         headless browser (playwright chromium, an ephemeral static server),
+      error_gate.py      the ERROR GATE — after a playable finalize, open the run dir's `game/`
+                         (what was just staged) in a headless browser (playwright chromium, an ephemeral static server),
                          screenshot it, ask the model what the title screen offers
                          (prompts/probe_targets.txt: buttons as pixel centres, keys the screen
                          names — at most MAX_TARGETS of each, one llm turn at low effort,

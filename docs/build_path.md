@@ -257,6 +257,22 @@ src/
                          running, and never touches a build a human stopped. A probe that cannot
                          run logs and stands aside — the gate is a boundary like snapshots.
                          Round state in runs/<id>/error_gate.json.
+      play_gate.py       the PLAY GATE (branch experiment) — after the error gate is clean, play
+                         the staged game in the same no-egress headless browser: one persistent
+                         page, one session of MAX_TURNS llm turns. Each turn the model sees the
+                         current screenshot, presses ONE input (key, click, or a held key), states
+                         the VISIBLE change it expects, and next turn says met / unmet / unclear
+                         about its own prediction (prompts/play_turn.txt — the design rides along
+                         so the model knows the documented controls). A closing call
+                         (prompts/play_verdict.txt) folds the session into runs/<id>/play_report.json:
+                         `broken` — inputs it pressed and WATCHED fail, biased to under-report
+                         (unclear is not broken, failed-once-worked-later is not broken) — and
+                         `judgment`, a written impression that only ever reaches the human, never
+                         a fix note (a grade as a fix note made nothing better — experiments.md
+                         2026-08-08). One broken fact re-enters the fix machine per round
+                         (prompts/play_fix_note.txt); stops at MAX_ROUNDS or the same fact twice
+                         running. A session that cannot run logs and stands — boundary, like the
+                         error gate. Round state in runs/<id>/play_gate.json.
       asset_use.py       does the game LOAD the art it asked for — static analysis over the game's
                          own source, no model and no GPU. Two facts: an asset the source never
                          names (paid for, never seen) and an `assets/…` path in neither the manifest
@@ -284,7 +300,9 @@ src/
                          for the admin panel. The image side of the same policy is asset_chain's
                          `_admit` above.
       prompts/           build.txt (the one system prompt every build turn reads),
-                         design.txt (the designer call), probe_targets.txt (the gate asking
+                         design.txt (the designer call), play_turn.txt / play_verdict.txt /
+                         play_fix_note.txt (the play gate's session, closing report and fix
+                         note), probe_targets.txt (the gate asking
                          where to press), error_gate_note.txt (the fix note an
                          uncaught error becomes).
       run.py             create_run / propose_prompt (the designer, synchronously) / set_prompt /

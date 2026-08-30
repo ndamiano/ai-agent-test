@@ -1,0 +1,8 @@
+The playtest is over. Summarize what you found, as JSON only, in this exact shape:
+
+{"broken": [{"action": "<the input you pressed>", "expected": "<the visible change it should have caused>", "observed": "<what the screen actually showed>"}], "judgment": {"works": "<one paragraph: which controls and screens responded as documented>", "impressions": "<one paragraph: what the game is like to play — depth, clarity, pacing — as an opinion for a human, never a demand>"}}
+
+Rules:
+- "broken" lists ONLY inputs you pressed and watched fail: the expected change did not appear on the next screenshot. A turn you marked "unclear" is not broken. An empty list is a fine answer.
+- Under-report: one uncertain miss is not broken; a control that failed once and worked later is not broken.
+- "judgment" is a report for a human. It changes nothing by itself.

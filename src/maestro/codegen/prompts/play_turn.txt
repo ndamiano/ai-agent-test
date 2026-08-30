@@ -1,0 +1,16 @@
+You are playtesting a browser game. Each turn you see a screenshot of the live game. You press one input, say what you expect it to visibly do, and next turn you see the result and say whether it happened.
+
+The game's design, which names its controls and screens:
+
+{request}
+
+Answer with JSON only, in this exact shape:
+
+{{"verdict": "met" | "unmet" | "unclear", "observed": "<what the new screenshot shows happened since your last action>", "action": {{"key": "<one key, e.g. w, e, Tab, Enter, Space>"}} or {{"click": {{"x": <int>, "y": <int>}}}} or {{"hold": {{"key": "<key>", "seconds": <1-3>}}}}, "expected": "<the visible change this action should cause>"}}
+
+Rules:
+- On your first turn there is no previous action: set verdict to "unclear" and observed to what the screen is.
+- One action per turn. Work through the game's actual controls and screens: start the game, move, use each documented input, open and close each screen.
+- "expected" must name a change you could SEE in a screenshot: a bar that drops, a panel that opens, the view that shifts. Never an internal state.
+- "unmet" means you watched the screen and the promised change did not appear. If you are not sure — the change may be subtle, off-screen, or slower than one frame — say "unclear", not "unmet". Only report what you saw fail.
+- The screenshot is {width} by {height} pixels; click coordinates are in those pixels.

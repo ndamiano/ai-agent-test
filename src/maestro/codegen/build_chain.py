@@ -22,7 +22,7 @@ from typing import Dict, Optional
 from db import store as db_store
 from llm_clients.connector import get_connector
 from maestro.codegen import (artifact_screen, asset_use, build_state, build_steps, error_gate,
-                             snapshots, turn_log)
+                             play_gate, snapshots, turn_log)
 from maestro.codegen.build_state import DEFAULT_MAX_STEPS, BuildCursor
 from maestro.codegen.staging import entry_path, game_dir, stage_for_play
 from maestro.codegen.tools import build_tools
@@ -323,11 +323,11 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
 
 
 def _post_finalize(run_id: str) -> None:
-    """The error gate, then the archive. A gate fix's own finalize re-enters here, so only a
-    SETTLED chain (no fix kicked) is archived — the bucket holds finished games rather than one
-    snapshot per intermediate."""
+    """The error gate, then the play gate, then the archive. A gate fix's own finalize re-enters
+    here, so only a SETTLED chain (no fix kicked by either gate) is archived — the bucket holds
+    finished games rather than one snapshot per intermediate."""
     from maestro.codegen import archive
-    if not error_gate.after_build(run_id):
+    if not error_gate.after_build(run_id) and not play_gate.after_build(run_id):
         archive.archive(run_id)
 
 

@@ -1351,3 +1351,101 @@ cannot satisfy is a crash the gate sees, not a design the builder can save. Open
 `change`). A person who played a game that works asks for a change; a fix is what the error gate
 sends. The request text now says "asked for this change… keeping everything else playing as it
 does" instead of "reported this… fix exactly that". Not measured — a name, not a mechanism.
+
+---
+
+## 2026-08-29 — Records and rules (local 5090, qwen3.8_27b via ninfer, thinking on, 131K window)
+
+### The question
+The verbs designer (above) fixed the noun designs, but its examples ("moving through the village",
+"a clock running out") were a description of a part of the game and a single rule, not systems —
+and both were the motivating game's own words. The owner's read: this is normalization. Combat
+does not OWN hp; hp is a fact about a creature, and the trap, the potion and the sword all write
+it. That is ECS, and MVC says the same: records are the model, systems are the rules that change
+them, screens are the view.
+
+### The change
+`design.txt` rewritten in three parts. RECORDS: one paragraph per kind of thing, its fields and
+given values, rosters listed here; a field lives on the thing it is a fact about. SYSTEMS: one
+paragraph per system, made of RULES — condition and effect on named record fields, with numbers;
+generators are systems whose verifier must be satisfiable by the counts above. CORE LOOP: a cycle
+through the systems by name. Then SCREENS / AUDIO / ART unchanged. Every battery-game example
+was stripped (the verbs prompt carried "questioning a villager", "accusing the thief", a clue
+record; the first draft of this one carried more), and the remaining examples are genres not on
+the battery. Old prompt kept in the lab as `design_prompt_verbs.txt`.
+
+Two clauses added during the day, each after a design showed the gap: (1) a roster is the KINDS
+a game draws from — which member is the culprit, the layout or the route is the generator's,
+never written in the roster (the first npcs design hard-coded the thief and all ten clues, and
+its generator only jittered building positions); (2) the first line says 2D or 3D, with a rule
+for which, and in a 3D game outdoors the landscape is a GENERATED WORLD named in one sentence
+with no size or count, the systems placing things by its regions — because neither 2D design had
+any way to know `compose_world` existed, and `build.txt` offers it only to a 3D game.
+
+### Designs
+| ask | arm | words | secs | read |
+|---|---|---|---|---|
+| npcs | ecs (tainted) | 2,776 | 229 | rules clean, two win paths (suspicion 70 / thief stress 80); the CASE was a roster — thief id 5, ten clues, alibis all literal |
+| npcs | ecs2 (clean + roster clause) | 2,726 | 222 | generator chooses the thief from the seed, roles, four-phase schedules under location capacity, draws 8 clues with ≥4 on the thief; went turn-based (4 actions/day) |
+| rhythm | ecs | 2,749 | 211 | LCG given, drums/bass/lead by beat index, holds with lane blocking, health fail, unlock ladder; verifier counts checked (song 1 ≈21 notes ≥16, song 8 ≈230 ≤260) |
+| rhythm | ecs2 | 2,510 | 212 | no holds, one 94 s song, chart a Bernoulli roll every 0.25 s — variance, and neither prompt asks the chart to follow the music |
+| openworld | ecs | 2,567 | 160 | NUT_KIND and TREE rosters as kinds; flood-fill verifier; raccoon patrol/chase/lost/cooldown with bush concealment; freshness decay, hunger, 3 days |
+| skyrim ("an open world RPG like skyrim") | ecs | 4,287 | 224 | 13 records, 12 systems, top-down 2D; use-based skill XP, armor floor 1, weather × speed, fog × aggro, pack aggro, wolves flee; worldgen is per-tile noise; quest givers placed, never talked to |
+| skyrim | ecs3 (2D/3D clause) | 4,109 | 288 | 3D; WORLD system opens with the compose_world sentence; enemies by biome, NPCs/loot/quests per region, DIALOGUE present — and ALSO `sizeX 2000 m, sizeY 1400 m, regionCount 6` and a six-region roster with radii |
+
+In all seven: no noun-systems, no rule-less system paragraph, every verifier satisfiable by its
+own counts. The old failure (a verifier the numbers cannot pass) did not recur.
+
+### Builds
+| cell | run | steps | wall | compact | gate | art |
+|---|---|---|---|---|---|---|
+| openworld ecs | `59f3606e683c` | 30 | 841 s | 0 | clean first probe | 16/16 |
+| openworld short (control) | `f8a8db2b6aa5` | — | 1,431 s | — | — | — |
+| skyrim ecs (2D) | `e8d51252d08e` | 33 | 1,310 s | 1 | clean first probe | 25/25 |
+| skyrim ecs3 (3D) | `d89a69a0f3a3` | 185 + 23 fix | 6,650 s | 5 | 2 rounds: `Unexpected token ')'` ui.js:157, then `Cannot access 'inWater' before initialization` | 0/28 (see below), 28/28 on top-up |
+
+Turn 0 on the 4.3K-word designs: 42K and 22K reasoning tokens, then acted (list + lib reads) —
+no overflow, the 2026-08-28 pattern. The builder's file layout mirrored the design's shape in
+every build: a data/records module first, systems, then render/ui.
+
+**openworld ecs, played:** the owner: "ended up better than expected". One defect the gate cannot
+see: `ui.start()` — the function that hides the title overlay — declared, wired to the button,
+never called from `startGame()`; the game ran under the title. Same for `resume`/`restart`.
+The `draw_hand` class of 2026-07-27, and nothing throws.
+
+**skyrim ecs3, the world:** `compose_world` called on turn 1 with the design's sentence verbatim
+(hills, passes, peaks, valley, farmland, swamp; ruins, villages, watchtowers, cave mouths). The
+world answered 600 m and five regions. The builder then honoured the DESIGN's numbers: `terrain.js`
+scales the world by 2000/600 in x and 1400/600 in z (non-uniform — trees and slopes squashed),
+heights ×3, and `regionAt` uses the design's six named regions, not the world's. "Every number
+below is a given value to write into the code as-is" did exactly that. The clause "never a size
+or a count" reached the designer and it wrote the sizes anyway — the record shape ("the World
+record carries…") outpulled the sentence. Open: a generated world's record carries no size and no
+region roster; regions by category only, and the world's are the game's. Clause added to
+`design.txt` the next morning, and the stretch taken out of this game with `run --change`: the
+note named the mechanism (drop the scale, game space is `world.sizeM`, place by `world.regionAt`,
+map the six design regions onto the world's five by category) and the builder rewrote
+`terrain.js` and the generator in 31 steps, then one gate round for a shadowed import
+(`const worldRegions = worldRegions()`), 11 turns. The world at its own size reads as a place —
+hills, trees at true scale — where the stretched one read as a smear.
+
+**skyrim ecs3, the steps:** first `done` at 168. After each compaction the model re-read every
+module to re-ground, found something, edited — and edited against a stale picture of files whose
+read it had lost: turns 55–64, six `old_text was not found` on `world3d.js`; the lighting block
+replaced at 99–101 and again at 126–134 because the first round was gone; turn 103 discovered it
+had never added `world.group` to the scene. Then two gate rounds. Round 1: a one-character typo
+(`el.onclick = () {`) at the address the gate named; the fixer read the whole 260-line file six
+times ("looks balanced at a glance") and never quoted line 157, then fixed it at turn 11 by
+rewriting the file from scratch. Round 2 (a TDZ with a stack) closed in 11 turns. Open, on the
+gate side and still BROKEN-only: quote the text at the address, not only the address.
+
+**skyrim ecs3, the art:** all 28 renders failed `pending longer than 1800s with no worker` — the
+reaper's `MAESTRO_STALE_PENDING_SECONDS`. One card; `local_gpu auto` held it on `llm` through
+this build's long turns and the worldgen legs, so the image queue waited past the rule. Prod has
+a pod per queue and the rule is right there; on the one-card box a long world build trips it.
+`run --assets` topped up 28/28 in ~6 min.
+
+### Verdict
+Shape shipped: records / systems-as-rules / core loop, no battery examples. Owner's play verdicts
+on the skyrim builds pending. Open, in order: the generated-world record clause; the gate note
+quoting the line; the post-compaction re-read loop.

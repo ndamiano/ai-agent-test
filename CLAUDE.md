@@ -148,15 +148,27 @@ because a clause the model must DERIVE ("no bend tighter than the car can drive"
 characters of physics per turn; the same clause as a value ("no radius under 140 px") costs
 nothing.
 
-A system is something the player DOES or something that happens to them — questioning a villager,
-accusing the thief, a wave arriving — never a kind of object. Asked for "one paragraph per system"
-and "every thing is a record", the designer made every noun a system (Map, Player, NPC, Clue,
-Journal) and the loop the player lives in owned no paragraph; the words went to field lists.
-Measured 2026-08-29 on the two cells where the design was the ceiling (npcs, rhythm): the same
-request through a designer whose systems are verbs, the core loop first and longest, made games
-the owner called "way better" than the noun designs, on the same builder. The designer sets no
-count of systems; the count falls out of the game. Records are named only where a rule reads
-their fields — the decomposition into code is the builder's, and it is better at it.
+A design is two kinds of paragraph, never mixed. A RECORD is a kind of thing and its fields, and
+a field lives on the thing it is a fact about — hp is on the creature, and the sword, the trap
+and the potion are rules in three systems that write it. A SYSTEM is a bundle of RULES: a
+condition and its effect on named fields, with the numbers. A kind of object is never a system,
+and a paragraph with no rule in it is a record misfiled. Asked for "one paragraph per system"
+beside "every thing is a record", the designer made every noun a system (Map, Player, NPC, Clue)
+and the loop the player lives in owned no paragraph; asked for systems as what the player DOES,
+it wrote descriptions ("moving through the village") and single rules ("a clock running out")
+as systems. Measured 2026-08-29 on the two cells where the design was the ceiling (npcs, rhythm):
+the verb designs played "way better" than the noun designs on the same builder, and the
+records-and-rules designs that followed held the shape on seven designs of four asks with no
+noun-systems and no verifier the given counts could not pass. The designer sets no count of
+systems; the count falls out of the game. A roster lists KINDS; which member is the culprit, the
+layout or the route is the generator's. The examples in the prompt are never a battery game's
+words — a designer given the motivating game's nouns writes them back.
+
+The design says 2D or 3D, and a 3D landscape outdoors is a GENERATED WORLD named in one sentence
+with no size or count, because the builder is offered `compose_world` only for a 3D game and a
+designer that does not know a world exists writes a tile map. Measured 2026-08-29: the same ask
+went top-down noise without the clause and a real world with it — and a size the designer wrote
+anyway was honoured over the size the world answered.
 
 ### A system starves when it is one clause among many — the design stage is what feeds it
 

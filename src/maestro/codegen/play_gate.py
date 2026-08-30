@@ -185,10 +185,18 @@ def play(game_dir: Path, request: str) -> Optional[Dict]:
 
             for n in range(1, MAX_TURNS + 1):
                 history.append(_frame(page, n))
-                answer = _ask(system, history, max_tokens=2500)
-                turn = _parse_turn(answer) if answer else None
+                # A local model's turn is sometimes reasoning-only or off-shape; one fresh ask
+                # usually lands. Retry whole, never salvage from a partial answer.
+                turn = answer = None
+                for attempt in (1, 2):
+                    answer = _ask(system, history, max_tokens=2500)
+                    turn = _parse_turn(answer) if answer else None
+                    if turn is not None:
+                        break
+                    logger.warning("play gate: turn %d answered off-shape (try %d): %r",
+                                   n, attempt, (answer or "")[:300])
                 if turn is None:
-                    logger.warning("play gate: turn %d answered off-shape — ending session", n)
+                    logger.warning("play gate: turn %d off-shape twice — ending session", n)
                     break
                 history.append({"role": "assistant", "content": answer})
                 turns.append(turn)

@@ -175,7 +175,7 @@ def test_a_batch_with_work_left_is_never_offered():
 
 
 @pytest.fixture
-def _asset_env(monkeypatch, tmp_path):
+def _asset_env(monkeypatch, tmp_path, tmp_runs):
     from maestro.codegen import asset_chain
 
     staged, events = [], []

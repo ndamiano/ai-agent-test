@@ -324,9 +324,10 @@ each fresh pod a ~300 s re-tune (the image bakes the cache for its own flags), a
 appends `--cuda-graph-bs 1 2` LAST because builds run at most two streams and the later
 occurrence wins.
 
-Boot is measured at 170 s from create to serving, averaged over three fresh pods (97 s on a host
-that has the image, 190–220 s on one that pulls it): the pack restore is 35–55 s of that, the
-rest is provisioning and the 16.7 GB pull. The first engine launch on a pod can still die to the
+Boot on the deployed stack (2026-09-03, EU-RO-1 Workstation Edition, prod scaler, create to
+first claim): 205 s cold and 110 s warm with the engine in the image (`llm-v14`, 16.7 GB); 129 s
+cold with the engine on the volume (`llm-v16`, 7.0 GB image plus a ~10 s tarball restore). The
+pack restore is 35–55 s of any of those; provisioning and the pull are the rest. The first engine launch on a pod can still die to the
 188 GB container cgroup while loading; the entrypoint gives it three attempts, and one has
 sufficed on every measured pod since the loader stopped mmapping the checkpoint.
 

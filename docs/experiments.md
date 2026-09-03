@@ -1499,7 +1499,10 @@ title screen and ~2,100 lines of code one missing export from loading. With `med
 7m53s, `done` on its own with a summary that named every module's exports as checked, and a
 playing game — hand fanned with art, AI opponent taking its turn, mana pips, End Turn — with zero
 console errors. Boot: 205 s create-to-serving on the first pod (a host that had never pulled the
-image), 49 s on the second. The thinking measurement of 2026-08-25 reproduces on the new engine.
+image), 110 s on the second (warm host). The thinking measurement of 2026-08-25 reproduces on
+the new engine. A fourth build through the engine-on-volume image (`llm-v16`, 7.0 GB against
+16.7): 129 s create-to-serving on a host that had never pulled it, a playing game at 47 steps,
+and the gate ran on the same pod as the build once llm idle exit was 60 s.
 
 ### Verdict
 Promoted. The llm image is Pennyroyal on the RTX PRO 6000 alone; the ninfer/llama.cpp 27B image

@@ -38,7 +38,10 @@ RUN git clone --depth 1 -b "$PENNY_REF" "$PENNY_REPO" /opt/penny
 
 # gcc-15 identity is load-bearing: the fork's docs pin the JIT identity to it, and a different
 # host compiler silently invalidates the baked kernel caches.
-ENV CUDA_HOME=/usr/local/cuda CC=/usr/bin/gcc-15 CXX=/usr/bin/g++-15 CUDAHOSTCXX=/usr/bin/g++-15
+# The venv the tarball restores is the only python in this stage: the serve script's helpers
+# run under `#!/usr/bin/env python3`, so the venv leads PATH.
+ENV CUDA_HOME=/usr/local/cuda CC=/usr/bin/gcc-15 CXX=/usr/bin/g++-15 CUDAHOSTCXX=/usr/bin/g++-15 \
+    PATH=/opt/venv/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 RUN uv python install 3.12.13 && uv venv --python 3.12.13 /opt/venv
 # setuptools/wheel_stub first: --no-build-isolation means sdists (cuda-tile) see only what is
 # already in the venv, and uv seeds nothing.
@@ -99,7 +102,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -f libnvrtc-builtins.so* \
     && ln -s "$SP/nvidia/cu13/lib/libnvrtc-builtins.so.13.0" libnvrtc-builtins.so.13.0
 
-ENV CUDA_HOME=/usr/local/cuda CC=/usr/bin/gcc-15 CXX=/usr/bin/g++-15 CUDAHOSTCXX=/usr/bin/g++-15
+# The venv the tarball restores is the only python in this stage: the serve script's helpers
+# run under `#!/usr/bin/env python3`, so the venv leads PATH.
+ENV CUDA_HOME=/usr/local/cuda CC=/usr/bin/gcc-15 CXX=/usr/bin/g++-15 CUDAHOSTCXX=/usr/bin/g++-15 \
+    PATH=/opt/venv/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 COPY --from=builder /env.id /opt/maestro/env.id
 COPY src/worker /opt/maestro/src/worker

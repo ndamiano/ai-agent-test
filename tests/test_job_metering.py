@@ -3,6 +3,8 @@ from what the caller asked for and never corrected, so a pod serving one model f
 another — 387 of them, on a run that cost real money.
 """
 
+import pytest
+
 from db import store
 
 
@@ -49,3 +51,50 @@ def test_a_failed_job_keeps_the_requested_model():
     store.complete_job(job_id, "w1", None, "status 500", exec_seconds=1.0)
 
     assert store.get_job(job_id)["model"] == "qwen3.6_27b"
+
+
+# The debit is in 5090-seconds. A second on a pricier card costs more of them, by the rate the
+# card's `billing.gpu_rates` entry names; the row keeps the raw exec_seconds beside the billed.
+
+WK = "NVIDIA RTX PRO 6000 Blackwell Workstation Edition"
+
+
+def test_a_pricier_card_debits_more_than_one_second_per_second():
+    job_id = _job()
+    store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=10.0, gpu_type=WK)
+    game = store.game("g1"); job = store.get_job(job_id)
+    assert game["seconds_used"] == pytest.approx(19.1)
+    assert (job["exec_seconds"], job["billed_seconds"]) == (10.0, pytest.approx(19.1))
+
+
+def test_a_5090_debits_one_for_one():
+    job_id = _job()
+    store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=10.0,
+                       gpu_type="NVIDIA GeForce RTX 5090")
+    assert store.game("g1")["seconds_used"] == 10.0
+
+
+def test_an_unrated_or_unknown_card_debits_one_for_one():
+    """A card with no rate under-bills rather than refusing work; the warning is the signal."""
+    for game, gpu in (("g2", "NVIDIA H100 80GB HBM3"), ("g3", None)):
+        store.create_game(game, "u1")
+        store.charge_game(game, 1, 10_000.0)
+        job_id = store.enqueue_job("llm", {}, game_id=game)
+        store.worker_seen("w1", "llm")
+        store.claim_job("llm", "w1", 60)
+        store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=4.0, gpu_type=gpu)
+        assert store.game(game)["seconds_used"] == 4.0
+
+
+def test_the_builds_debit_is_weighted_like_the_games():
+    build_id = store.create_build("g1")
+    job_id = _job(build_id=build_id)
+    store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=10.0, gpu_type=WK)
+    assert store.builds_for("g1")[0]["seconds_used"] == pytest.approx(19.1)
+
+
+def test_admin_billed_is_the_weighted_debit_and_paid_the_raw_seconds():
+    job_id = _job()
+    store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=10.0, gpu_type=WK)
+    agg = store.gpu_seconds("llm")
+    assert (agg["paid"], agg["billed"]) == (10.0, pytest.approx(19.1))

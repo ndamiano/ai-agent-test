@@ -45,16 +45,26 @@ class SettingsManager:
                 # build without thinking makes "something kinda close" (docs/experiments.md).
                 "reasoning": os.getenv("LLM_REASONING", "medium"),
                 "max_tokens": 50000,
-                # Engine launch flags, delivered to an llm pod at create and to the local leg at
-                # start, so a tuning knob (KV dtype, thinking, draft tokens) is a settings edit
-                # and never a new worker image.
+                # Engine launch flags, so a tuning knob is a settings edit and never a new
+                # worker image: sglang_args reaches an llm pod at create, ninfer_args the local
+                # leg at start (the two boxes run different engines on different cards).
+                "sglang_args": os.getenv("SGLANG_ARGS", ""),
                 "ninfer_args": os.getenv("NINFER_ARGS", ""),
-                "llama_args": os.getenv("LLAMA_ARGS", ""),
                 "n_ctx": int(os.getenv("LLM_N_CTX", "32768"))
+            },
+            # 5090-seconds debited per GPU-second, by the card the worker reported: each card's
+            # secure-cloud hourly price over the 5090's $0.99 (RunPod, 2026-09-03).
+            "billing": {
+                "gpu_rates": {
+                    "NVIDIA GeForce RTX 5090": 1.0,
+                    "NVIDIA RTX PRO 4500 Blackwell": 0.73,
+                    "NVIDIA RTX PRO 6000 Blackwell Workstation Edition": 1.91,
+                    "NVIDIA RTX PRO 6000 Blackwell Server Edition": 2.11,
+                },
             },
             "workqueue": {
                 "token": os.getenv("WORKQUEUE_TOKEN", ""),
-                "job_timeout_seconds": int(os.getenv("WORKQUEUE_JOB_TIMEOUT", "900")),
+                "job_timeout_seconds": int(os.getenv("WORKQUEUE_JOB_TIMEOUT", "1800")),
                 "lease_seconds": int(os.getenv("WORKQUEUE_LEASE", "120"))
             },
             # _merge is one level deep, so a settings.json "runpod" block merges over these keys —

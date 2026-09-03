@@ -33,7 +33,7 @@ rsync -az --delete \
   --exclude 'docs/' \
   --exclude 'tasks/' \
   --exclude 'tests/' \
-  --exclude 'Dockerfile.worker-*' \
+  --exclude 'docker/' \
   --exclude 'venv/' \
   --exclude 'frontend/node_modules/' \
   --exclude 'frontend/dist/' \

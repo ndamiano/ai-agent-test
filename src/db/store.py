@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from config.settings_manager import settings_manager
-from db.estimates import estimate_seconds
+from db.estimates import estimate_seconds, gpu_rate
 from tools.version import maestro_rev
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     gpu_type         TEXT,
     est_seconds      REAL NOT NULL DEFAULT 0,
     exec_seconds     REAL,
+    billed_seconds   REAL,
     lease_expires_at REAL,
     metadata         TEXT,
     batch_id         TEXT,
@@ -453,6 +454,10 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
     seconds_used untouched. The worker's busy_seconds still moves in every case — that measures
     the GPU time WE pay for, which is real whether or not the user got anything for it.
 
+    The debit is exec_seconds × the card's rate (`gpu_rate`): grants are 5090-seconds, and the
+    row keeps both the raw exec_seconds (what the card ran) and billed_seconds (what the game
+    paid), so the ledger survives a rate change.
+
     `continuation` is a fully-built {queue, payload, metadata?, model?} the caller derived from
     this job's `then`; it inherits game_id/build_id/batch_id so its seconds debit the same game
     even though nothing enqueued it inside a run_scope. Refused by the budget it is simply
@@ -465,15 +470,17 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
     never see an empty batch whose next job simply doesn't exist yet."""
     now = time.time()
     status = "failed" if error else "done"
+    billed = exec_seconds * gpu_rate(gpu_type)
     # No immediate=True: the UPDATE below is the first statement, so the write lock is already
     # held by the time the continuation's admission reads the game's headroom.
     with _db() as conn:
         cur = conn.execute(
-            "UPDATE jobs SET status = ?, result = ?, error = ?, exec_seconds = ?, gpu_type = ?, "
-            "model = COALESCE(?, model), "
+            "UPDATE jobs SET status = ?, result = ?, error = ?, exec_seconds = ?, "
+            "billed_seconds = ?, gpu_type = ?, model = COALESCE(?, model), "
             "finished_at = ? WHERE id = ? AND worker_id = ? AND status = 'claimed'",
             (status, json.dumps(result, ensure_ascii=False) if result is not None else None,
-             error, exec_seconds, gpu_type, served_model(result), now, job_id, worker_id),
+             error, exec_seconds, billed, gpu_type, served_model(result), now, job_id,
+             worker_id),
         )
         if cur.rowcount != 1:
             return None
@@ -483,11 +490,11 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
         if error is None and row["game_id"]:
             conn.execute(
                 "UPDATE games SET seconds_used = seconds_used + ?, updated_at = ? WHERE id = ?",
-                (exec_seconds, now, row["game_id"]))
+                (billed, now, row["game_id"]))
         if error is None and row["build_id"]:
             conn.execute(
                 "UPDATE builds SET seconds_used = seconds_used + ? WHERE id = ?",
-                (exec_seconds, row["build_id"]))
+                (billed, row["build_id"]))
         conn.execute(
             "UPDATE workers SET busy_seconds = busy_seconds + ?, last_seen_at = ? WHERE id = ?",
             (exec_seconds, now, worker_id))
@@ -785,16 +792,17 @@ def gpu_seconds(queue: str, since: Optional[float] = None) -> Dict:
 
     paid   = every finished job's exec_seconds (done AND failed) — the GPU time WE pay for, real
              whether or not the user got anything, mirroring workers.busy_seconds.
-    billed = only delivered, game-attributed work (status done, game_id set) — what actually
-             debited games.seconds_used.
-    The gap between them is unbilled GPU we ate (failures, and jobs no game owns)."""
+    billed = only delivered, game-attributed work (status done, game_id set), in the
+             5090-seconds that actually debited games.seconds_used.
+    The gap between them is unbilled GPU we ate (failures, and jobs no game owns) — read with the
+    card in mind, since billed is rate-weighted and paid is not."""
     clause = "AND finished_at >= ?" if since is not None else ""
     args = [queue] + ([since] if since is not None else [])
     with _db() as conn:
         row = conn.execute(
             "SELECT COALESCE(SUM(exec_seconds), 0) AS paid, "
             "COALESCE(SUM(CASE WHEN status = 'done' AND game_id IS NOT NULL "
-            "THEN exec_seconds ELSE 0 END), 0) AS billed "
+            "THEN billed_seconds ELSE 0 END), 0) AS billed "
             f"FROM jobs WHERE queue = ? AND finished_at IS NOT NULL {clause}",
             args).fetchone()
     return {"paid": row["paid"], "billed": row["billed"]}

@@ -1449,3 +1449,66 @@ a pod per queue and the rule is right there; on the one-card box a long world bu
 Shape shipped: records / systems-as-rules / core loop, no battery examples. Owner's play verdicts
 on the skyrim builds pending. Open, in order: the generated-world record clause; the gate note
 quoting the line; the post-compaction re-read loop.
+
+---
+
+## 2026-09-02 — Flash-Next to prod: Pennyroyal on one RTX PRO 6000
+
+### The question
+Flash-Next was the best builder in every battery it entered (cards and f1 best-ever on the B200,
+2026-08-27; f1 "one of the better ones" on a rented 6000 Pro, 2026-08-31), and the local 27B on
+its designs was a way to have the designs without the model. The 6000 Pro run served it through
+llama.cpp at 110 tok/s. The fork jpezzulli/sglang-rtxpro6000 ("Pennyroyal") claimed the same
+card at ~2× decode and ~4× prefill WITH vision, which llama.cpp could only do with an mmproj.
+Two questions, in order: does it build a game end to end, and can a pod reach serving inside
+the ≤180 s from create that the autoscaler's scale-from-zero shape assumes.
+
+### Serving
+Trialed 2026-09-01/02 on a PRO 6000 SE at $2.09/hr: reasoning split, tool calls and the play
+gate's screenshot turn all work natively. Decode 203 tok/s short-context, ~100 at 54K; two
+concurrent streams 1.7× aggregate at 54K, four collapse (the mamba cache evicts and re-prefills).
+Three builds through it: kraken 51 turns / 16.5 min, lightswitch 75 / 24 min, both gate-clean
+with art from the local image queue, and f1 58 steps / 19.5 min, gate 0 rounds, ~$0.68 — against
+~$1 for the 27B on a 5090. `--ple-offload-embedding` is load-bearing (without it the weights
+alone exceed 96 GB); the canonical serve script carries it and the image execs that script.
+
+### Boot
+First true number from the network volume: **451 s** launch to healthy, and a full chain of
+~435 s from create. Attributed, in the order it fell:
+
+| thief | cost | fix |
+|---|---|---|
+| namespace helper hashing the whole 126 GB checkpoint (no HF download metadata beside it) | ~170 s, silent | real metadata written on the volume once; +187 s → +16 s to "load weight begin" |
+| NVFP4 repack at load, CPU-bound (NVMe was 1.7× faster than the volume, not 10×) | 102–123 s | `--load-format prepacked`: the post-repack state dumped once to one flat file, restored in 21–55 s; tokens identical to a normal load |
+| FlashInfer fused_moe cutlass JIT on every fresh pod (the cache the image baked was keyed to older flags) | ~285–300 s | compiled ops promoted to the AOT dir, which is the only place the JIT trusts without rebuilding |
+| first-launch cgroup OOM at 188 GB (pack read filling page cache) | ~50% of pods, one relaunch | fadvise on the pack reader; three-attempt loop kept in the entrypoint |
+| image pull, 28 GB | 53–110 s | two-stage squash to 16.7 GB (rm in a later layer is a whiteout): system cudnn/nccl/NPP/cuFFT gone, CUDA libs symlinked into the pip wheels |
+
+The fork's `.git` is load-bearing: the serve script runs `git rev-parse` under `set -e`, and
+the diet that removed it died in 3 s on three pods.
+
+Final image, three fresh pods: **192 / 97 / 220 s create-to-serving, average 170 s** — under the
+gate. The engine phase is 84–105 s and stable (restore 36–55 s, the spread is volume contention);
+the rest is provisioning and the pull, which a host that already holds the image skips.
+
+### The first two prod builds (2026-09-03, the cards request, EU-RO-1 Workstation Edition)
+Same request twice through the deployed stack, one setting apart. With `LLM_REASONING=none`
+(prod's value since the 27B days): 200 steps in 7m21s, `reasoning_tokens` 0 on every turn,
+40–50 completion tokens per turn, 108 edits and 86 twenty-line reads, never called `done`, a
+title screen and ~2,100 lines of code one missing export from loading. With `medium`: 39 steps,
+7m53s, `done` on its own with a summary that named every module's exports as checked, and a
+playing game — hand fanned with art, AI opponent taking its turn, mana pips, End Turn — with zero
+console errors. Boot: 205 s create-to-serving on the first pod (a host that had never pulled the
+image), 49 s on the second. The thinking measurement of 2026-08-25 reproduces on the new engine.
+
+### Verdict
+Promoted. The llm image is Pennyroyal on the RTX PRO 6000 alone; the ninfer/llama.cpp 27B image
+and its two-engine boot are gone from the repo, and the 27B stays local on the 5090 for testing.
+The llm volume is in another datacenter than the art, so the llm queue carries its own
+`network_volume_ids` — a list, one volume per datacenter, because the Workstation Edition
+(cheaper, faster) exists only in EU-RO-1 and US-NC-2's Server Edition stock has droughts. The
+EU-RO-1 volume was provisioned the same night: the pack copied volume-to-volume in 9 minutes
+once the shape was right (`docs/deploy.md`), after five GPU pods and four gateway-upload pods
+that were not. Open: the loader patch rides the image as a tarball until it is upstreamed
+to the fork; SE capacity in US-NC-2 has twenty-minute droughts, and the volume pins the
+datacenter, so a drought is a wait.

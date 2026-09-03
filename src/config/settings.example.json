@@ -5,16 +5,24 @@
     "max_tokens": 50000,
     "reasoning": "medium",
     "n_ctx": 32768,
-    "ninfer_args": "",
-    "llama_args": ""
+    "sglang_args": "",
+    "ninfer_args": ""
   },
   "play": {
     "origin": "",
     "app_origin": ""
   },
+  "billing": {
+    "gpu_rates": {
+      "NVIDIA GeForce RTX 5090": 1.0,
+      "NVIDIA RTX PRO 4500 Blackwell": 0.73,
+      "NVIDIA RTX PRO 6000 Blackwell Workstation Edition": 1.91,
+      "NVIDIA RTX PRO 6000 Blackwell Server Edition": 2.11
+    }
+  },
   "workqueue": {
     "token": "",
-    "job_timeout_seconds": 900,
+    "job_timeout_seconds": 1800,
     "lease_seconds": 120
   },
   "runpod": {
@@ -41,15 +49,16 @@
       },
       "llm": {
         "template_id": "",
+        "network_volume_ids": [],
         "gpu_type_ids": [
-          "NVIDIA GeForce RTX 5090",
-          "NVIDIA RTX PRO 4500 Blackwell"
+          "NVIDIA RTX PRO 6000 Blackwell Workstation Edition",
+          "NVIDIA RTX PRO 6000 Blackwell Server Edition"
         ],
         "max_workers": 3,
         "scale_up_depth_per_worker": 10,
         "scale_up_max_age_seconds": 300,
-        "cooldown_seconds": 90,
-        "idle_exit_seconds": 30,
+        "cooldown_seconds": 300,
+        "idle_exit_seconds": 60,
         "boot_deadline_seconds": 900,
         "allowed_cuda_versions": [
           "13.0"

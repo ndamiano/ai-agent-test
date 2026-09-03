@@ -47,7 +47,7 @@ Consequences worth stating:
 
 | queue | work | target |
 |---|---|---|
-| `llm` | one build turn (one inference) | ninfer on a 5090; llama.cpp or any OpenAI-shaped server elsewhere |
+| `llm` | one build turn (one inference) | Pennyroyal SGLang on an RTX PRO 6000 (prod); ninfer on the local 5090; any OpenAI-shaped server |
 | `image` | one sprite or texture render | ComfyUI |
 | `mesh` | image → 3D | TRELLIS |
 

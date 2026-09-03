@@ -164,16 +164,17 @@ restarted — Node caches the ESM config, and a stale one drops every custom cla
 
 ### `llm`
 
-`model`, `n_ctx`, `max_tokens`, `reasoning`, `ninfer_args`, `llama_args`. There is no endpoint —
+`model`, `n_ctx`, `max_tokens`, `reasoning`, `sglang_args`, `ninfer_args`. There is no endpoint —
 inference rides the queue.
 
 `n_ctx` is the INPUT budget: when a transcript approaches it, `build_steps.compact` stubs the file
 bodies out of old rounds and, only if that is not enough, drops the oldest whole rounds and
 re-grounds the model on the file listing (`CLAUDE.md`). Nothing else trims.
 
-`ninfer_args` / `llama_args` are appended to the engine's launch line — by `scripts/local_gpu.py`
-here and by the pod entrypoint in prod, from the same key — so every tuning flag lives in one
-place. `--kv-dtype int8` is what lets 131072 fit a 5090.
+The two `_args` strings are appended to an engine's launch line, one per engine: `ninfer_args` by
+`scripts/local_gpu.py` for the 27B on the local 5090 (`--kv-dtype int8` is what lets 131072 fit
+it), `sglang_args` by the pod entrypoint for Flash-Next on an RTX PRO 6000 (`docs/deploy.md`).
+Prod and the local box run different models on different cards; the build harness is the same.
 
 Set it to the server's `-c`. The local router never reports its window, so both errors are yours to
 avoid, and only one of them announces itself:
@@ -185,7 +186,7 @@ avoid, and only one of them announces itself:
 
 `max_tokens` is only the connector's default ceiling — the build path passes its own.
 
-`reasoning` is the thinking effort of every llm call, the build included, sent to ninfer as
+`reasoning` is the thinking effort of every llm call, the build included, sent to the engine as
 `reasoning_effort`. The Qwen3.8 template takes `none`, `low`, `medium` and `xhigh`; `high` is
 rejected (`reasoning_effort_not_supported`). `none` DISABLES thinking, and a non-thinking build is
 the "something kinda close" arm of `docs/experiments.md` (2026-08-25), so a build server runs at
@@ -217,6 +218,13 @@ neither metered nor gated. Build and asset enqueues pass it directly; the one bl
 Env `MAESTRO_DATA_DIR`, default `<repo>/data`. Where platform.db + auth.db live — control-plane
 state, deliberately not under `working_directory`.
 
+### `billing`
+
+`gpu_rates` — 5090-seconds debited per GPU-second, keyed by the `gpu_type` string the worker
+reports (`nvidia-smi`'s name): each card's secure-cloud hourly price over the 5090's $0.99. A
+card missing from the map bills at 1.0 and logs a warning once. The block merges over the
+defaults, so a file that names it carries every card (`docs/compute_billing_plan.md`).
+
 ### `play.origin` / `play.app_origin`
 
 Set BOTH to serve games from their own registrable domain; empty means one origin. settings.json
@@ -243,20 +251,19 @@ aside.
 
 The autoscaler (`src/scaler/` + `docs/deploy.md`): `enabled`, `api_key`, `network_volume_id`,
 `cp_url` (the pod-reachable control-plane URL), `tick_seconds`, `stale_worker_seconds`, and
-per-queue `queues.<name>` scaling blocks (template_id, gpu_type_ids, allowed_cuda_versions,
-fallback_drops_cuda_floor, max_workers, thresholds, cooldown, idle_exit_seconds, boot_deadline_seconds). The `queues` dict
+per-queue `queues.<name>` scaling blocks (template_id, network_volume_ids, gpu_type_ids,
+allowed_cuda_versions, max_workers, thresholds, cooldown, idle_exit_seconds,
+boot_deadline_seconds). The `queues` dict
 replaces the default wholesale — carry complete blocks. settings.json is the only place the block
 lives; `docs/deploy.md` describes what each knob does to a pod.
 
 `gpu_type_ids` is PRIORITY-ORDERED: the scaler asks for the head alone and widens to the whole list
-only when RunPod refuses that create, since the cards are not substitutes (ninfer serves only a
-5090). Which card a pod GOT is the worker's to report, from the device — a control plane that
+only when RunPod refuses that create, since the cards are not substitutes. Which card a pod GOT is the worker's to report, from the device — a control plane that
 records its own request records the first list entry forever (measured 2026-08-01: 879 prod jobs
 stamped 5090, the bill entirely RTX PRO 4500).
 
-The autoscaled llm image carries both engines and picks by reading the card at boot. `llm.model`
-must be what the engine answers to: it reaches the pod as `LLM_MODEL` and becomes ninfer's
-`--model-id`.
+`llm.model` must be what the engine answers to: it reaches the pod as `LLM_MODEL`, and the
+autoscaled llm image serves `pennyroyal` and refuses to boot under any other name.
 
 ### `payments`
 

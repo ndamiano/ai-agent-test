@@ -6,7 +6,8 @@ scaffolding.
 
 The north star is **any game**: ask for a game you imagine, get a real, playable game in a browser.
 "Good" is the constraint we consciously bend today — breadth comes first. Every build runs on an
-open-weight model on a modest rented card (a 5090-class card, a ~30B model).
+open-weight model on one rented card (an RTX PRO 6000 serving Qwen3.8 Flash-Next; a 5090 and a
+27B for local testing).
 
 | Where to look | For |
 |---|---|

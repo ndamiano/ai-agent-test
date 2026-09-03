@@ -60,7 +60,7 @@ python -m auth.cli grant  <handle> <n>       # accounts start at 0 credits
 The queue is the only transport to a GPU. Every backend — LLM, images, meshes — is a worker agent that PULLS jobs over `/worker`, authed by the shared `workqueue.token`. **A queue with no worker running means every job on it times out**, so the `llm` worker is mandatory.
 
 ```bash
-python -m worker.agent --server http://localhost:8000 --token <token> --queue llm   --target http://localhost:8090  # ninfer
+python -m worker.agent --server http://localhost:8000 --token <token> --queue llm   --target http://localhost:8090  # ninfer (local 5090)
 SAFETY_MODEL_DIR=<safety model dir> python -m worker.agent --server http://localhost:8000 --token <token> --queue image --target http://localhost:8188  # ComfyUI
 python -m worker.agent --server http://localhost:8000 --token <token> --queue mesh  --target http://localhost:8189  # TRELLIS
 ```
@@ -69,10 +69,9 @@ The control plane enqueues one canonical chat request; the worker translates it 
 
 ### Local model server
 
-On a 5090 the LLM is served by ninfer (~3x llama.cpp's tok/s on the same weights); llama.cpp serves
-every other card. Both launch lines, and the flags that are load-bearing on each, are in
-`docs/local_dev.md` "Model servers". `--model-id` (ninfer) or the GGUF filename stem (llama.cpp)
-is what `llm.model` must name:
+On the local 5090 the LLM is Qwen3.8 27B served by ninfer; the launch line and its load-bearing
+flags are in `docs/local_dev.md` "Model servers". ninfer's `--model-id` is what `llm.model` must
+name:
 
 ```json
 "llm": {
@@ -82,8 +81,9 @@ is what `llm.model` must name:
 }
 ```
 
-The same string is the alias an autoscaled pod serves under, whichever engine its card runs — a
-ninfer pod rejects any request naming something else.
+Prod serves a different model on a different card — Qwen3.8 Flash-Next on an RTX PRO 6000, under
+the name `pennyroyal` (`docs/deploy.md`) — and there too `llm.model` is the name the engine
+answers to; a pod refuses to boot under any other.
 
 A GPU serves one backend. Running the LLM and ComfyUI on one card means both must fit resident at once.
 

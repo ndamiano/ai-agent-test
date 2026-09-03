@@ -105,17 +105,14 @@ class Autoscaler:
                     "IDLE_EXIT_SECONDS": str(qcfg.get("idle_exit_seconds", 10)),
                 }
                 if queue == "llm":
-                    # An llm pod picks its engine by the card it got, and ninfer answers only
-                    # requests naming its --model-id. The pod cannot read settings, so the model
-                    # string every request will carry is delivered at create.
+                    # The engine answers only requests naming its served model, and the pod
+                    # cannot read settings, so the string every request will carry is delivered
+                    # at create — the entrypoint refuses to boot on a mismatch rather than fail
+                    # every turn. The window the control plane budgets against rides along, as
+                    # do the engine's tuning flags, so a flag is a settings edit and not an image.
                     env["LLM_MODEL"] = llm["model"]
-                    # The window too: the engine preallocates it, and the control plane computes
-                    # its input budget from the same number. The launch flags ride along so the
-                    # window's cost is tunable without an image (131072 fits a 5090 only with
-                    # --kv-dtype int8; bf16 is 450 MB short at launch).
                     env["LLM_N_CTX"] = str(llm["n_ctx"])
-                    env["NINFER_ARGS"] = llm.get("ninfer_args") or ""
-                    env["LLAMA_ARGS"] = llm.get("llama_args") or ""
+                    env["SGLANG_ARGS_EXTRA"] = llm.get("sglang_args") or ""
                 self._start_pod(name, queue, qcfg, rp, env)
                 self._last_scale_up[queue] = now
             elif isinstance(action, TerminatePod):
@@ -134,35 +131,39 @@ class Autoscaler:
         The list is a preference set RunPod satisfies by availability, and it documents no
         priority order — asking for all of them at once is asking for whichever is cheapest to
         hand out. So ask for the head alone first and widen only when that create is refused: the
-        cards differ in what they can serve (ninfer needs a 5090), which makes the fallback a real
-        downgrade rather than a substitution."""
+        cards differ in what they can serve, which makes the fallback a real downgrade rather
+        than a substitution."""
         ids = list(qcfg["gpu_type_ids"])
         # The CUDA floor (`allowed_cuda_versions`) is what the queue's engine needs of the host
-        # driver. `fallback_drops_cuda_floor` is for a queue with a second engine that runs on any
-        # driver: the llm image falls back to llama.cpp, and a slow pod beats no pod (measured
-        # 2026-08-02: 3 of 4 draws landed old-driver 5090s, each serving at a third of ninfer's
-        # rate). An image pod has one engine, so for it an old-driver host is a dead pod on any
-        # card and the floor rides the widened ask too.
+        # driver, and every queue has one engine, so an old-driver host is a dead pod on any card
+        # and the floor rides the widened ask too (measured 2026-08-02: 3 of 4 draws landed
+        # old-driver hosts).
         cuda = qcfg.get("allowed_cuda_versions")
-        widened_cuda = None if qcfg.get("fallback_drops_cuda_floor") else cuda
-        attempts = [(ids[:1], cuda), (ids, widened_cuda)] if len(ids) > 1 else [(ids, cuda)]
-        for i, (attempt, attempt_cuda) in enumerate(attempts):
+        gpu_asks = [ids[:1], ids] if len(ids) > 1 else [ids]
+        # A volume pins its datacenter, so a queue whose weights are copied onto several volumes
+        # can be served from several datacenters: each volume is asked in turn, the preferred
+        # card first and then the whole list, and the next volume only when a datacenter has
+        # refused every card.
+        volumes = qcfg.get("network_volume_ids") or [rp.get("network_volume_id", "")]
+        attempts = [(v, ask) for v in volumes for ask in gpu_asks]
+        for i, (volume, attempt) in enumerate(attempts):
             try:
                 self._client.create_pod(
                     name=name,
                     template_id=qcfg["template_id"],
                     gpu_type_ids=attempt,
-                    network_volume_id=rp.get("network_volume_id", ""),
+                    network_volume_id=volume,
                     env=env,
                     cloud_type=rp.get("cloud_type", "SECURE"),
-                    allowed_cuda_versions=attempt_cuda,
+                    allowed_cuda_versions=cuda,
                 )
             except RunPodError as e:
                 if i == len(attempts) - 1:
                     raise
-                logger.warning("scale-up %s: create with %s (cuda %s) refused (%s) — widening to %s",
-                               queue, ids[0], attempt_cuda, e, ids)
+                logger.warning("scale-up %s: create on volume %s with %s (cuda %s) refused (%s) "
+                               "— next ask %s on %s", queue, volume, attempt, cuda, e,
+                               attempts[i + 1][1], attempts[i + 1][0])
                 continue
-            logger.info("scale-up %s: created pod %s on %s (cuda %s)",
-                        queue, name, attempt, attempt_cuda)
+            logger.info("scale-up %s: created pod %s on %s, volume %s (cuda %s)",
+                        queue, name, attempt, volume, cuda)
             return

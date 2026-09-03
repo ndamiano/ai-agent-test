@@ -46,7 +46,7 @@ LOGS = Path(os.environ.get("MAESTRO_LOCAL_LOGS", "/tmp/maestro-local"))
 
 NINFER = Path(os.environ.get("NINFER_BIN",
                              "/home/nick/Documents/ninfer/build/apps/ninfer-serve"))
-NINFER_MODELS = Path(os.environ.get("NINFER_MODELS", "/var/tmp/ninfer-models"))
+NINFER_MODELS = Path(os.environ.get("NINFER_MODELS", "/var/lib/models/ninfer"))
 COMFY_PYTHON = Path(os.environ.get("COMFY_PYTHON",
                                    "/home/nick/Documents/Comfy/comfy-env/bin/python"))
 COMFY_DIR = Path(os.environ.get("COMFY_DIR", "/home/nick/comfy/mess-with-comfy"))

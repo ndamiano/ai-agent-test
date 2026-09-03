@@ -41,3 +41,7 @@ node_modules/
 
 scratchpad/
 /eval/
+
+# llm image inputs (the kernel-cache tarball) and outputs (the exported engine env): build artifacts, kept on the llm volumes
+docker/*.tgz
+docker/out/

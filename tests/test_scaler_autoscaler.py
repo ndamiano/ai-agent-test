@@ -64,8 +64,8 @@ def test_pod_env_carries_no_gpu_type():
 
 
 def test_pod_env_carries_the_model_string_the_control_plane_will_send():
-    """ninfer rejects any request whose model is not its --model-id, and the pod cannot read
-    settings — so the alias has to arrive at create."""
+    """The engine rejects any request whose model is not its served name, and the pod cannot
+    read settings — so the string has to arrive at create."""
     a, client = _scaler()
     _start(a)
     assert client.create_pod.call_args.kwargs["env"]["LLM_MODEL"] == "qwen3.8_27b"
@@ -80,12 +80,45 @@ def test_pod_env_carries_the_window_the_control_plane_budgets_against():
 
 
 def test_pod_env_carries_the_engine_flags_so_tuning_is_never_a_new_image():
-    """KV dtype, thinking and the like are launch flags of the engine; the pod hears the control
-    plane's string at create and an unset one is an empty list, not a missing variable."""
+    """Graph batch sizes, draft tokens and the like are launch flags of the engine; the pod hears
+    the control plane's string at create and an unset one is an empty list, not a missing
+    variable. The local leg's ninfer flags are another engine's and stay home."""
     a, client = _scaler()
-    _start(a, llm={**LLM, "ninfer_args": "--kv-dtype int8"})
+    _start(a, llm={**LLM, "sglang_args": "--cuda-graph-bs 1", "ninfer_args": "--kv-dtype int8"})
     env = client.create_pod.call_args.kwargs["env"]
-    assert env["NINFER_ARGS"] == "--kv-dtype int8" and env["LLAMA_ARGS"] == ""
+    assert env["SGLANG_ARGS_EXTRA"] == "--cuda-graph-bs 1" and "NINFER_ARGS" not in env
+    _start(a)
+    assert client.create_pod.call_args.kwargs["env"]["SGLANG_ARGS_EXTRA"] == ""
+
+
+def test_a_queue_with_its_own_volumes_never_touches_the_shared_one():
+    """The volume pins the datacenter, and the llm weights live in another one than the art."""
+    a, client = _scaler()
+    _start(a, {**QCFG, "network_volume_ids": ["vol-llm"]})
+    assert client.create_pod.call_args.kwargs["network_volume_id"] == "vol-llm"
+    _start(a)
+    assert client.create_pod.call_args.kwargs["network_volume_id"] == "vol1"
+
+
+def test_the_next_volume_is_asked_only_after_a_datacenter_refused_every_card():
+    """Two volumes are two datacenters; the preferred card is worth the whole first datacenter
+    before the second is tried at all."""
+    a, client = _scaler()
+    client.create_pod.side_effect = [RunPodError("no WK"), RunPodError("no SE either"),
+                                     {"id": "pod1"}]
+    _start(a, {**QCFG, "network_volume_ids": ["vol-eu", "vol-us"]})
+    calls = [(c.kwargs["network_volume_id"], c.kwargs["gpu_type_ids"])
+             for c in client.create_pod.call_args_list]
+    assert calls == [("vol-eu", ["NVIDIA GeForce RTX 5090"]),
+                     ("vol-eu", QCFG["gpu_type_ids"]),
+                     ("vol-us", ["NVIDIA GeForce RTX 5090"])]
+
+
+def test_every_volume_refused_is_logged_not_raised():
+    a, client = _scaler()
+    client.create_pod.side_effect = RunPodError("no capacity")
+    _start(a, {**QCFG, "network_volume_ids": ["vol-eu", "vol-us"]})
+    assert client.create_pod.call_count == 4
 
 
 def test_only_an_llm_pod_hears_about_the_model():
@@ -175,17 +208,6 @@ def test_cuda_floor_rides_the_widened_ask_too():
     head, widened = client.create_pod.call_args_list
     assert head.kwargs["allowed_cuda_versions"] == ["13.0"]
     assert widened.kwargs["allowed_cuda_versions"] == ["13.0"]
-
-
-def test_a_queue_with_an_any_driver_fallback_drops_the_floor_on_widen():
-    """The llm image carries llama.cpp beside ninfer; a slow pod beats no pod."""
-    a, client = _scaler()
-    qcfg = {**QCFG, "allowed_cuda_versions": ["13.0"], "fallback_drops_cuda_floor": True}
-    client.create_pod.side_effect = [RunPodError("no 13.0 5090 host"), {"id": "pod1"}]
-    _start(a, qcfg)
-    head, widened = client.create_pod.call_args_list
-    assert head.kwargs["allowed_cuda_versions"] == ["13.0"]
-    assert widened.kwargs["allowed_cuda_versions"] is None
 
 
 def test_no_cuda_floor_configured_sends_none():

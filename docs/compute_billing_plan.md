@@ -62,19 +62,24 @@ estimate is never refused mid-flight, so a game can still overdraw — the reser
 The estimates are a hill-climbable policy constant, not a measurement: tune them against the jobs
 table's real `exec_seconds`.
 
-**GPU multipliers are planned, not built.** The idea: a faster/pricier card debits more than one
-second per GPU-second (an H100 at $2.89/GPU-hr would debit ~3×), buying either speed or better
-models out of the same grant. Today every job row records the `gpu_type` that ran it, but the debit
-is unweighted — 1 second is 1 second whatever the card. The recorded `gpu_type` is what a multiplier
-would key on when it lands, and it is only worth keying on because the WORKER reads it off the
-device: rows before 2026-08-01 carry the type the scaler asked RunPod for, which was 5090 on every
-row while the bill was entirely RTX PRO 4500.
+**The debit is weighted by the card.** A grant is 5090-seconds, and a second on a pricier card
+costs more of them: `billing.gpu_rates` maps the `gpu_type` the worker read off the device to its
+hourly price over the 5090's ($0.99), and `complete_job` debits `exec_seconds × rate`
+(`db/estimates.gpu_rate`). The job row keeps both — `exec_seconds` is what the card ran and
+`billed_seconds` what the game paid — so the ledger survives a rate change, and the admin view's
+`billed` is the weighted sum while `paid` stays raw. A card with no rate bills at 1.0 and logs
+once, so a new card under-bills loudly rather than refusing work. The estimate a job reserves at
+enqueue is NOT weighted: the card is unknown until a worker claims. Built 2026-09-03, when the
+llm queue moved to the RTX PRO 6000 (1.91× Workstation, 2.11× Server) and every build began
+under-billing by half. The rate keys on the worker's reading and nothing else, because rows before
+2026-08-01 carry the type the scaler ASKED for, which was 5090 on every row while the bill was
+entirely RTX PRO 4500.
 
 ---
 
 ## 4. Queue architecture
 
-Downtime is strictly loss, so each model has its own queue and its own pod: one model per pod, one worker per queue, and a queue owns its card. Time spent switching models or inference stacks is pure loss, so nothing is co-located. Weights ride a RunPod network volume rather than a baked image — baking them would move the same cost into the image pull — and a mesh pod reaches warm in ~25s in-container, ~60-70s with create and pull (`deploy.md`). Scale-down is the worker's: `idle_exit_seconds` per queue, 30s on llm and image and 120s on mesh in prod, because mesh jobs arrive staggered off the image chain and a short idle would re-pay the cold start repeatedly. Spot versus on-demand per queue is still open. Every model's weights must be permissively licensed (`vision.md`); `docs/technology_analysis.md` is the current table.
+Downtime is strictly loss, so each model has its own queue and its own pod: one model per pod, one worker per queue, and a queue owns its card. Time spent switching models or inference stacks is pure loss, so nothing is co-located. Weights ride a RunPod network volume rather than a baked image — baking them would move the same cost into the image pull — and a mesh pod reaches warm in ~25s in-container, ~60-70s with create and pull (`deploy.md`). Scale-down is the worker's: `idle_exit_seconds` per queue — 60s on llm (the finalize and the gate's headless load sit ~32s between the last build turn and the gate's first llm call, and at 30s the pod died 6s short of it and the build paid a second ~110s boot, measured 2026-09-03), 30s on image and 120s on mesh in prod, because mesh jobs arrive staggered off the image chain and a short idle would re-pay the cold start repeatedly. The llm `cooldown_seconds` is 300, past the pod's boot, so the scaler does not start a second pod while the first is still booting. Spot versus on-demand per queue is still open. Every model's weights must be permissively licensed (`vision.md`); `docs/technology_analysis.md` is the current table.
 
 ### Large Language Models
 ninfer serves the LLM on a 5090 (~3x llama.cpp's tok/s on the same weights); llama.cpp serves every other card, and the autoscaled llm image carries both and picks at boot. The model itself is a **swappable choice, not a

@@ -9,7 +9,16 @@ it completes from running a grant into the ground unseen.
 
 Tune these against the jobs table's real exec_seconds; they are a hill-climbable policy constant,
 not a measurement.
+
+The DEBIT is weighted by the card: a grant is denominated in 5090-seconds, and a second on a
+pricier card costs more of them (`billing.gpu_rates`, each card's hourly price over the 5090's).
+The estimate is not weighted — the card is unknown at enqueue.
 """
+import logging
+
+from config.settings_manager import settings_manager
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SECONDS = 60.0
 
@@ -31,3 +40,18 @@ def cheapest_seconds() -> float:
     """What a game needs left to afford even one job. Below this, enqueue refuses everything, so
     admitting the run at all would only buy it a thrash against its step cap."""
     return min(QUEUE_SECONDS.values())
+
+
+_unrated: set = set()
+
+
+def gpu_rate(gpu_type) -> float:
+    """5090-seconds debited per second on this card. An unknown card bills at 1.0 and is logged
+    once, so a new card under-bills loudly rather than refusing work."""
+    rates = settings_manager.get_settings()["billing"]["gpu_rates"]
+    if gpu_type in rates:
+        return float(rates[gpu_type])
+    if gpu_type not in _unrated:
+        _unrated.add(gpu_type)
+        logger.warning("no billing.gpu_rates entry for gpu_type %r — debiting at 1.0", gpu_type)
+    return 1.0

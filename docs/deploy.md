@@ -181,7 +181,7 @@ One worker process per queue, run wherever the GPU is. It dials out, so it needs
 
 ```bash
 python -m worker.agent --server http://<control-plane>:8000 --token <WORKQUEUE_TOKEN> \
-    --queue llm   --target http://localhost:8090     # ninfer (llama.cpp serves :8080 on other cards)
+    --queue llm   --target http://localhost:8090     # ninfer on the local 5090; :8001 on an RTX PRO 6000 pod
 python -m worker.agent ... --queue image --target http://localhost:8188   # ComfyUI
 python -m worker.agent ... --queue mesh  --target http://localhost:8189   # TRELLIS
 ```
@@ -197,11 +197,20 @@ One image per queue, weights on a RunPod **network volume** (the image is code, 
 weights), so a pod boots without re-downloading the weights. Pods never talk to Hugging Face after
 provisioning.
 
-What the volume holds, by queue (`scripts/provision_volume.sh` is the authority):
+There is more than one volume, because a volume pins its datacenter: the art volume
+(`runpod.network_volume_id`, EU-RO-1, 5090-class hosts) holds the image and mesh weights, and
+the LLM lives on its own volumes, one per datacenter it can be served from
+(`queues.llm.network_volume_ids`, in order of preference). The scaler asks each datacenter for
+the preferred card, then any card, and moves to the next volume only when a datacenter has
+refused every card — so a capacity drought in one datacenter (US-NC-2 had two twenty-minute ones
+on 2026-09-02) is a pod elsewhere rather than a wait. Surveyed 2026-09-02: the RTX PRO 6000
+Server Edition is in nine datacenters, the cheaper and faster Workstation Edition only in EU-RO-1
+(and now and then EUR-IS-1), and of those with volume support EU-RO-1 comes first.
+
+What the art volume holds (`scripts/provision_volume.sh` is the authority):
 
 | queue | weights | GB |
 |---|---|---|
-| llm | `models/ninfer/qwen3_8_27b_quasar_nvfp4.ninfer` (ninfer, a 5090 on r580+) + `models/LLM/qwen3.8_27b_quasar.gguf` (llama.cpp, any other card; stored under the model id because the router names a model by its file stem, so both artifacts share the `LLM_MODEL` stem) | 35 |
 | image | `checkpoints/NetaYume_v4_all_in_one` (sprites, scenes), `checkpoints/DreamShaperXL_Turbo_v2_1` (tiles, scene-chain terrain), `diffusion_models/qwen_image_2512_fp8_e4m3fn` (scene-chain subjects), `diffusion_models/qwen_image_edit_2511_fp8mixed` (the scene embed) + the `text_encoders/qwen_2.5_vl_7b_fp8_scaled` and `vae/qwen_image_vae` both Qwen graphs share, `RMBG/BiRefNet` (the matte) | 69 |
 | mesh | `trellis2-weights` + `encoders/` (dinov3 mirror, BiRefNet) + the `hf-cache` pre-seed | 21 |
 | image (safety) | `comfy/models/safety/` — the NSFW classifier | 0.02 |
@@ -217,59 +226,110 @@ retired artifact is a `cp`/`rm` from the home box:
 aws s3 ls --profile runpod --region eu-ro-1 \
     --endpoint-url https://s3api-eu-ro-1.runpod.io s3://<volume-id>/ --recursive --human-readable
 aws s3 cp --profile runpod --region eu-ro-1 --endpoint-url https://s3api-eu-ro-1.runpod.io \
-    /var/tmp/ninfer-models/qwen3_8_27b_quasar_nvfp4.ninfer s3://<volume-id>/models/ninfer/
+    <file> s3://<volume-id>/comfy/models/checkpoints/
 ```
 
 The bucket name IS the network volume id, and the region/endpoint pair is the datacenter the volume
-lives in — a volume in another datacenter answers on its own endpoint or not at all.
+lives in — a volume in another datacenter answers on its own endpoint or not at all (the llm
+volume answers at `--region us-nc-2 --endpoint-url https://s3api-us-nc-2.runpod.io`).
+
+**The llm volume holds the checkpoint PREPACKED**, not as safetensors. Qwen3.8 Flash-Next NVFP4
+(`RadixArk/Qwen3.8-Flash-Next-NVFP4`, 126 GiB) loads through a repack pass that is CPU-bound —
+~110 s on a fresh pod, NVMe or not — so the engine carries a `--load-format prepacked` loader that
+restores the post-repack state from one flat file in 20–55 s (`docker/penny_patch.tgz`, applied
+over the pinned fork tag). The pod boots from `models/pennyroyal/prepacked/`; the safetensors
+shards are gone from the volume (the 142 GB quota holds one copy, not two) except one, because
+the fork's namespace helper raises on a checkpoint with zero `*.safetensors`. The pack's key is
+the load layout (quantization backends, tp, the config's hash) and not the path, so a second
+volume in another datacenter is a COPY, not a re-dump. What worked (2026-09-02, EU-RO-1 from
+US-NC-2, 130 GB in 9 minutes for $0.04 of CPU pod):
+
+1. `hf download` the checkpoint to `models/pennyroyal/` on any pod with the new volume mounted
+   (60 s at datacenter bandwidth), then DELETE every shard but one plus the index, over the
+   volume's S3 endpoint. Keep the `.cache/huggingface` metadata the download wrote — without it
+   the namespace helper hashes every byte it finds.
+2. Rent a CPU pod IN THE NEW VOLUME'S DATACENTER with the volume mounted, `truncate` the pack
+   file to its final size on the mount, and have 16 workers each `get-object --range` a 100 MB
+   piece from the OLD volume's S3 endpoint and `dd … seek=` it into place. That is ~215 MB/s.
+
+Two orders that do NOT work: shards and pack on the volume at once (the quota is one copy — a
+full volume fails every write silently, the mount reports nothing, the S3 gateway keeps
+answering stale sizes, and only a `put-object` from outside says `QuotaExceeded`); and writing
+the pack THROUGH the S3 gateway (a single stream is ~15 MB/s, `UploadPart` over ~128 MB is 413,
+48 concurrent parts is 524, and a 40-minute multipart session had lost a fifth of its parts by
+`CompleteMultipartUpload`). A GPU pod that loads the checkpoint off the volume to dump a fresh
+pack dies to the container cgroup; stage it to NVMe first if a re-dump is ever needed. A pod
+launched by hand must not be named `maestro-<queue>-…` — the scaler reaps a pod under its prefix
+that never registers a worker.
+
+Beside the weights, every llm volume holds the ENGINE: `env/llm-env-<id>.tar` (~10 GB), the
+python env, the fork checkout and the sm120 kernel caches that the llm Dockerfile builds and
+exports rather than ships as layers, because they are mostly CUDA libraries that do not compress
+and cost 90–120 s to pull on every host that had not seen the tag. The image is the toolchain
+alone; the entrypoint restores the tarball into the container at boot. `<id>` is the tarball's
+hash and the image carries it, so an image only ever boots against the tarball it was built
+with — a new image means a new tarball on EVERY llm volume, uploaded before the template moves.
+The fork is `ndamiano/sglang-rtxpro6000`; the pinned tag carries the prepacked loader over
+jpezzulli's release. `fastboot/penny_cache_v6.tgz` on the US volume is the one build input the
+Dockerfile still ADDs (kernel caches plus the serve script); fetch it into `docker/` first.
 
 ```bash
-# 1. one-time: populate the volume. Any cheap pod with it mounted; no GPU used.
+# 1. one-time: populate the art volume. Any cheap pod with it mounted; no GPU used.
 VOL=/workspace bash scripts/provision_volume.sh
 
 # 2. build + push the three worker images (one Docker Hub repo, queue-version tags)
-docker build -f Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v13 .
-docker build -f Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v8 .
-docker build -f Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v17 .
+docker build --target env --output type=local,dest=docker/out -f docker/Dockerfile.worker-llm .
+ID=$(cat docker/out/env.id)                      # then docker/out/env.tar → every llm volume:
+aws s3 cp --profile runpod --region eu-ro-1 --endpoint-url https://s3api-eu-ro-1.runpod.io \
+    docker/out/env.tar s3://<llm-volume>/env/llm-env-$ID.tar   # ~8 min per volume from home
+docker build -f docker/Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v15 .
+docker build -f docker/Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v8 .
+docker build -f docker/Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v17 .
 docker push ndamiano100/maestro-worker:mesh-v17   # etc.
 ```
 
+The env export goes through `$DOCKER_TMPDIR` — default `/tmp` — at its full size; set it to a
+disk with room. The Docker Hub repo is private, so every template carries the registry auth:
+without it a pod exits in one second with no logs.
+
 The deployed tag is whatever each RunPod TEMPLATE names; the templates are the only record of it
-(`llm-v13`, `image-v8`, `mesh-v17` at the last check; `llm-v13` is the first whose ninfer fork reads the QUASAR artifact — nothing older boots on this volume).
+(`llm-v15`, `image-v8`, `mesh-v17` at the last check).
 An image tag and the volume's weights go live in LOCKSTEP: the entrypoint stages and warms up on
 the checkpoints the workflows name, so a pod predating a model swap dies at boot on a weight that
 is not there. Roll the volume forward first, the template second, and retire the old weight last.
 Bump the tag on every push — RunPod caches images per host, so re-pushing a tag leaves stale
 copies serving on warm hosts.
 
-**The llm image carries BOTH engines and picks at boot.** ninfer serves the same 27B at ~3x
-llama.cpp's rate (194.5 vs 63.3 tok/s) but is compiled for `sm_120a`, so it runs on a 5090 and nowhere else — and the HOST DRIVER is part
-of the capability: ninfer is a CUDA 13.1 build, which needs the host at r580+, and RunPod hosts
-vary. On an older driver ninfer dies at `cudaGetDeviceCount` (`cudaErrorInsufficientDriver`) and
-the pod boot-loops, billing until the boot-deadline reaper collects it — measured 2026-08-01, two
-pods in a row. So the entrypoint reads `nvidia-smi` name AND driver version: ninfer on
-a 5090 at r580+, llama.cpp (the base image's own CUDA 12.8 build, fine on old drivers) on
-everything else. Old-driver draws proved common (3 of 4 on 2026-08-02), so the scaler now sends a
-create-time CUDA floor: `queues.<name>.allowed_cuda_versions` (prod llm: `["13.0"]` — RunPod's
-"13.0" means an r580+ host, which runs the CUDA 13.1 ninfer via minor-version compatibility). The
-floor rides every gpu ask. The llm queue alone sets `fallback_drops_cuda_floor: true`, so when its
-create widens to fallback cards the floor goes — those serve the GGUF on any driver, and a slow pod
-beats no pod. The image queue needs the same `["13.0"]` floor with no opt-out: `image-v8` is torch
-cu130, one engine, and an old-driver host is a dead pod on any card. The entrypoint driver gate
-stays as the belt to this suspender. That is why the volume holds the model twice
-(`models/ninfer/*.ninfer` and `models/LLM/*.gguf`, ~35 GiB together) and why an llm pod needs
-`LLM_MODEL`, `LLM_N_CTX`, `NINFER_ARGS` and `LLAMA_ARGS` in its env: ninfer refuses any request
-whose `model` is not its `--model-id`, the engine preallocates the window it is given (nvfp4 +
-`--vision` fits a 5090 at 131072 only with `--kv-dtype int8`; bf16 KV is 450 MB short at launch),
-and the autoscaler delivers the control plane's `llm.model`, `llm.n_ctx`, `llm.ninfer_args` and
-`llm.llama_args` at create — on prod those are the control plane's own `.env` (`LLM_MODEL`,
-`LLM_N_CTX`, `NINFER_ARGS`, `LLAMA_ARGS`), which is why the settings.json there has no `llm` block. The two `_args` strings are appended to the engine's launch line, so
-a tuning knob — KV dtype, thinking, draft tokens, a sampler override — is a `settings.json` edit
-and the next pod, never a new image tag. `scripts/local_gpu.py llm` launches with the same string,
-which is where a flag that dies at launch should die first: on a pod it bills until the
-boot-deadline reaper (`queues.<name>.boot_deadline_seconds`, 900 by default) collects it.
-The ninfer build stage compiles a pinned commit of github.com/Neroued/ninfer — it needs CUDA 13.1
-(the base image ships 12.8 for llama.cpp; only `libcudart.so.13` is added).
+**The llm image is one engine on one card.** Pennyroyal — jpezzulli's SGLang fork for the RTX
+PRO 6000 — serves Qwen3.8 Flash-Next on the 96 GB SM120 card with vision, tool calls and a clean
+reasoning split; it is the only stack measured to (2026-09-02, `docs/experiments.md`). So
+`queues.llm.gpu_type_ids` names that card's two editions, Workstation first (cheaper at $1.89
+and faster), Server second, and `allowed_cuda_versions` is the driver floor
+its CUDA 13 wheels need (`["13.0"]`, RunPod's name for an r580+ host): a pod on an older driver
+is dead on any card and bills until the boot-deadline reaper (`boot_deadline_seconds`, 900)
+collects it. The floor rides every ask, including the widened one — there is no second engine to
+fall back to. The image queue needs the same floor for the same reason (`image-v8` is torch
+cu130).
+
+An llm pod needs `LLM_MODEL`, `LLM_N_CTX` and `SGLANG_ARGS_EXTRA` in its env, and the autoscaler
+delivers them at create from the control plane's `llm.model`, `llm.n_ctx` and `llm.sglang_args` —
+on prod those are the control plane's own `.env` (`LLM_MODEL`, `LLM_N_CTX`, `SGLANG_ARGS`), which
+is why the settings.json there has no `llm` block. The engine serves under the name
+`pennyroyal` at a 524288 window, both baked into its serve script; `LLM_MODEL` must be that name
+and `LLM_N_CTX` — the control plane's input budget — at most that window, and the entrypoint
+refuses to boot otherwise, since a request naming another model fails on the first turn. The
+`sglang_args` string is appended to the launch line, so a tuning knob — graph batch sizes, draft
+tokens, a sampler override — is a `settings.json` edit and the next pod, never a new image tag.
+Two things to know before setting one: a flag that changes the FlashInfer autotune key costs
+each fresh pod a ~300 s re-tune (the image bakes the cache for its own flags), and the image
+appends `--cuda-graph-bs 1 2` LAST because builds run at most two streams and the later
+occurrence wins.
+
+Boot is measured at 170 s from create to serving, averaged over three fresh pods (97 s on a host
+that has the image, 190–220 s on one that pulls it): the pack restore is 35–55 s of that, the
+rest is provisioning and the 16.7 GB pull. The first engine launch on a pod can still die to the
+188 GB container cgroup while loading; the entrypoint gives it three attempts, and one has
+sufficed on every measured pod since the loader stopped mmapping the checkpoint.
 
 **The image worker carries the NSFW classifier; ship its weights before the control plane.** The
 bundle comes from `python scripts/export_safety_model.py <dir>` (a box with HF access; ~22 MB:
@@ -280,10 +340,22 @@ Order matters on first rollout: volume weights + new image tag FIRST, control pl
 control plane refuses any render without a verdict, so old image workers under a new control
 plane refuse every render.
 
+**A schema change is an `ALTER TABLE` on the box before the deploy.** The store creates tables
+with `IF NOT EXISTS` and never migrates, so a column added to a `CREATE TABLE` reaches a fresh
+database only; on prod it is one statement through the container's python, run BEFORE
+`deploy.sh` ships the code that writes it (2026-09-03, `jobs.billed_seconds`):
+
+```bash
+ssh maestro 'cd /opt/maestro && docker compose exec -T app python3 -c "
+import sqlite3; c = sqlite3.connect(\"/data/platform.db\")
+c.execute(\"ALTER TABLE jobs ADD COLUMN billed_seconds REAL\"); c.commit()"'
+```
+
 **`LLM_MODEL` has no default and the entrypoint refuses to start without one.** An llm pod that
-boots without it exits 1 — and RunPod restarts an exited container and keeps billing until
-`boot_deadline_seconds` (900) expires, while the scaler creates a replacement in the meantime. The
-autoscaler delivers it at create; a pod launched by hand has to carry it in the template env.
+boots without it (or with a name the engine does not serve) exits 1 — and RunPod restarts an
+exited container and keeps billing until `boot_deadline_seconds` (900) expires, while the scaler
+creates a replacement in the meantime. The autoscaler delivers it at create; a pod launched by
+hand has to carry it in the template env.
 
 Make one RunPod **template** per image (container image + volume mount at `/workspace`; no ports).
 Run each pod with the volume at `/workspace` and `CP_URL` + `WORKER_TOKEN` set (`WORKER_TOKEN` must
@@ -362,7 +434,9 @@ Settings block (`settings.json` → `runpod`, the full key list in `docs/local_d
 - `queues.<name>` — per-queue policy: `template_id`, `gpu_type_ids` (a PRIORITY-ORDERED list: the
   scaler creates with the first entry alone, and retries with the whole list only if RunPod refuses
   — asking for all of them at once gets whichever card RunPod prefers to hand out, and the cards are
-  not substitutes, since ninfer serves only a 5090),
+  not substitutes), `network_volume_ids` (the queue's own volumes, one per datacenter its weights
+  are copied to, tried in order; absent, the queue rides `runpod.network_volume_id`),
+  `allowed_cuda_versions` (the host-driver floor the queue's engine needs),
   `max_workers`, `scale_up_depth_per_worker` (add when pending ÷ effective workers hits this),
   `scale_up_max_age_seconds` (starvation trigger), `cooldown_seconds`, `idle_exit_seconds`
   (linger tuning: raise for chatty queues, 0 = never exit), `boot_deadline_seconds` (a pod this

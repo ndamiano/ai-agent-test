@@ -345,6 +345,7 @@ def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") ->
     try:
         return _enqueue()
     except db_store.InsufficientCompute as e:
+        err = e
         released = db_store.abandon_pending_batch_jobs(
             run_id, "preempted: the build needs the remaining compute")
         if released:
@@ -353,8 +354,8 @@ def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") ->
             try:
                 return _enqueue()
             except db_store.InsufficientCompute as e2:
-                e = e2
-        logger.error("build %s turn refused: %s", run_id, e)
+                err = e2
+        logger.error("build %s turn refused: %s", run_id, err)
         rs = RunState(run_id)
         cursor.phase = "done"
         cursor.ok = False

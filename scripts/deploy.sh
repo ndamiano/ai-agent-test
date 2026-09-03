@@ -53,7 +53,7 @@ echo "==> Building + restarting the container on ${PROD_HOST}"
 ssh "${PROD_HOST}" "cd '${REMOTE_DIR}' && test -f .env || { echo 'ERROR: ${REMOTE_DIR}/.env missing — run provision.sh + create .env first' >&2; exit 1; }"
 ssh "${PROD_HOST}" "cd '${REMOTE_DIR}' && docker compose build && docker compose up -d"
 
-echo "==> Health check"
+echo "==> Health check (retries up to 10x/3s while the app boots — curl errors below are normal until the final verdict)"
 # Probe from the prod box (localhost:PORT) so we don't depend on the app port being publicly open.
 if ssh "${PROD_HOST}" "curl -fsS --retry 10 --retry-delay 3 --retry-all-errors http://localhost:${HEALTH_PORT}/healthz >/dev/null"; then
   echo "==> DEPLOY OK — ${PROD_HOST} is serving /healthz"

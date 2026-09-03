@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -5,6 +6,21 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent))
+
+
+def pytest_unconfigure(config):
+    """Exit before interpreter finalization: greenlet (via playwright's sync API) segfaults in a
+    thread's TLS destructor when threads unwind during shutdown — upstream race, reproduced on
+    greenlet 3.2.4/3.5.4/3.5.5, full suite only. The suite's verdict is already decided here."""
+    sys.stdout.flush()
+    sys.stderr.flush()
+    status = getattr(config, "_maestro_exitstatus", None)
+    if status is not None:
+        os._exit(status)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    session.config._maestro_exitstatus = int(exitstatus)
 
 
 @pytest.fixture

@@ -53,9 +53,6 @@ def test_a_failed_job_keeps_the_requested_model():
     assert store.get_job(job_id)["model"] == "qwen3.6_27b"
 
 
-# The debit is in 5090-seconds. A second on a pricier card costs more of them, by the rate the
-# card's `billing.gpu_rates` entry names; the row keeps the raw exec_seconds beside the billed.
-
 WK = "NVIDIA RTX PRO 6000 Blackwell Workstation Edition"
 
 

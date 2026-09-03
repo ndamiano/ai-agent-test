@@ -22,7 +22,7 @@ const Frame: React.FC<{ children: React.ReactNode }> = ({ children }) => (
             <div className="font-display text-2xl tracking-wide text-center flex items-center justify-center gap-2.5">
                 <span className="w-[18px] h-[18px] rotate-45 border-[1.5px] border-ember relative
                                  after:absolute after:inset-[3px] after:bg-ember after:opacity-50" />
-                Maestro
+                GameSummoner
             </div>
             {children}
         </div>

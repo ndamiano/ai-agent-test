@@ -45,7 +45,7 @@ const Layout: React.FC = () => {
                                             hover:text-ember transition-colors">
                         <span className="w-[18px] h-[18px] rotate-45 border-[1.5px] border-ember relative
                                          after:absolute after:inset-[3px] after:bg-ember after:opacity-50" />
-                        Maestro
+                        GameSummoner
                     </Link>
                     {nav.length > 1 && (
                         <nav className="flex gap-1">

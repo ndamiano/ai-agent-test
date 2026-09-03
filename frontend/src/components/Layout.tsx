@@ -7,11 +7,13 @@ import GradePage from './grade/GradePage'
 import GradesPanel from './grade/GradesPanel'
 import SettingsPage from './settings/SettingsPage'
 import CreditsPage from './credits/CreditsPage'
+import DemoGallery from './public/DemoGallery'
 import { useAuth } from '../contexts/AuthContext'
 import { Link, parseRoute, useRouter } from '../router'
 
 const NAV: { to: string; label: string; adminOnly?: boolean }[] = [
     { to: '/', label: 'Games' },
+    { to: '/demos', label: 'Demos' },
     { to: '/admin', label: 'Admin', adminOnly: true },
     { to: '/prompts', label: 'Prompts', adminOnly: true },
     { to: '/grades', label: 'Grades', adminOnly: true },
@@ -82,6 +84,13 @@ const Layout: React.FC = () => {
 
             <main className="flex-1 overflow-hidden">
                 {route.kind === 'settings' && <SettingsPage />}
+                {route.kind === 'demos' && (
+                    <div className="h-full overflow-y-auto">
+                        <div className="max-w-5xl mx-auto px-6 py-10">
+                            <DemoGallery />
+                        </div>
+                    </div>
+                )}
                 {route.kind === 'credits' && <CreditsPage />}
                 {route.kind === 'admin' && isAdmin && <AdminPanel />}
                 {route.kind === 'prompts' && isAdmin && <PromptsPanel />}

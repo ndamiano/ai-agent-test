@@ -60,6 +60,7 @@ export type Route =
     | { kind: 'game'; runId: string }
     | { kind: 'settings' }
     | { kind: 'credits' }
+    | { kind: 'demos' }
     | { kind: 'admin' }
     | { kind: 'prompts' }
     | { kind: 'grade'; runId: string }
@@ -71,6 +72,7 @@ export const parseRoute = (path: string): Route => {
     if (path === '/new') return { kind: 'create' }
     if (path === '/settings') return { kind: 'settings' }
     if (path === '/credits') return { kind: 'credits' }
+    if (path === '/demos') return { kind: 'demos' }
     if (path === '/admin') return { kind: 'admin' }
     if (path === '/prompts') return { kind: 'prompts' }
     if (path === '/grades') return { kind: 'grades' }

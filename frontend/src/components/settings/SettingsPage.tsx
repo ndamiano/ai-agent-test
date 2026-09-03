@@ -126,6 +126,15 @@ const SettingsPage: React.FC = () => {
                         <Button variant="danger" size="md" onClick={logout}>Sign out</Button>
                     </div>
                 </section>
+
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-dim border-t border-edge pt-4">
+                    <a href="/about.html" target="_blank" rel="noreferrer" className="hover:text-slate transition-colors">About</a>
+                    <a href="/terms.html" target="_blank" rel="noreferrer" className="hover:text-slate transition-colors">Terms</a>
+                    <a href="/privacy.html" target="_blank" rel="noreferrer" className="hover:text-slate transition-colors">Privacy</a>
+                    <a href="mailto:support@gamesummoner.com" className="hover:text-slate transition-colors">
+                        support@gamesummoner.com
+                    </a>
+                </div>
             </div>
         </div>
     )

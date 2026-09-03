@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import { Link } from '../router'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Field'
+import Footer from './public/Footer'
 
 // The login gate, and open signup behind it.
 
@@ -17,15 +18,18 @@ const signupError = (e: unknown): string => {
 }
 
 const Frame: React.FC<{ children: React.ReactNode }> = ({ children }) => (
-    <div className="min-h-screen flex items-center justify-center bg-ink px-6">
-        <div className="w-80 flex flex-col gap-4">
-            <div className="font-display text-2xl tracking-wide text-center flex items-center justify-center gap-2.5">
-                <span className="w-[18px] h-[18px] rotate-45 border-[1.5px] border-ember relative
-                                 after:absolute after:inset-[3px] after:bg-ember after:opacity-50" />
-                GameSummoner
+    <div className="min-h-screen flex flex-col bg-ink">
+        <div className="flex-1 flex items-center justify-center px-6 py-8">
+            <div className="w-80 flex flex-col gap-4">
+                <div className="font-display text-2xl tracking-wide text-center flex items-center justify-center gap-2.5">
+                    <span className="w-[18px] h-[18px] rotate-45 border-[1.5px] border-ember relative
+                                     after:absolute after:inset-[3px] after:bg-ember after:opacity-50" />
+                    GameSummoner
+                </div>
+                {children}
             </div>
-            {children}
         </div>
+        <Footer />
     </div>
 )
 

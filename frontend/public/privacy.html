@@ -9,39 +9,55 @@
          max-width:44rem; margin:0 auto; padding:3rem 1.25rem; }
   h1 { color:#fff; font-size:1.4rem; } h2 { color:#fff; font-size:1.05rem; margin-top:2rem; }
   a { color:#7ab3ff; } .muted { color:#888; font-size:.85rem; }
+  footer { border-top:1px solid #2a2a2a; margin-top:3rem; padding-top:1.25rem;
+           color:#888; font-size:.85rem; }
+  footer a { color:#888; } footer a:hover { color:#bbb; }
 </style>
 </head>
 <body>
 <h1>GameSummoner — Privacy Note</h1>
-<p class="muted">Effective 2026-07-23 · Private alpha</p>
+<p class="muted">Effective 2026-09-02</p>
 
 <h2>What we store</h2>
 <ul>
-  <li><strong>Account:</strong> your handle, your password in hashed form (never the password
-      itself), and your credit balance and history.</li>
-  <li><strong>What you create:</strong> your requests, the game specifications drafted from
-      them, and the generated games and their assets.</li>
-  <li><strong>Operations:</strong> logs needed to run, debug, and protect the Service —
-      build activity, resource usage, content-safety screening, and standard server logs.</li>
+  <li><strong>Account:</strong> your handle, your email address, your password in hashed form, 
+      your credit balance and history.</li>
+  <li><strong>Purchases:</strong> which credit package you bought, the amount, and the payment
+      provider's reference for the payment. Card details are entered on the provider's checkout
+      page and never reach us.</li>
+  <li><strong>What you create:</strong> your requests, the game designs drafted from them, your
+      change requests, and the generated games and their assets.</li>
+  <li><strong>Operations:</strong> logs needed to run, debug, and protect the Service:
+      build activity, resource usage, content-safety screening results, and standard server
+      logs.</li>
 </ul>
+
+<h2>What we use your email for</h2>
+<p>Signing in, resetting your password, and contacting you about your account. Nothing else;
+no newsletters, no marketing.</p>
 
 <h2>What we don't do</h2>
 <ul>
   <li>No analytics, tracking pixels, or advertising of any kind.</li>
-  <li>No selling or sharing of your data, except with the infrastructure that runs the
-      Service and where the law requires it.</li>
-  <li>No third-party AI services: generation runs on models we operate ourselves. Your
-      prompts are not sent to outside AI providers.</li>
-  <li>No payment data — the alpha has no payments.</li>
+  <li>No selling or sharing of your data, except with the infrastructure that runs the Service,
+      the payment provider that processes purchases, and where the law requires it.</li>
+  <li>No third-party AI services: generation runs on open-weight models on GPUs we rent and
+      operate ourselves. Your prompts are not sent to outside AI providers.</li>
 </ul>
 
 <h2>Cookies</h2>
 <p>One essential cookie signs your browser into the game player. No tracking cookies.</p>
 
-<h2>Retention</h2>
-<p>Data is kept while your account exists. During the private alpha, account and data removal
-is handled by mail to <a href="mailto:support@gamesummoner.com">support@gamesummoner.com</a>.</p>
+<h2>Retention and removal</h2>
+<p>Data is kept while your account exists. To remove your account and its data, mail
+<a href="mailto:support@gamesummoner.com">support@gamesummoner.com</a> from the address on the
+account.</p>
 
-<p class="muted">See also the <a href="/terms.html">terms of service</a>.</p>
+<footer>© 2026 GameSummoner ·
+<a href="/">Home</a> ·
+<a href="/about.html">About</a> ·
+<a href="/terms.html">Terms</a> ·
+<a href="/privacy.html">Privacy</a> ·
+<a href="mailto:support@gamesummoner.com">support@gamesummoner.com</a></footer>
 </body>
 </html>

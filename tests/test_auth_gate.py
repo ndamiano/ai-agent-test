@@ -1,6 +1,6 @@
 """The auth gate as it actually runs on the app: every router rejects an anonymous request,
 a valid token gets through, the WebSocket authenticates itself, and the only account-creation
-surface is the invite-gated /auth/signup."""
+surface is the open /auth/signup."""
 
 import pytest
 from starlette.websockets import WebSocketDisconnect

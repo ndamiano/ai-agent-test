@@ -16,13 +16,12 @@ function renderScreen() {
 }
 
 const fillSignup = (
-    handle = 'alice', password = 'a-long-password', code = 'gs-aaaa-aaaa', email = 'alice@example.com',
+    handle = 'alice', password = 'a-long-password', email = 'alice@example.com',
 ) => {
     fireEvent.click(screen.getByRole('button', { name: /create an account/i }))
     fireEvent.change(screen.getByPlaceholderText('Handle'), { target: { value: handle } })
     fireEvent.change(screen.getByPlaceholderText('Email'), { target: { value: email } })
     fireEvent.change(screen.getByPlaceholderText('Password'), { target: { value: password } })
-    fireEvent.change(screen.getByPlaceholderText(/invite code/i), { target: { value: code } })
     fireEvent.click(screen.getByRole('button', { name: /create account/i }))
 }
 
@@ -40,12 +39,10 @@ describe('signup form', () => {
         vi.unstubAllGlobals()
     })
 
-    it('starts on login and reveals the invite-code and email fields on switch', () => {
+    it('starts on login and reveals the email field on switch', () => {
         renderScreen()
-        expect(screen.queryByPlaceholderText(/invite code/i)).toBeNull()
         expect(screen.queryByPlaceholderText('Email')).toBeNull()
         fireEvent.click(screen.getByRole('button', { name: /create an account/i }))
-        expect(screen.getByPlaceholderText(/invite code/i)).toBeTruthy()
         expect(screen.getByPlaceholderText('Email')).toBeTruthy()
         expect(screen.getByText(/at least 10 characters/i)).toBeTruthy()
         expect(screen.getByRole('button', { name: /create account/i })).toBeTruthy()
@@ -65,8 +62,7 @@ describe('signup form', () => {
         const [url, init] = fetchMock.mock.calls[0]
         expect(url).toBe('/auth/signup')
         expect(JSON.parse(init.body)).toEqual({
-            handle: 'alice', password: 'a-long-password', invite_code: 'gs-aaaa-aaaa',
-            email: 'alice@example.com',
+            handle: 'alice', password: 'a-long-password', email: 'alice@example.com',
         })
     })
 
@@ -87,21 +83,13 @@ describe('signup form', () => {
             expect(screen.getByText('Password must be at least 10 characters.')).toBeTruthy())
     })
 
-    it('surfaces an invalid code plainly', async () => {
-        vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-            jsonResponse(403, { detail: 'invalid invite code' })))
-        renderScreen()
-        fillSignup()
-        await waitFor(() => expect(screen.getByText('Invalid invite code.')).toBeTruthy())
-        expect(getAuthToken()).toBeNull()
-    })
-
     it('surfaces a taken handle plainly', async () => {
         vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
             jsonResponse(409, { detail: 'that handle is already taken' })))
         renderScreen()
         fillSignup()
         await waitFor(() => expect(screen.getByText('That handle is already taken.')).toBeTruthy())
+        expect(getAuthToken()).toBeNull()
     })
 
     it('surfaces the throttle plainly', async () => {

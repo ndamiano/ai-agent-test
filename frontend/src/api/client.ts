@@ -1,4 +1,4 @@
-import type { AdminAnalytics, AdminCosts, AdminInvite, AdminQueues, AdminViolation, Demo, DurableEventRow, Game, GameAsset, GameDetail, Grade, GradeTarget, PromptBucket, PromptDetail, PromptScope, PromptTurn } from '../types'
+import type { AdminAnalytics, AdminCosts, AdminQueues, AdminViolation, Demo, DurableEventRow, Game, GameAsset, GameDetail, Grade, GradeTarget, PromptBucket, PromptDetail, PromptScope, PromptTurn } from '../types'
 
 let authToken: string | null = localStorage.getItem('maestro_token')
 let onUnauthorized: (() => void) | null = null
@@ -112,10 +112,10 @@ export const api = {
     login: (handle: string, password: string) =>
         request<{ token: string; user: { id: string; handle: string; role: string } }>(
             '/auth/login', { method: 'POST', body: JSON.stringify({ handle, password }) }, 0),
-    // Beta signup: the invite code is what admits the account; success signs the new user in.
-    signup: (handle: string, password: string, inviteCode: string, email: string) =>
+    // Open signup: success signs the new user in.
+    signup: (handle: string, password: string, email: string) =>
         request<{ token: string; user: { id: string; handle: string; role: string } }>(
-            '/auth/signup', { method: 'POST', body: JSON.stringify({ handle, password, invite_code: inviteCode, email }) }, 0),
+            '/auth/signup', { method: 'POST', body: JSON.stringify({ handle, password, email }) }, 0),
     // Answers ok whether or not the address has an account, so nothing downstream may report which.
     forgotPassword: (email: string) =>
         request<{ ok: boolean }>('/auth/forgot', { method: 'POST', body: JSON.stringify({ email }) }, 0),
@@ -223,14 +223,6 @@ export const api = {
 
     getAdminQueues: () =>
         request<AdminQueues>('/api/admin/queues'),
-    getAdminInvites: () =>
-        request<{ invites: AdminInvite[] }>('/api/admin/invites'),
-    createAdminInvites: (count: number, maxUses: number) =>
-        request<{ codes: string[] }>('/api/admin/invites', {
-            method: 'POST', body: JSON.stringify({ count, max_uses: maxUses }),
-        }),
-    disableAdminInvite: (code: string) =>
-        request<{ ok: boolean }>(`/api/admin/invites/${encodeURIComponent(code)}/disable`, { method: 'POST' }),
     getAdminCosts: () =>
         request<AdminCosts>('/api/admin/costs'),
     getAdminAnalytics: (days = 14) =>

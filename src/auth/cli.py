@@ -1,5 +1,5 @@
-"""Admin CLI for MANUAL account provisioning. (Self-serve signup exists too, gated by
-invite codes — see auth/router.py.)
+"""Admin CLI for MANUAL account provisioning. (Open self-serve signup exists too —
+see auth/router.py.)
 
     python -m auth.cli create <handle> <email> [--role admin]   # prompts for a password
     python -m auth.cli passwd <handle>                   # reset a password

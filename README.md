@@ -47,7 +47,7 @@ npm run dev
 
 Settings live in `src/config/settings.json` (gitignored); every block is described in `docs/local_dev.md`.
 
-Signup exists and is gated by invite codes minted in the admin panel. Accounts can also be made from the CLI:
+Signup is open at `/login`. Accounts can also be made from the CLI:
 
 ```bash
 cd src

@@ -5,8 +5,8 @@ salt; session tokens are opaque random secrets stored only as a sha256 hash, so 
 yields neither passwords nor usable tokens. Every operation opens a short-lived connection, so
 the store is safe to call from the API threads and the background build threads alike.
 
-Accounts are created through `create_user` (wired to the admin CLI) or `signup` (the invite-code
-beta signup): both share `_insert_user`, so the handle/password rules have one source.
+Accounts are created through `create_user` (wired to the admin CLI) or `signup` (open
+self-serve signup): both share `_insert_user`, so the handle/password rules have one source.
 """
 
 import hashlib
@@ -98,14 +98,6 @@ def _db():
             created_at REAL NOT NULL,
             used_at    REAL
         );
-        CREATE TABLE IF NOT EXISTS invite_codes (
-            code       TEXT PRIMARY KEY,
-            created_by TEXT NOT NULL,
-            created_at REAL NOT NULL,
-            max_uses   INTEGER NOT NULL DEFAULT 1,
-            uses       INTEGER NOT NULL DEFAULT 0,
-            disabled   INTEGER NOT NULL DEFAULT 0
-        );
         CREATE TABLE IF NOT EXISTS credit_transactions (
             id         TEXT PRIMARY KEY,
             user_id    TEXT NOT NULL REFERENCES users(id),
@@ -167,10 +159,6 @@ class EmailTakenError(ValueError):
     pass
 
 
-class InviteCodeError(ValueError):
-    pass
-
-
 # Deliberately permissive: something@something.tld and no spaces. A stricter pattern rejects
 # addresses that deliver, and the only proof an address is real is mail arriving at it.
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -189,7 +177,7 @@ def check_password(password: str) -> None:
 
 
 def _insert_user(conn, handle: str, password: str, role: str, email: str) -> User:
-    """The one place the handle/password/email rules live — CLI create and invite signup both
+    """The one place the handle/password/email rules live — CLI create and signup both
     land here."""
     handle = handle.strip()
     if not handle:
@@ -337,62 +325,8 @@ def consume_reset_token(token: str) -> Optional[User]:
 
 # ── Invite codes: what gates beta signup — unguessable, admin-minted, use-counted ────────────
 
-# No 0/o/1/l/i — codes get read aloud and retyped. 8 chars over 31 symbols ≈ 40 bits, which with
-# the per-IP signup throttle is out of guessing range.
-_CODE_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
-
-
-def _generate_code() -> str:
-    def quad() -> str:
-        return "".join(secrets.choice(_CODE_ALPHABET) for _ in range(4))
-    return f"gs-{quad()}-{quad()}"
-
-
-def create_invite(created_by: str, max_uses: int = 1) -> str:
-    if max_uses < 1:
-        raise ValueError("max_uses must be at least 1")
-    code = _generate_code()
+def signup(handle: str, password: str, email: str = "") -> User:
     with _db() as conn:
-        conn.execute(
-            "INSERT INTO invite_codes (code, created_by, created_at, max_uses, uses, disabled) "
-            "VALUES (?, ?, ?, ?, 0, 0)",
-            (code, created_by, time.time(), max_uses),
-        )
-    return code
-
-
-def list_invites() -> List[dict]:
-    with _db() as conn:
-        rows = conn.execute("SELECT * FROM invite_codes ORDER BY created_at DESC").fetchall()
-    return [dict(r) for r in rows]
-
-
-def disable_invite(code: str) -> None:
-    with _db() as conn:
-        cur = conn.execute("UPDATE invite_codes SET disabled = 1 WHERE code = ?", (code,))
-        if cur.rowcount == 0:
-            raise InviteCodeError(f"no invite code {code!r}")
-
-
-def signup(handle: str, password: str, code: str, email: str = "") -> User:
-    """Redeem an invite code and create the account, atomically: one transaction holds both the
-    guarded use-increment and the user insert, so a failed signup (taken handle) rolls the burn
-    back and two racers on a code's last use can't both get through — the `uses < max_uses`
-    guard admits exactly one."""
-    code = code.strip().lower()
-    with _db() as conn:
-        row = conn.execute("SELECT * FROM invite_codes WHERE code = ?", (code,)).fetchone()
-        if row is None:
-            raise InviteCodeError("invalid invite code")
-        if row["disabled"]:
-            raise InviteCodeError("this invite code has been disabled")
-        cur = conn.execute(
-            "UPDATE invite_codes SET uses = uses + 1 WHERE code = ? AND disabled = 0 "
-            "AND uses < max_uses",
-            (code,),
-        )
-        if cur.rowcount == 0:
-            raise InviteCodeError("this invite code has no uses left")
         return _insert_user(conn, handle, password, "user", email)
 
 

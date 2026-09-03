@@ -88,8 +88,8 @@ A non-owner logged in, requested a game, it built without hand-holding, and they
 ### Private alpha — validate DEMAND and measure the economics — **IN PROGRESS**
 
 Deployed off the owner's box. Containerized deploy, public HTTPS, prod hardening, origin isolation
-for generated code, self-hosted analytics, and a restorable backup story are all live. Accounts are
-gated by admin-minted invite codes, and there is a public front door with demo games behind it.
+for generated code, self-hosted analytics, and a restorable backup story are all live. Signup is
+open, and there is a public front door with demo games behind it.
 
 **Bar:** people want it, and real COGS/failure data exists.
 
@@ -111,8 +111,8 @@ what holds this stage shut — stage 2 is.
 
 **Bar:** open to the public, scales without falling over.
 
-Self-serve signup exists; "open" means dropping the invite gate, which is a policy call rather than
-code. The rest is whatever the beta's load teaches about the autoscaler's ceilings.
+Self-serve signup is already open. The rest is whatever the beta's load teaches about the
+autoscaler's ceilings.
 
 ---
 

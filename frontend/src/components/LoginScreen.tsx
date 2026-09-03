@@ -5,10 +5,9 @@ import { Link } from '../router'
 import { Button } from './ui/Button'
 import { TextInput } from './ui/Field'
 
-// The login gate, and beta signup behind it: an account is created against an admin-minted
-// invite code (`/api/admin/invites`) — there is no open signup.
+// The login gate, and open signup behind it.
 
-// The 400/403/409 detail is already a human sentence — which of the four things went wrong is the
+// The 400/409 detail is already a human sentence — which of the things went wrong is the
 // server's to say, so show its words rather than re-derive them from the status.
 const signupError = (e: unknown): string => {
     if (e instanceof ApiError && typeof e.body === 'string' && e.body) {
@@ -96,7 +95,6 @@ const LoginScreen: React.FC = () => {
     const [handle, setHandle] = useState('')
     const [password, setPassword] = useState('')
     const [email, setEmail] = useState('')
-    const [inviteCode, setInviteCode] = useState('')
     const [error, setError] = useState<string | null>(null)
     const [busy, setBusy] = useState(false)
 
@@ -106,7 +104,7 @@ const LoginScreen: React.FC = () => {
         setError(null)
         try {
             if (mode === 'login') await login(handle, password)
-            else await signup(handle, password, inviteCode, email)
+            else await signup(handle, password, email)
         } catch (err) {
             if (err instanceof ApiError && err.status === 429) {
                 setError('Too many attempts — wait a few minutes and try again.')
@@ -129,7 +127,7 @@ const LoginScreen: React.FC = () => {
 
     const ready = mode === 'login'
         ? handle && password
-        : handle && password && inviteCode && email
+        : handle && password && email
 
     return (
         <Frame>
@@ -144,11 +142,7 @@ const LoginScreen: React.FC = () => {
                     placeholder="Password"
                     autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
                 {mode === 'signup' && (
-                    <>
-                        <p className="text-xs text-dim -mt-2">At least 10 characters.</p>
-                        <TextInput type="text" value={inviteCode} onChange={e => setInviteCode(e.target.value)}
-                            placeholder="Invite code (gs-xxxx-xxxx)" autoComplete="off" />
-                    </>
+                    <p className="text-xs text-dim -mt-2">At least 10 characters.</p>
                 )}
 
                 {error && <div className="text-fail text-sm">{error}</div>}
@@ -167,7 +161,7 @@ const LoginScreen: React.FC = () => {
                         </button>
                         <button type="button" onClick={() => switchMode('signup')}
                             className="text-xs text-dim text-center hover:text-slate transition-colors">
-                            Have an invite code? Create an account
+                            New here? Create an account
                         </button>
                     </>
                 ) : (

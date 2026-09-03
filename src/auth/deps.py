@@ -14,7 +14,7 @@ from starlette.responses import JSONResponse
 from auth import playgrants
 from auth.store import User, resolve_token
 
-# Reachable without a token: the health probe, the login + invite-code signup endpoints, the
+# Reachable without a token: the health probe, the login + signup endpoints, the
 # payment webhook
 # (server-to-server — no user token; authed by the provider's signature, verified inside the
 # CreditProvider, never by this gate), and /handoff (it authenticates itself by redeeming a

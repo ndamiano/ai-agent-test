@@ -402,7 +402,7 @@ src/
 ```
 
 The rest of the platform is build-path-agnostic: `auth/` (identity, bearer sessions, credits,
-invite-code signup — the only self-serve account path, admin-minted codes, per-IP throttled — the
+open signup — the only self-serve account path, per-IP throttled — the
 /play handoff + per-game grant-cookie gate, `playgrants.py`; an account carries an EMAIL, which
 exists to recover it: `/auth/forgot` mails a single-use link that answers identically for an address
 with no account, and setting a password ends every session the account has), `db/`

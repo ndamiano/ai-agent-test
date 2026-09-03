@@ -1,6 +1,5 @@
-"""Auth endpoints. Login, plus invite-code signup — an account is either provisioned by an admin
-(`python -m auth.cli`) or self-created against an admin-minted invite code; there is no open
-signup."""
+"""Auth endpoints. Login, plus open self-serve signup — anyone can create an account; admins can
+also provision one by hand (`python -m auth.cli`)."""
 
 import logging
 
@@ -49,16 +48,14 @@ async def login(body: LoginRequest):
 class SignupRequest(BaseModel):
     handle: str
     password: str
-    invite_code: str
     email: str
 
 
 @router.post("/signup")
 async def signup(body: SignupRequest, request: Request):
-    """Create an account against an invite code and sign it in. Throttled per client IP (the
-    login throttle's shape — see auth/ratelimit.py), with every failure recorded: the invite-code
-    space is what the throttle defends. Redemption is atomic in the store — no code burned on a
-    failed signup, no signup on a spent code."""
+    """Create an account and sign it in. Throttled per client IP (the login throttle's shape —
+    see auth/ratelimit.py): open signup's exposure is bulk account creation, and the throttle is
+    what slows a scripted registrar."""
     key = request.client.host if request.client else "unknown"
     wait = signup_throttle.retry_after(key)
     if wait:
@@ -70,10 +67,7 @@ async def signup(body: SignupRequest, request: Request):
     if not body.handle.strip():
         raise HTTPException(status_code=400, detail="handle is required")
     try:
-        user = store.signup(body.handle, body.password, body.invite_code, body.email)
-    except store.InviteCodeError as e:
-        signup_throttle.record_failure(key)
-        raise HTTPException(status_code=403, detail=str(e))
+        user = store.signup(body.handle, body.password, body.email)
     except store.HandleTakenError:
         signup_throttle.record_failure(key)
         raise HTTPException(status_code=409, detail="that handle is already taken")

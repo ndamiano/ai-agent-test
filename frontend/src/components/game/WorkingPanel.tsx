@@ -35,9 +35,17 @@ export const WorkingPanel: React.FC<{
             <div className="flex flex-col gap-5 min-w-0">
                 <div className="flex items-start gap-3">
                     <span className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 bg-ember ${paused ? 'opacity-40' : 'animate-pulse'}`} />
-                    <p className="text-[15px] leading-relaxed">
-                        {paused ? 'The ritual is paused. Nothing is running.' : summary || 'Drawing the circle…'}
-                    </p>
+                    <div className="flex flex-col gap-1.5 min-w-0">
+                        <p className="text-[15px] leading-relaxed">
+                            {paused ? 'The ritual is paused. Nothing is running.' : summary || 'Drawing the circle…'}
+                        </p>
+                        {!paused && (
+                            <p className="text-xs text-dim leading-relaxed">
+                                Many summoners share the magic network. When it is not congested, a game
+                                takes roughly 20 to 25 minutes to arrive; when it is, yours waits its turn.
+                            </p>
+                        )}
+                    </div>
                 </div>
 
                 <div className="flex gap-8">

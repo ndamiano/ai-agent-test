@@ -891,7 +891,8 @@ def record_user_events(user_id: str, rows: List[Dict]) -> None:
 
 
 def user_event_rollup(since: float) -> Dict[str, List[Dict]]:
-    """Day-bucketed user-action counts: events per (day, kind) and distinct users per day."""
+    """Day-bucketed user-action counts: events per (day, kind) and distinct users per day. The
+    anonymous landing view counts as a kind but not as a user."""
     with _db() as conn:
         kinds = conn.execute(
             "SELECT date(created_at, 'unixepoch') AS day, kind, COUNT(*) AS n "
@@ -900,7 +901,7 @@ def user_event_rollup(since: float) -> Dict[str, List[Dict]]:
             (since,)).fetchall()
         users = conn.execute(
             "SELECT date(created_at, 'unixepoch') AS day, COUNT(DISTINCT user_id) AS n "
-            "FROM events WHERE user_id IS NOT NULL AND created_at >= ? "
+            "FROM events WHERE user_id IS NOT NULL AND user_id != 'anon' AND created_at >= ? "
             "GROUP BY day ORDER BY day",
             (since,)).fetchall()
     return {"kinds": [dict(r) for r in kinds], "users": [dict(r) for r in users]}

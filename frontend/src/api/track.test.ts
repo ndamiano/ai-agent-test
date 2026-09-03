@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setAuthToken } from './client'
-import { flush, track } from './track'
+import { flush, track, trackLanding } from './track'
 
 const lastBody = (fetchMock: ReturnType<typeof vi.fn>): unknown[] =>
     JSON.parse(fetchMock.mock.calls.at(-1)![1].body)
@@ -76,9 +76,19 @@ describe('track', () => {
     it('does not re-send already-flushed events', () => {
         track('page_view', { path: '/' })
         flush()
-        track('fix_sent', { run_id: 'r1' })
+        track('change_sent', { run_id: 'r1' })
         flush()
         expect(fetchMock).toHaveBeenCalledTimes(2)
-        expect((lastBody(fetchMock) as { kind: string }[]).map(r => r.kind)).toEqual(['fix_sent'])
+        expect((lastBody(fetchMock) as { kind: string }[]).map(r => r.kind)).toEqual(['change_sent'])
+    })
+
+    it('posts the landing view at once, without a token, carrying the referrer', () => {
+        setAuthToken(null)
+        trackLanding()
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+        const [url, init] = fetchMock.mock.calls[0]
+        expect(url).toBe('/api/events/landing')
+        expect(init.headers.Authorization).toBeUndefined()
+        expect(JSON.parse(init.body)).toEqual({ referrer: document.referrer })
     })
 })

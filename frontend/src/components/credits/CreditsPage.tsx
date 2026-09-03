@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
+import { track } from '../../api/track'
 import { api, type CreditPackage, type PurchaseRow } from '../../api/client'
 import { useAuth } from '../../contexts/AuthContext'
 import { Button } from '../ui/Button'
@@ -46,8 +47,11 @@ const CreditsPage: React.FC = () => {
                 text: e instanceof Error ? e.message : 'The purchase did not complete.', ok: false }))
     }, [refreshBalance])
 
+    useEffect(() => { track('credits_opened') }, [])
+
     const buy = useCallback(async (pkg: CreditPackage) => {
         setBuying(pkg.id); setMessage(null)
+        track('purchase_started', { package_id: pkg.id })
         try {
             const { checkout_url } = await api.startPurchase(pkg.id)
             window.location.assign(checkout_url)

@@ -37,6 +37,14 @@ describe('WorkingPanel', () => {
         expect(screen.getByText('1 of 2')).toBeTruthy()
     })
 
+    it('sets the wait expectation while running, not while paused', () => {
+        panel()
+        expect(screen.getByText(/20 to 25 minutes/)).toBeTruthy()
+        cleanup()
+        panel({ paused: true })
+        expect(screen.queryByText(/20 to 25 minutes/)).toBeNull()
+    })
+
     // A build ends when the model calls done, so there is no total to be a fraction of.
     it('shows no progress bar and no estimate', () => {
         const { container } = panel()

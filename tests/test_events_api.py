@@ -52,11 +52,11 @@ def test_bad_rows_are_dropped_not_400(app_client, isolated_dbs):
         "not even a dict",
         {"kind": "page_view", "payload": "not a dict"},
         {"kind": "page_view", "payload": {"big": "x" * 3000}},
-        {"kind": "fix_sent", "payload": {"length": 12}},
+        {"kind": "change_sent", "payload": {"length": 12}},
     ])
     assert r.status_code == 200
     assert r.json() == {"accepted": 1}
-    assert [row["kind"] for row in _raw_rows(isolated_dbs)] == ["fix_sent"]
+    assert [row["kind"] for row in _raw_rows(isolated_dbs)] == ["change_sent"]
 
 
 def test_batch_is_capped(app_client, isolated_dbs):
@@ -115,3 +115,26 @@ def test_rollup_is_admin_only(app_client):
     token = _token()
     r = app_client.get("/api/admin/analytics", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 403
+
+
+def test_landing_view_needs_no_token_and_keeps_only_the_referrer_host(app_client, isolated_dbs):
+    r = app_client.post("/api/events/landing",
+                        json={"referrer": "https://news.ycombinator.com/item?id=1&x=secret",
+                              "kind": "purchase_started", "payload": {"junk": "x" * 5000}})
+    assert r.status_code == 200
+    assert r.json() == {"accepted": 1}
+    rows = _raw_rows(isolated_dbs)
+    assert [(row["kind"], row["user_id"]) for row in rows] == [("landing_view", "anon")]
+    assert rows[0]["payload"] == '{"referrer": "news.ycombinator.com"}'
+
+
+def test_landing_view_counts_as_a_kind_but_not_a_user(app_client, isolated_dbs):
+    token = _token(role="admin")
+    app_client.post("/api/events/landing", json={"referrer": ""})
+    app_client.post("/api/events/landing", json=None)
+    _post(app_client, token, [{"kind": "page_view", "payload": {}}])
+    r = app_client.get("/api/admin/analytics", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    day = r.json()["days"][0]
+    assert day["kinds"] == {"landing_view": 2, "page_view": 1}
+    assert day["users"] == 1

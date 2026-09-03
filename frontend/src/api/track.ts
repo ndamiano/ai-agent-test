@@ -53,3 +53,15 @@ if (typeof window !== 'undefined') {
         if (document.visibilityState === 'hidden') flush()
     })
 }
+
+// Seen before any token exists, so it cannot ride send().
+export function trackLanding(): void {
+    try {
+        void fetch('/api/events/landing', {
+            method: 'POST',
+            keepalive: true,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ referrer: document.referrer }),
+        }).catch(() => { /* analytics is never the app's problem */ })
+    } catch { /* as in send() */ }
+}

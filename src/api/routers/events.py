@@ -1,7 +1,11 @@
 """User-action analytics intake — the SPA's `track()` module posts batches here.
 
 Rows land in the same events table as the build/spec lifecycle log, distinguished by user_id
-(set here, never by `_emit`) — see db/store.py. A bad row is DROPPED, never a 400: the client is
+(set here, never by `_emit`) — see db/store.py. The one unauthenticated row is the landing-page
+view (POST /api/events/landing, in PUBLIC_PATHS): it is the top of the funnel, before any
+account exists, so it is attributed to the `anon` sentinel user, which the rollup counts by
+kind and leaves out of the distinct-user count. Its payload is server-shaped — the referrer
+host only — so an anonymous caller can write one fixed-size row per request and nothing else. A bad row is DROPPED, never a 400: the client is
 fire-and-forget, so a rejected batch would only lose the good rows beside the bad one. The kind
 allowlist is the whole product-analytics vocabulary; extending it is a deliberate act, not a
 client deploy.
@@ -13,6 +17,8 @@ import re
 import time
 from typing import Any, Dict, List
 
+from urllib.parse import urlsplit
+
 from fastapi import APIRouter, Body, Depends
 
 from auth.deps import get_current_user
@@ -22,8 +28,11 @@ from db import store as db_store
 router = APIRouter()
 
 KINDS = frozenset({
-    "page_view", "create_opened", "build_started", "game_played", "fix_sent",
+    "page_view", "create_opened", "build_started", "game_played", "change_sent",
+    "credits_opened", "purchase_started",
 })
+ANON_USER = "anon"
+MAX_REFERRER_HOST = 253
 MAX_BATCH = 100
 MAX_PAYLOAD_CHARS = 2048
 # Client timestamps are advisory (a flush can lag its events); anything outside this window is
@@ -57,3 +66,13 @@ async def ingest(events: List[Any] = Body(...), user: User = Depends(get_current
     if rows:
         await asyncio.to_thread(db_store.record_user_events, user.id, rows)
     return {"accepted": len(rows)}
+
+
+@router.post("/landing", response_model=Dict)
+async def landing(body: Any = Body(default=None)):
+    referrer = body.get("referrer") if isinstance(body, dict) else None
+    host = urlsplit(referrer).hostname if isinstance(referrer, str) else None
+    payload = {"referrer": (host or "")[:MAX_REFERRER_HOST]}
+    await asyncio.to_thread(db_store.record_user_events, ANON_USER, [
+        {"kind": "landing_view", "payload": payload, "game_id": None, "created_at": time.time()}])
+    return {"accepted": 1}

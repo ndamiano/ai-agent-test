@@ -15,7 +15,7 @@ the ones we reject, because "why we didn't switch" is the expensive thing to rel
 | Build turns (the LLM) | Qwen3.8 27B, NVFP4 | ninfer on a 5090; llama.cpp elsewhere | `llm.model` in settings.json |
 | Sprites + scenes | NetaYume Lumina v4 | ComfyUI | `workflows/txt2img_item.json` |
 | Tiles | DreamShaperXL Turbo v2.1 → min-cut quilting | ComfyUI + `tools/quilting.py` | `workflows/txt2img_tile.json` |
-| Scene-chain subjects | Qwen-Image 2512 | ComfyUI | `workflows/txt2img_subject.json` |
+| Mesh subjects, scene-chain subjects | Qwen-Image 2512 | ComfyUI | `workflows/txt2img_subject.json` |
 | Scene-chain terrain | DreamShaperXL Turbo v2.1 (masked img2img) | ComfyUI | graph built in `scenegen/paint.py` |
 | Scene-chain embed | Qwen-Image-Edit 2511 | ComfyUI | `workflows/imgedit_scene.json` |
 | 3D meshes | TRELLIS 2 | home-rolled runtime, `tools/trellis_server.py` | — |
@@ -37,23 +37,8 @@ whole category we do not produce at all, and it is wanted.
       transcript, so prefill is most of a turn.
       https://www.reddit.com/r/LocalLLaMA/comments/1v6ect8/benchmarks_tensorsharp_vs_llamacpp/
       https://github.com/zhongkaifu/TensorSharp
-- [ ] Iimg2threejs seems to be a nifty thing, where it builds a threejs group proceedurally based on an image. If it's
-      capable it might be worth seeing how it compares to trellis. If it's faster / easier to setup / similar results
-      it might be worth switching to. At minimum worth investigating.
-      https://www.reddit.com/r/TopologyAI/comments/1v4izw6/opensource_imageto3d_now_generates_editable/
-      https://github.com/img2threejs/img2threejs
-- [ ] TripoSplat is worth investigating to see if it's viable. It's opensource and MIT Licensed. It seems to be high
-      quality. Worth a look. 
-      https://www.reddit.com/r/TopologyAI/comments/1v3j18g/best_free_imageto3d_gaussian_splat_generator_is/
-      https://github.com/VAST-AI-Research/TripoSplat
-- [ ] Lato.2 seems interesting. It generates 3d models as parts, which will help with automated animation probably.
-      https://www.reddit.com/r/TopologyAI/comments/1v91x4h/opensource_3d_ai_generates_meshes_with/
-      https://lohhhha.github.io/LATO.2/
 - [ ] Vibe voice from microsoft for voiceovers
       https://github.com/microsoft/VibeVoice
-- [ ] TriFlow, a better way to decimate models? I'm not sure, but worth looking into.
-      https://www.reddit.com/r/TopologyAI/comments/1vd7149/new_ai_retopology_method_generates_clean/
-      https://derkleineli.github.io/triflow/#
 - [ ] Minimax H3 video generation. Maybe not relevant? Maybe relevant? Worth investigating either way.
       NOTE: already verified to RUN locally on the 5090 (video + audio, in mess-with-comfy) — VRAM
       is tight. So the open question is not "can we run it" but what a game does with video that a
@@ -72,6 +57,16 @@ whole category we do not produce at all, and it is wanted.
       renders (`docs/experiments.md`, 2026-08-03). Same method or no swap.
 - [ ] For music generation we might want to try minimax music 3
       https://www.reddit.com/r/comfyui/comments/1vnf0p2/comfyorgminimaxmusic3_hugging_face_now_online/
+- [ ] trellis.cpp (MIT, GGUF weights). TRELLIS 2 on GGML, CUDA or Vulkan, no spconv / flash-attn /
+      flex_gemm. Not a quality lever; a robustness one — every sm_120 build trap disappears. Slow
+      (~7 min a mesh on a 5060 Ti), so a fallback backend for the mesh server at most.
+      https://github.com/pwilkin/trellis.cpp
+- [ ] SymTRELLIS (arXiv 2606.04108). A sampling-time symmetry constraint on TRELLIS 2, no retraining,
+      no code released. Small enough to reimplement from the paper; vehicles, furniture and weapons
+      are where it would show.
+      NOTE: TRELLIS 2's image conditioner is DINOv3 under Meta's DINOv3 License, not MIT —
+      commercial use allowed, "Built with DINOv3" attribution and license redistribution required.
+      Pixal3D inherits the same encoder.
 
 ## Previously investigated
 
@@ -85,6 +80,26 @@ whole category we do not produce at all, and it is wanted.
   every kind. animaOfficial's weights are non-commercial, so its orphaned workflow was deleted
   outright (2026-08-08) rather than left to be picked up again — every model in the table above is
   permissively licensed on the WEIGHTS, not just the code.
+- **Image-to-3D: TripoSplat, LATO.2, img2threejs — run and not adopted** (2026-09-03, five
+  subjects against the TRELLIS 2 `512` pipeline, `docs/experiments.md`). TripoSplat is the most
+  faithful image of the three by a wide margin at 7 s per subject, and is out as a class: a
+  gaussian splat is not a mesh, so nothing collides with it, and its lighting is baked from the
+  photo, so it cannot be relit in a scene. LATO.2 regenerates a mesh's topology from a voxel
+  scaffold and returned filled-in frames, faceted noise and non-watertight surfaces at both 2000
+  and 5000 vertices. img2threejs is a Claude Code skill, not a model — a frontier agent writing
+  procedural three.js behind vision gates — and eleven minutes of it made a 0.62 barrel by its own
+  score. Splat generators are disqualified until one ships a lit, collidable mesh. A web sweep
+  the same day (HF, GitHub, arXiv, Mar–Sep 2026) found no permissive image-to-mesh model that
+  beats TRELLIS 2; the field's 2026 gains (Meta AssetGen and MeshFlow, Seed3D 2.0, Hunyuan3D 3.x)
+  are closed or non-commercial, and TriFlow's weights are non-commercial too. What survived is
+  on the list above.
+- **Pixal3D — run and not adopted** (2026-09-03, `docs/experiments.md`). TRELLIS 2's backbone at a
+  1024 cascade: finer geometry than our `512` tier, kept through a 15K decimation, at ~55 s a
+  mesh resident against ~10 s, no 512 tier, one subject in five exported fully metallic, and a
+  gated non-commercial background remover in its default pipeline. Multi-view conditioning
+  (Sep 2026) needs several posed views of one object, which nothing upstream of the mesh queue
+  produces. Its `--low_vram` staging is the useful part: it fits a 1024 cascade on a 5090,
+  which our own server cannot — see the verdict in `docs/experiments.md`.
 - **Audio: surveyed and measured, deliberately not implemented** (2026-08-01, 58 generations —
   `docs/experiments.md`). ACE-Step 1.5 (MIT, code + weights) does 60 s of music in 1.8 s with the
   planner off; MOSS-SoundEffect v2.0 (Apache 2.0) does SFX in 2–3 s at 19.6 GB resident. Ruled out

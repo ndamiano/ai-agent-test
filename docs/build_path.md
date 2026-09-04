@@ -160,8 +160,10 @@ src/
                          scene keeps the whole frame because it IS the background, a tile is
                          quilted seamless (`tools/quilting.py`, in `asset_chain._save_flat` —
                          soft, a quilt that throws saves the raw render), mesh chains image →
-                         TRELLIS (its image leg renders as a sprite — TRELLIS lifts a cut-out
-                         subject) and lands normalized to 1 unit at its longest side, which the
+                         TRELLIS (its image leg is a Qwen-Image subject render, framed and
+                         matted, in a hand-painted game-asset style the player never sees —
+                         TRELLIS lifts a stylized cut-out far better than a photo or an anime
+                         sprite, `docs/experiments.md` 2026-09-03) and lands normalized to 1 unit at its longest side, which the
                          tool's answer states: placement code cannot discover scale any other
                          way, and an untold model shipped a knee-high lighthouse. Rendering every
                          kind through one item-icon path matted a game's floor tiles down to a

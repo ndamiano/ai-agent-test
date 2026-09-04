@@ -21,6 +21,8 @@ _TXT2IMG_ITEM_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_item.json"
 _IMG2IMG_ITEM_WORKFLOW_PATH = _WORKFLOWS_DIR / "img2img_item.json"
 _TXT2IMG_TILE_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_tile.json"
 _IMG2IMG_TILE_WORKFLOW_PATH = _WORKFLOWS_DIR / "img2img_tile.json"
+_TXT2IMG_SUBJECT_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_subject.json"
+_IMG2IMG_SUBJECT_WORKFLOW_PATH = _WORKFLOWS_DIR / "img2img_subject.json"
 
 
 def _build_background_workflow(base_workflow: dict, positive: str, negative: str) -> dict:
@@ -43,10 +45,28 @@ _NEGATIVE_TILE = _NEGATIVE_ITEM + ", people, person, animal, border, frame, vign
 # render through DreamShaperXL, where they are not, so tile positives stay verbatim.
 _POSITIVE_PREFIX_ITEM = "masterpiece, best quality, "
 
-# A sprite is composited onto the game's own background, so it is matted to its subject. A tile or
-# a backdrop IS the background: matting one leaves the ragged fragments of a floor that used to be
-# a floor, so those keep the full opaque frame the sampler drew.
-MATTED_KINDS = ("sprite",)
+# A mesh's picture is never seen by the player, so its style serves TRELLIS, not the game: a
+# hand-painted game-asset render lifts into geometry where a photo smears and the anime item
+# recipe drifts off-subject (`docs/experiments.md`, 2026-09-03).
+# Both clauses reconstruct alike; which look a game should have is a taste call not yet made.
+_MESH_FRAMING = (" Single object, complete and unobstructed, centred and filling the frame. "
+                 "Three-quarter view from slightly above, showing its depth and thickness. Plain "
+                 "flat mid-grey background. ")
+MESH_STYLES = {
+    "hand-painted": _MESH_FRAMING + "Hand-painted stylized game asset, painterly textures, chunky "
+                    "exaggerated proportions, rich saturated colours, soft even lighting, 3D render.",
+    "low-poly": _MESH_FRAMING + "Low-poly stylized game asset, flat colours, clean faceted shapes, "
+                "simple bold silhouette, soft even lighting, 3D render.",
+}
+MESH_STYLE = "hand-painted"
+_NEGATIVE_MESH = ("blurry, low detail, cropped, cut off, partial object, multiple objects, "
+                  "scenery, landscape, ground, floor, horizon, cast shadow, text, watermark")
+
+# A sprite is composited onto the game's own background, so it is matted to its subject, and a
+# mesh's subject is matted because TRELLIS lifts a cut-out. A tile or a backdrop IS the
+# background: matting one leaves the ragged fragments of a floor that used to be a floor, so those
+# keep the full opaque frame the sampler drew.
+MATTED_KINDS = ("sprite", "mesh")
 
 _MATTE_NODE = "47"
 _DECODE_NODE = "8"
@@ -60,9 +80,20 @@ def _drop_matte(wf: dict) -> dict:
     return wf
 
 
+def _build_subject_workflow(base_workflow: dict, description: str) -> dict:
+    """The Qwen subject graph carries its own matte; the prose goes first and the style last, so
+    the object stays the subject of the sentence."""
+    wf = copy.deepcopy(base_workflow)
+    wf["p"]["inputs"]["text"] = description.rstrip(". ") + "." + MESH_STYLES[MESH_STYLE]
+    wf["n"]["inputs"]["text"] = _NEGATIVE_MESH
+    wf["k"]["inputs"]["seed"] = int(uuid.uuid4().int % (2**32))
+    return wf
+
+
 def _kind_recipe(kind: str, txt2img: bool) -> tuple:
     """(workflow path, positive prefix, negative) for a kind: tiles render through DreamShaperXL
-    Turbo, everything else through NetaYume Lumina."""
+    Turbo, sprites and scenes through NetaYume Lumina. A mesh subject has its own graph and never
+    comes through here."""
     if kind == "tile":
         path = _TXT2IMG_TILE_WORKFLOW_PATH if txt2img else _IMG2IMG_TILE_WORKFLOW_PATH
         return path, "", _NEGATIVE_TILE
@@ -77,6 +108,9 @@ def build_image_job(description: str, kind: str = "sprite") -> dict:
     tags are prepended for the anime checkpoint, but the prose is never embedded mid-phrase ("a
     single {X}, one object only, ...") — that garbled the grammar and drove subject drift. `kind`
     picks the model, the negative and whether the matte runs."""
+    if kind == "mesh":
+        wf = _build_subject_workflow(_load_workflow(_TXT2IMG_SUBJECT_WORKFLOW_PATH), description)
+        return {"prompt": description, "workflow_override": wf}
     path, prefix, negative = _kind_recipe(kind, txt2img=True)
     wf = _build_background_workflow(_load_workflow(path), prefix + description, negative)
     wf["5"]["inputs"]["width"] = 1024
@@ -91,6 +125,11 @@ def build_img2img_job(description: str, init_name: str, kind: str = "sprite",
     """The same per-kind workflow seeded from an EXISTING render instead of an empty latent: the
     init image (uploaded to ComfyUI under `init_name` by the worker) is VAE-encoded and partially
     denoised, so the output keeps the original's composition while the prompt steers the change."""
+    if kind == "mesh":
+        wf = _build_subject_workflow(_load_workflow(_IMG2IMG_SUBJECT_WORKFLOW_PATH), description)
+        wf["li"]["inputs"]["image"] = init_name
+        wf["k"]["inputs"]["denoise"] = denoise
+        return {"prompt": description, "workflow_override": wf}
     path, prefix, negative = _kind_recipe(kind, txt2img=False)
     wf = _build_background_workflow(_load_workflow(path), prefix + description, negative)
     wf["50"]["inputs"]["image"] = init_name

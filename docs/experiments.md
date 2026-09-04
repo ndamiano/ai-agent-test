@@ -1515,3 +1515,133 @@ once the shape was right (`docs/deploy.md`), after five GPU pods and four gatewa
 that were not. Open: the loader patch rides the image as a tarball until it is upstreamed
 to the fork; SE capacity in US-NC-2 has twenty-minute droughts, and the volume pins the
 datacenter, so a drought is a wait.
+
+## 2026-09-03 — Three image-to-3D candidates against TRELLIS 2 (local 5090)
+
+### The question
+`docs/technology_analysis.md` held three 3D candidates: TripoSplat (image → gaussians),
+img2threejs (image → procedural three.js), LATO.2 (mesh → vertex + topology flows). Does any
+of them make a better game prop than the TRELLIS 2 `512` pipeline from the same input?
+
+### The arm
+Five subjects from the selecting-mesh lab (watchtower, stone cottage, barrel, broken cart, oak),
+each with its ComfyUI subject image and its TRELLIS 2 `512` mesh already on disk. Every
+candidate got the same five; renders from three fixed orbit views (gsplat for the splats, open3d
+for the meshes). The oak is a bad input — cropped, busy background — and every tool failed on it
+alike, so it counts for nothing.
+
+| candidate | input | per subject | VRAM | output |
+|---|---|---|---|---|
+| TripoSplat (MIT, code + weights) | image | 6.9–8.0 s, 5.5 s load | 4.6 GiB | 3DGS `.ply`, 32K–262K gaussians |
+| LATO.2 (MIT code; weights on HF, no separate licence) | TRELLIS mesh | ~9 s | ~8 GB | `.obj`, 2000 or 5000 vertices |
+| img2threejs (Apache-2.0) | image + a frontier agent | ~11 min, ~100K tokens, 24 tool calls | none | 1,100 lines of TypeScript |
+
+### What came out
+**TripoSplat** is by far the most faithful picture: the watchtower has its roof, rails and
+stairs, the cottage its thatch, chimneys and window frames, the barrel its hoops and rivets —
+where the TRELLIS mesh is a blob with the right silhouette. 32K gaussians (2.2 MB) is visually
+the 262K (18 MB) result. It is disqualified on two counts a game cannot forgive: the output is
+a splat, not a mesh, so nothing collides with it and three.js needs a separate renderer for
+it; and the lighting is BAKED — the barrel's unlit side is dark from every angle because the
+photo's was. A prop that cannot be relit cannot sit in a scene.
+
+**LATO.2** takes the TRELLIS mesh, voxelises it and regenerates vertices and connectivity. At
+2000 vertices the watchtower's open frame came back as filled walls, the cottage as faceted
+noise, every mesh non-watertight with more faces than twice its vertex count; 5000 vertices
+changed nothing. The readme warns of holes and wrong connectivity and expects scale to fix it.
+Its DINOv2 conditioning calls xformers in fp32, which has no sm_120 kernel; `XFORMERS_DISABLED=1`
+puts DINO on plain attention and the sparse blocks still route through xformers in fp16.
+
+**img2threejs** is not a model. It is a Claude Code skill: an agent reads the image, writes a
+sculpt spec against a 2.9K-line validator, and a 4.1K-line generator emits a three.js factory,
+pass by pass behind vision-scored gates. On the barrel the agent stopped at the first pass with
+its own Tier-1 gate red (silhouette IoU 0.67 against a 0.85 bar) and scored the result 0.62:
+reads as a barrel, hoops gloss-black, rivets invisible. Two silent generator defects on the way
+(attached cylinders emitted at zero length, texture maps written as absolute paths). What it
+measures is the frontier agent driving it, which is not the model that builds our games.
+
+### Pixal3D, the same afternoon
+Pixal3D (TencentARC, MIT code and weights) is TRELLIS 2's backbone with pixel back-projection
+for image fidelity. It had been cloned and launched on 2026-08-20 and left no result: its
+pipeline constructs a `briaai/RMBG-2.0` background remover at init, and that repo is gated
+(and non-commercial), so the process dies before the first sample. Our subject images carry
+alpha, which the pipeline honours, so the lab checkout tolerates a missing rembg. The default
+1536 cascade OOMs the 5090 at 26 GB inside the shape stage; 1024 cascade with `--low_vram`
+(weights staged CPU→GPU per stage) runs. No flash_attn in the venv; `ATTN_BACKEND=sdpa` works.
+
+Same five subjects, and the TRELLIS 2 `512` server re-timed on the same card the same hour:
+
+| | TRELLIS 2 `512`, resident | Pixal3D 1024 cascade, low_vram |
+|---|---|---|
+| load | once: 8 s + 11 s warmup | 41–44 s per process |
+| preprocess + camera | in sample | 5 s (MoGe FOV estimate) |
+| sampling | 6.5–10 s | 30 s |
+| to_glb | 1.2–2.2 s | 20 s (a 1024 grid to remesh; the 15K target does not shorten it) |
+| per subject | **9–12 s** | **~55 s warm, ~100 s as run** |
+
+Geometry is a real step up: the watchtower keeps its balusters, stairs and roof plank stack
+through a 15K decimation where the 512 mesh is a blob with the right silhouette; the cottage
+has its thatch ridge, chimney and door recess. Two catches. One subject in five (the
+watchtower) came out with metallic = 1.0 across the whole texture — the export is the same
+`o_voxel.to_glb` our server calls, so the texture model predicted it — and a fully metallic
+prop renders black in a scene with no environment map. And Pixal3D has no 512 tier, so on a
+32 GB card the choice is TRELLIS-512 at ~10 s against Pixal3D-1024 at ~55 s; the resolution
+is most of that gap, and TRELLIS 2's own 1024 cascade would pay it too.
+
+### Verdict
+None replaces TRELLIS 2. Splats are out as a class until one can be turned into a lit,
+collidable mesh; LATO.2's output is broken at every count it offers; img2threejs is an idea
+about procedural props, not a tool; Pixal3D is TRELLIS 2 at 1024 with a 5× bill and a
+metallic roll of the dice. All four stay investigated, none adopted.
+
+What Pixal3D did show is that a 1024 cascade FITS a 5090 when the stages are offloaded
+between steps. Our server drops to `512` because 1024 OOMs CuMesh on a fresh 32 GB card.
+Same weights, per-stage offload, four times the voxels for ~30 s more a mesh — that is the
+open lever, on the model we already run.
+
+## 2026-09-03 — What TRELLIS 2 wants: input style and the 1024 tier (local 5090)
+
+### The question
+The meshes are fine, not great. Two levers are ours without touching the model: the picture it
+is handed, and the tier it runs at. TRELLIS 2 has no multi-image conditioning, so a multi-view
+path (Pixal3D, Sep 2026) is not open to it.
+
+### The arm
+Five subjects (watchtower, cottage, barrel, cart, oak) drawn in five styles at one seed, each
+through the server at `512` (texture 1024) and `1024_cascade` (texture 2048), fifty meshes. Four
+styles go through the lab's Qwen-Image path with the same framing sentence and only the style
+clause changed — A photographic (the lab's subject prompt today), B low-poly game asset, C
+hand-painted game asset, D clean CG render — and E is the PRODUCT recipe exactly as
+`build_image_job` emits it for a mesh: NetaYume through the item workflow, "masterpiece, best
+quality" in front, photo in the negative, matted by TRELLIS's own BiRefNet.
+
+### What came out
+**The product's own recipe is the worst input of the five.** NetaYume is an anime checkpoint;
+asked for a watchtower it drew a clock tower on wheels, its barrel is a sphere, its cart is a
+line drawing with debris, and every mesh inherits the drift. The item recipe was tuned for
+sprites, where an anime lean is the point; a mesh source image needs volume, and it is the only
+kind whose picture is never seen by the player.
+
+**Clean render styles reconstruct best.** B (low-poly) and D (CG render) come back as the
+picture: crisp planes, the right rails and wheels, no smearing. C (hand-painted) keeps its
+painterly texture through the bake and reads as a finished game prop — the best-looking meshes
+on the sheet. A (photographic) is faithful but muted, and photographic subjects are the ones
+that arrive cropped (the oak, twice today).
+
+**The 1024 tier does not earn its 4×.** Geometry at 1024 is not visibly better than 512 on a
+prop-sized subject at a 50K decimation, and its TEXTURES are worse in every row: darker,
+desaturated, the hand-painted oak turned near-black, and the CG-render oak lost its whole
+canopy to a bare grey trunk. 512 kept the colour of every input. 46 s against 10 s a mesh,
+and it holds ~45 GB of host RAM resident — the run that measured it took the desktop down once
+before a watchdog was put on it (`docs/local_dev.md` already says `--ptype 512` on the 60 GB box;
+this is the number behind it).
+
+### Verdict
+Stay at `512`. Change the mesh kind's SOURCE IMAGE: route it through Qwen-Image with the
+framing sentence and a stylized-render clause (hand-painted or clean CG, never anime, never
+photographic), not through the sprite recipe. That is a `_kind_recipe` change and one sentence
+of prompt, measured here on five subjects. Wired the same day (`comfyui_tools`: the mesh kind
+renders through `txt2img_subject.json` with the framing fixed and the style clause read from
+`MESH_STYLE`, an `img2img_subject.json` beside it for regenerate). Hand-painted is live; low-poly
+is the other clause in `MESH_STYLES`, one name away, because the two reconstructed alike and
+which one a game should look like is a taste call not yet made. The battery of builds is owed.

@@ -80,12 +80,6 @@ def asset_path(run_id: str, asset_id: str, ext: str) -> Path:
     return d / f"{asset_id}.{ext}"
 
 
-def render_kind(kind: str) -> str:
-    """The kind the IMAGE leg renders as. A mesh's image is the subject TRELLIS lifts into
-    geometry, so it is drawn and matted exactly like a sprite."""
-    return "sprite" if kind == "mesh" else kind
-
-
 def check_render(path: Path, kind: str) -> Optional[str]:
     """A defect in a finished render, or None. BROKEN only — nothing here has an opinion about
     whether the picture is any good, because code cannot have one.
@@ -261,7 +255,7 @@ def _then_for(kind: str) -> Dict:
     "subject" is how a floor becomes a handful of planks."""
     if kind == "mesh":
         return {"enqueue": "mesh_from_image", "finalize": "assets"}
-    op = "save_sprite" if render_kind(kind) in MATTED_KINDS else "save_flat"
+    op = "save_sprite" if kind in MATTED_KINDS else "save_flat"
     return {"operations": [op], "finalize": "assets"}
 
 
@@ -296,7 +290,7 @@ def request_media(run_id: str, run_dir, asset_id: str, prompt: str,
                 "note": "not requeued — this id already has art. Call again with the prompt you "
                         "want to replace it with, or use a different id to draw something new."}
 
-    payload = build_image_payload(prompt, render_kind(kind))
+    payload = build_image_payload(prompt, kind)
     if payload is None:
         return {"ok": False, "error": "that prompt was refused by the safety filter — "
                                       "draw this one with code instead"}
@@ -363,7 +357,7 @@ def _enqueue_batch(run_id: str, entries: List[Dict], build_id: Optional[str]) ->
         kind = entry_kind(e)
         mesh = kind == "mesh"
         queue = "image"
-        payload = build_image_payload(e["prompt"], render_kind(kind))
+        payload = build_image_payload(e["prompt"], kind)
         then = _then_for(kind)
         src = asset_path(run_id, e["id"], "src.png")
         if mesh and src.exists():
@@ -420,7 +414,7 @@ def regenerate_asset(run_id: str, asset_id: str, note: str, mode: str = "full") 
         src = asset_path(run_id, asset_id, "src.png" if kind == "mesh" else "webp")
         if src.exists():
             init_b64 = base64.b64encode(src.read_bytes()).decode("ascii")
-    payload = build_image_payload(prompt, render_kind(kind), init_image_b64=init_b64)
+    payload = build_image_payload(prompt, kind, init_image_b64=init_b64)
     if payload is None:
         return {"ok": False, "error": "the prompt was blocked by the safety filter"}
     batch_id = uuid.uuid4().hex[:16]

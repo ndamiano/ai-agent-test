@@ -18,7 +18,7 @@ from PIL import Image
 
 from db import store as db_store
 from maestro.codegen.assets import (asset_path, autocrop_image, check_render, landed,
-                                    read_manifest, render_kind, render_verdict, save_image,
+                                    read_manifest, render_verdict, save_image,
                                     set_defect, set_landed, set_refused)
 from maestro.codegen.staging import stage_for_play
 from maestro.state import RunState
@@ -76,7 +76,7 @@ def _record_defect(md: Dict, dst: Path) -> None:
     """What a render came back BROKEN as, on the manifest entry the gallery and the top-up read.
     Soft: a check that cannot run must not cost the game its art."""
     try:
-        defect = check_render(dst, render_kind(md.get("kind") or "sprite"))
+        defect = check_render(dst, md.get("kind") or "sprite")
     except Exception as e:
         logger.warning("render check %s failed: %s", md["asset_id"], e)
         return

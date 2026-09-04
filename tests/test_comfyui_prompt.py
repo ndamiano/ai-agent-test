@@ -11,7 +11,8 @@ holds off the photoreal drift and cracks tiles grow without it.
 
 import pytest
 
-from tools.comfyui_tools import build_image_job, build_image_payload, build_img2img_job
+from tools.comfyui_tools import (MESH_STYLE, MESH_STYLES, build_image_job, build_image_payload,
+                                 build_img2img_job)
 
 
 def test_the_prompt_is_the_positive_substance():
@@ -117,3 +118,31 @@ def test_payload_without_init_image_has_no_uploads():
     payload = build_image_payload("A rusty iron key.")
     assert "uploads" not in payload
     assert "50" not in payload["workflow"]   # txt2img: empty latent, no LoadImage
+
+
+def test_a_mesh_subject_renders_through_qwen_with_the_style_fixed():
+    """TRELLIS lifts a clean stylized render best; the anime item recipe drifts (measured
+    2026-09-03, five subjects in five styles)."""
+    wf = build_image_job("A weathered wooden barrel", "mesh")["workflow_override"]
+    assert wf["u"]["inputs"]["unet_name"].startswith("qwen_image_2512")
+    positive = wf["p"]["inputs"]["text"]
+    assert positive.startswith("A weathered wooden barrel.")
+    assert positive.endswith(MESH_STYLES[MESH_STYLE])
+    assert set(MESH_STYLES) == {"hand-painted", "low-poly"}
+    assert "masterpiece" not in positive
+    assert "cropped" in wf["n"]["inputs"]["text"]
+    assert wf["s"]["inputs"]["images"] == ["m", 0]      # the output reads BiRefNet
+
+
+def test_a_mesh_subject_seed_varies_per_job():
+    a = build_image_job("A barrel", "mesh")["workflow_override"]["k"]["inputs"]["seed"]
+    b = build_image_job("A barrel", "mesh")["workflow_override"]["k"]["inputs"]["seed"]
+    assert a != b
+
+
+def test_a_mesh_img2img_seeds_from_the_init_image():
+    wf = build_img2img_job("A barrel", "init_x.png", "mesh", denoise=0.4)["workflow_override"]
+    assert wf["li"]["inputs"]["image"] == "init_x.png"
+    assert wf["k"]["inputs"]["latent_image"] == ["ve", 0]
+    assert wf["k"]["inputs"]["denoise"] == 0.4
+    assert "l" not in wf

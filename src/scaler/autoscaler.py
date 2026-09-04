@@ -25,6 +25,16 @@ from scaler.stats import StatsSource
 
 logger = logging.getLogger("scaler")
 
+# What RunPod's create answers when the ask is fine and the stock is not — the two texts seen on
+# prod 2026-09-04 for a card and a datacenter respectively. Any other refusal (auth, template,
+# network) is our problem, not the provider's inventory, and is recorded under its own kind.
+_STOCK_MARKERS = ("no instances currently available",
+                  "could not find any pods with required specifications")
+
+
+def refusal_kind(errors: List[str]) -> str:
+    return "stock" if all(any(m in e.lower() for m in _STOCK_MARKERS) for e in errors) else "other"
+
 
 class Autoscaler:
     def __init__(self, stats: StatsSource, client: RunPodClient,
@@ -159,6 +169,7 @@ class Autoscaler:
         # refused every card.
         volumes = qcfg.get("network_volume_ids") or [rp.get("network_volume_id", "")]
         attempts = [(v, ask) for v in volumes for ask in gpu_asks]
+        refused: List[Dict] = []
         for i, (volume, attempt) in enumerate(attempts):
             try:
                 self._client.create_pod(
@@ -171,7 +182,10 @@ class Autoscaler:
                     allowed_cuda_versions=cuda,
                 )
             except RunPodError as e:
+                refused.append({"volume": volume, "gpu_type_ids": attempt, "error": str(e)})
                 if i == len(attempts) - 1:
+                    self._stats.record_pod_refusal(
+                        queue, refusal_kind([r["error"] for r in refused]), refused, str(e))
                     raise
                 logger.warning("scale-up %s: create on volume %s with %s (cuda %s) refused (%s) "
                                "— next ask %s on %s", queue, volume, attempt, cuda, e,
@@ -179,4 +193,5 @@ class Autoscaler:
                 continue
             logger.info("scale-up %s: created pod %s on %s, volume %s (cuda %s)",
                         queue, name, attempt, volume, cuda)
+            self._stats.record_pod_created(queue)
             return

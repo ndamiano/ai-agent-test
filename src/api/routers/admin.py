@@ -41,6 +41,37 @@ def _freshness() -> float:
     return float(rp.get("stale_worker_seconds", 180))
 
 
+def _outage_window() -> float:
+    """How recently a stock refusal must be for the scaler to count as wanting a pod it cannot get
+    NOW: two ticks — one tick's refusal is still the standing answer until the next tick asks."""
+    rp = settings_manager.get_settings().get("runpod") or {}
+    return 2.0 * float(rp.get("tick_seconds", 15))
+
+
+def _stockouts(queue: str, now: float) -> Dict[str, Any]:
+    """Provider stock refusals for the queue, from the scaler's durable record: counts per window,
+    the latest one, the attempts/refusals rollup for the provider conversation (60 days and all
+    time), and the current outage — active when the last refusal is within two ticks,
+    with its start being the earliest refusal of the unbroken run (a gap wider than two ticks
+    means the scaler got a pod, or stopped wanting one, in between)."""
+    stats = db_store.pod_stockout_stats(queue, now)
+    window = _outage_window()
+    active = stats["last_at"] is not None and now - stats["last_at"] <= window
+    since, n = None, 0
+    if active:
+        for r in reversed(stats["recent"]):
+            if since is not None and since - r["created_at"] > window:
+                break
+            since, n = r["created_at"], n + 1
+    return {
+        "last_1h": stats["last_1h"], "last_24h": stats["last_24h"], "last_7d": stats["last_7d"],
+        "last_at": stats["last_at"], "last_error": stats["last_error"],
+        "active": active, "active_since": since, "active_count": n,
+        "totals_60d": db_store.pod_request_totals(queue, 60),
+        "totals_all": db_store.pod_request_totals(queue),
+    }
+
+
 def _usd_per_hour(gpu_type) -> Optional[float]:
     if not gpu_type:
         return None
@@ -85,8 +116,9 @@ def _workers(request: Request, queue: str, now: float, freshness: float) -> List
 
 @router.get("/queues")
 async def get_queues(request: Request, _: User = Depends(require_admin)) -> Dict[str, Any]:
-    """Per-queue snapshot: depth and backlog, the next jobs in claim order, and the fleet with
-    what each worker holds. Pure visualization — no spend here."""
+    """Per-queue snapshot: depth and backlog, the next jobs in claim order, the fleet with
+    what each worker holds, and the provider's stock refusals. Pure visualization — no spend
+    here."""
     now = time.time()
     freshness = _freshness()
 
@@ -109,6 +141,7 @@ async def get_queues(request: Request, _: User = Depends(require_admin)) -> Dict
                       "waiting_seconds": now - j["created_at"], "est_seconds": j["est_seconds"]}
                      for j in db_store.pending_jobs_head(q, _NEXT_LIMIT)],
             "workers": workers,
+            "stockouts": _stockouts(q, now),
         }
         queues.append(row)
         for k in totals:

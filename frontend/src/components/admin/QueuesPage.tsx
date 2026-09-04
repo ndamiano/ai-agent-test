@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api, ApiError } from '../../api/client'
-import type { AdminQueues, QueueRow, WorkerRow } from '../../types'
-import { Stat, fmtAge, fmtSecs, fmtUsd, shortGpu } from './format'
+import type { AdminQueues, QueueRow, Stockouts, WorkerRow } from '../../types'
+import { Stat, fmtAge, fmtClock, fmtSecs, fmtStamp, fmtUsd, shortGpu } from './format'
 
 const POLL_MS = 5000
 
@@ -83,6 +83,33 @@ const Workers: React.FC<{ row: QueueRow }> = ({ row }) => (
     </div>
 )
 
+// Shows nothing at all when the provider has never refused for stock: the line exists to make a
+// stock-out visible, not to reassure.
+export const StockoutLines: React.FC<{ s: Stockouts }> = ({ s }) => {
+    if (s.last_7d === 0 && !s.active && s.totals_all.attempts === 0) return null
+    const ratio = (t: Stockouts['totals_all']) => `${t.stock_refusals.toLocaleString()} of ${t.attempts.toLocaleString()} pod requests refused for stock`
+    return (
+        <div className="space-y-1 text-xs">
+            {s.active && s.active_since != null && (
+                <div className="text-fail font-semibold" title={s.last_error ?? ''}>
+                    Out of stock now — {s.active_count} refusal{s.active_count === 1 ? '' : 's'} since {fmtClock(s.active_since)}
+                    {s.last_error ? ` (last: '${s.last_error}')` : ''}
+                </div>
+            )}
+            {s.last_7d > 0 && s.last_at != null && (
+                <div className="text-slate" title={`${s.last_1h} in the last hour · ${s.last_24h} in the last 24h`}>
+                    {s.last_7d} stock-out{s.last_7d === 1 ? '' : 's'} in the last 7 days, last {fmtStamp(s.last_at)}
+                </div>
+            )}
+            {s.totals_all.attempts > 0 && (
+                <div className="text-slate" title={`other refusals: ${s.totals_60d.other_refusals} in 60 days · ${s.totals_all.other_refusals} all time`}>
+                    Last 60 days: {ratio(s.totals_60d)} · all time since {s.totals_all.since}: {ratio(s.totals_all)}
+                </div>
+            )}
+        </div>
+    )
+}
+
 const QueueCard: React.FC<{ row: QueueRow }> = ({ row }) => {
     const active = row.pending + row.claimed > 0
     return (
@@ -101,6 +128,7 @@ const QueueCard: React.FC<{ row: QueueRow }> = ({ row }) => {
                 <Stat label="Backlog" value={fmtSecs(row.backlog_seconds)}
                     hint={`projected GPU-s to clear (est ${row.est_seconds}s/job)`} />
             </div>
+            <StockoutLines s={row.stockouts} />
             <div className="overflow-x-auto"><NextJobs row={row} /></div>
             <div className="overflow-x-auto"><Workers row={row} /></div>
         </div>

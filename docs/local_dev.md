@@ -227,6 +227,9 @@ state, deliberately not under `working_directory`.
 
 `usd_per_5090_hour` — the 5090's secure-cloud hourly price, the dollar the rates below are over.
 The admin fleet view shows each worker's card at `rate × this`; nothing bills in dollars.
+The same view carries each queue's provider stock-outs (`pod_refusals`, see `docs/deploy.md`
+"Autoscaler"): the outage under way, the count over the last seven days, and the never-pruned
+requests-vs-stock-refusals ratio over 60 days and all time; nothing when zero.
 
 `gpu_rates` — 5090-seconds debited per GPU-second, keyed by the `gpu_type` string the worker
 reports (`nvidia-smi`'s name): each card's secure-cloud hourly price over the 5090's. A

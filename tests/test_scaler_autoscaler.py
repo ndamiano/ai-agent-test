@@ -236,3 +236,47 @@ def test_pods_is_the_last_listing_filtered_to_the_queue_with_first_seen_age(monk
     assert [(p["pod_id"], p["age_seconds"], p["seen_at"]) for p in seen] == [
         ("p0", 45.0, 130.0), ("p1", 15.0, 130.0)]
     assert a.pods("image", 145.0)[0]["name"] == "maestro-image-px"
+
+
+STOCK_CARD = RunPodError("POST /v1/pods -> 500: create pod: There are no instances currently available")
+STOCK_DC = RunPodError("POST /v1/pods -> 500: create pod: could not find any pods with required specifications")
+
+
+def test_every_combo_refused_for_stock_is_recorded_once_as_a_stock_out():
+    a, client = _scaler()
+    client.create_pod.side_effect = [STOCK_CARD, STOCK_DC]
+    _start(a)
+    a._stats.record_pod_refusal.assert_called_once()
+    queue, kind, attempts, error = a._stats.record_pod_refusal.call_args.args
+    assert (queue, kind) == ("llm", "stock")
+    assert [(t["volume"], t["gpu_type_ids"]) for t in attempts] == [
+        ("vol1", ["NVIDIA GeForce RTX 5090"]), ("vol1", QCFG["gpu_type_ids"])]
+    assert "could not find any pods" in attempts[1]["error"] and error == str(STOCK_DC)
+
+
+def test_a_refusal_that_is_not_stock_is_recorded_under_its_own_kind():
+    a, client = _scaler()
+    client.create_pod.side_effect = [STOCK_CARD, RunPodError("POST /v1/pods -> 401: unauthorized")]
+    _start(a)
+    assert a._stats.record_pod_refusal.call_args.args[1] == "other"
+
+
+def test_a_create_that_eventually_lands_records_nothing():
+    a, client = _scaler()
+    client.create_pod.side_effect = [STOCK_CARD, {"id": "pod1"}]
+    _start(a)
+    a._stats.record_pod_refusal.assert_not_called()
+
+
+def test_a_landed_create_counts_as_a_request_for_the_rollup():
+    a, client = _scaler()
+    client.create_pod.side_effect = [STOCK_CARD, {"id": "pod1"}]
+    _start(a)
+    a._stats.record_pod_created.assert_called_once_with("llm")
+
+
+def test_a_refused_create_is_not_also_counted_as_created():
+    a, client = _scaler()
+    client.create_pod.side_effect = [STOCK_CARD, STOCK_DC]
+    _start(a)
+    a._stats.record_pod_created.assert_not_called()

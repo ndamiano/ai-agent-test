@@ -1,4 +1,4 @@
-"""Platform datastore (sqlite) — games, builds, jobs, events, workers.
+"""Platform datastore (sqlite) — games, builds, jobs, events, workers, pod refusals.
 
 The authoritative index for everything the run dir can't answer cheaply: who owns which game,
 lifecycle status, compute grants/spend, the append-only event log (build/spec lifecycle rows
@@ -129,6 +129,25 @@ CREATE TABLE IF NOT EXISTS workers (
     started_at    REAL NOT NULL,
     last_seen_at  REAL,
     terminated_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS pod_refusals (
+    id         INTEGER PRIMARY KEY,
+    queue      TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    attempts   TEXT NOT NULL,
+    error      TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pod_refusals_queue ON pod_refusals(queue, kind, created_at);
+
+CREATE TABLE IF NOT EXISTS pod_request_days (
+    queue           TEXT NOT NULL,
+    day             TEXT NOT NULL,
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    stock_refusals  INTEGER NOT NULL DEFAULT 0,
+    other_refusals  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (queue, day)
 );
 """
 
@@ -858,6 +877,86 @@ def workers_since(since: float) -> List[Dict]:
             "FROM workers WHERE COALESCE(terminated_at, last_seen_at) >= ? OR terminated_at IS NULL",
             (since,)).fetchall()
     return [dict(r) for r in rows]
+
+
+_DAY = 24 * 3600
+_POD_REFUSAL_KEEP_SECONDS = 30 * _DAY
+
+
+def _bump_pod_day(conn, queue: str, now: float, refusal_kind: Optional[str]) -> None:
+    """The never-pruned daily rollup (UTC day) behind the provider-facing ratio: every StartPod
+    the scaler executed counts as an attempt, a refusal also counts under its kind."""
+    day = time.strftime("%Y-%m-%d", time.gmtime(now))
+    conn.execute("INSERT OR IGNORE INTO pod_request_days (queue, day) VALUES (?, ?)", (queue, day))
+    col = {None: "", "stock": ", stock_refusals = stock_refusals + 1",
+           "other": ", other_refusals = other_refusals + 1"}[refusal_kind]
+    conn.execute(f"UPDATE pod_request_days SET attempts = attempts + 1{col} "
+                 "WHERE queue = ? AND day = ?", (queue, day))
+
+
+def record_pod_created(queue: str) -> None:
+    with _db() as conn:
+        _bump_pod_day(conn, queue, time.time(), None)
+
+
+def pod_request_totals(queue: str, days: Optional[int] = None) -> Dict:
+    """Attempts and refusals by kind over the last `days` UTC days (today included), or all time
+    when None; `since` is the earliest day in the window with a row, None when there is none."""
+    first = (time.strftime("%Y-%m-%d", time.gmtime(time.time() - (days - 1) * _DAY))
+             if days else "")
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(attempts), 0) AS attempts, "
+            "COALESCE(SUM(stock_refusals), 0) AS stock_refusals, "
+            "COALESCE(SUM(other_refusals), 0) AS other_refusals, MIN(day) AS since "
+            "FROM pod_request_days WHERE queue = ? AND day >= ?", (queue, first)).fetchone()
+    return dict(row)
+
+
+def record_pod_refusal(queue: str, kind: str, attempts: List[Dict], error: str) -> None:
+    """One StartPod the provider refused on every volume/GPU combination — one row per scaler
+    decision, not per combination, because the question the row answers is "how often could we
+    not get a pod when we wanted one", and a tick that tries four combos wanted ONE pod. The
+    combos and each one's error ride along in `attempts`; `error` is the last provider text.
+    `kind` is 'stock' when every combo was refused for lack of stock, else 'other'. Rows older
+    than 30 days go on insert, so a refusing provider can never grow the table past a month; the
+    daily rollup (`pod_request_days`) keeps the count forever."""
+    now = time.time()
+    with _db() as conn:
+        _bump_pod_day(conn, queue, now, kind)
+        conn.execute("DELETE FROM pod_refusals WHERE created_at < ?",
+                     (now - _POD_REFUSAL_KEEP_SECONDS,))
+        conn.execute(
+            "INSERT INTO pod_refusals (queue, kind, attempts, error, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (queue, kind, json.dumps(attempts, ensure_ascii=False), error, now))
+
+
+def pod_stockout_stats(queue: str, now: float) -> Dict:
+    """Stock refusals for a queue: counts over the last hour, day and week, the most recent one,
+    and every one in the last hour oldest-first (the admin view walks those to find where the
+    current outage began)."""
+    with _db() as conn:
+        counts = conn.execute(
+            "SELECT SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS last_1h, "
+            "SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS last_24h, "
+            "COUNT(*) AS last_7d "
+            "FROM pod_refusals WHERE queue = ? AND kind = 'stock' AND created_at >= ?",
+            (now - 3600, now - _DAY, queue, now - 7 * _DAY)).fetchone()
+        last = conn.execute(
+            "SELECT created_at, error FROM pod_refusals WHERE queue = ? AND kind = 'stock' "
+            "ORDER BY id DESC LIMIT 1", (queue,)).fetchone()
+        recent = conn.execute(
+            "SELECT created_at, error FROM pod_refusals WHERE queue = ? AND kind = 'stock' "
+            "AND created_at >= ? ORDER BY id", (queue, now - 3600)).fetchall()
+    return {
+        "last_1h": counts["last_1h"] or 0,
+        "last_24h": counts["last_24h"] or 0,
+        "last_7d": counts["last_7d"],
+        "last_at": last["created_at"] if last else None,
+        "last_error": last["error"] if last else None,
+        "recent": [dict(r) for r in recent],
+    }
 
 
 def record_event(game_id: str, kind: str, payload: Dict, build_id: Optional[str] = None) -> None:

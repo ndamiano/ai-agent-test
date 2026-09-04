@@ -4,7 +4,7 @@ The ONLY scaler module that imports db.store. A later move to SQS-like infra swa
 (ApproximateNumberOfMessages ≈ pending, etc.); policy.py and autoscaler.py never touch storage.
 """
 
-from typing import List, NamedTuple, Optional, Protocol
+from typing import Dict, List, NamedTuple, Optional, Protocol
 
 from db import store
 
@@ -25,6 +25,9 @@ class StatsSource(Protocol):
     def stale_workers(self, queue: str, staleness_seconds: float) -> List[WorkerInfo]: ...
     def terminated_workers_with_pods(self, queue: str) -> List[WorkerInfo]: ...
     def mark_worker_terminated(self, worker_id: str) -> None: ...
+    def record_pod_refusal(self, queue: str, kind: str, attempts: List[Dict],
+                           error: str) -> None: ...
+    def record_pod_created(self, queue: str) -> None: ...
 
 
 class SqliteStatsSource:
@@ -46,3 +49,10 @@ class SqliteStatsSource:
 
     def mark_worker_terminated(self, worker_id: str) -> None:
         store.set_worker_terminated(worker_id)
+
+    def record_pod_refusal(self, queue: str, kind: str, attempts: List[Dict],
+                           error: str) -> None:
+        store.record_pod_refusal(queue, kind, attempts, error)
+
+    def record_pod_created(self, queue: str) -> None:
+        store.record_pod_created(queue)

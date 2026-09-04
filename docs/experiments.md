@@ -1645,3 +1645,61 @@ renders through `txt2img_subject.json` with the framing fixed and the style clau
 `MESH_STYLE`, an `img2img_subject.json` beside it for regenerate). Hand-painted is live; low-poly
 is the other clause in `MESH_STYLES`, one name away, because the two reconstructed alike and
 which one a game should look like is a taste call not yet made. The battery of builds is owed.
+
+## 2026-09-04 — The designer's 2D/3D call: six phrasings of one clause (Flash-Next, prod)
+
+### The question
+A one-shot "open world game where you explore an island and find treasure" came back from the
+prod designer as a 2D tile map with `compose_world` never mentioned. The clause telling the
+designer about the world tool was in the prompt. Is the tilt the clause's wording, or the model's?
+
+### The arm
+Design stage only, no builds: 8 asks (the island, the racing career, the monster quests, a farm
+with seasons, a card battler, a permadeath dungeon crawler, a haunted forest at night, a
+derelict space station) × 6 variants of the one paragraph in `design.txt` that describes the
+choice, 48 design jobs enqueued as a batch on the prod llm queue while pods were warm. Read
+off each design: the first line's 2D/3D and whether `compose_world` appears anywhere.
+
+- **A** the shipped clause: "a 3D game set in open countryside may instead take its landscape
+  from compose_world…", ending on "A 2D game's map is a generator the builder writes in code".
+- **B** same content, 2D sentence first, world sentence last, "may instead" removed.
+- **C** B, plus the first line must name where a 3D landscape comes from.
+- **D** a rule: walked/sailed/driven settings are 3D via `compose_world`, board/grid/lane/screen
+  games are 2D, indoor 3D is code.
+- **E** "Pick 2D or 3D by what fits this game best; neither is the default", then B's sentences.
+- **F** "Before anything else, decide whether this game is better in 2D or 3D, judged by what the
+  player would see and do in the best version of it; neither is the default", then B's sentences.
+
+### What came out
+
+| ask | A | B | C | D | E | F |
+|---|---|---|---|---|---|---|
+| island | 2D | 3D w | 2D | 3D w | 3D w | 3D w |
+| racing | 2D | 2D | 2D | 3D w | 2D | 2D |
+| quests | 2D | 2D | 2D | 3D w | 2D | 2D |
+| farm | 2D | 2D | 2D | 2D | 2D | 2D |
+| cards | 2D | 2D | 2D | 2D | 2D | 2D |
+| dungeon | 2D | 2D | 2D | 2D | 2D | 2D |
+| forest | 2D | 2D | 2D | 3D w | 2D | 3D w |
+| station | 2D | 2D | 2D | 3D | 2D | 3D |
+
+(w = `compose_world` named in the design.) Design length was the same in every arm, ~18K
+characters; no arm produced an empty or malformed design.
+
+**Order and hedging change nothing.** A, B and C together: one 3D design in 24. Moving the
+world sentence last and dropping "may instead" did not move the model, so the tilt is not
+"the most recent concrete clause wins" — this model is not distracted, it defaults to 2D when
+the choice is left implicit.
+
+**A rule moves the most and moves too much.** D: five of eight 3D, including racing and the
+monster quests, which are good 2D games (the shipped Contract of the Demon Lord is one).
+
+**Asking for the decision is what works.** E flips the island alone; F flips the island, the
+forest and the station, and F's station is 3D built in code, no world — the indoor case
+handled without a rule saying so. Cards, farm and dungeon stay 2D under both.
+
+### Verdict
+F is `design.txt`. The designer keeps the call; the prompt now asks it to make the call first,
+with neither answer the default. Measured on designs, not games: the first F-designed 3D builds
+are the next reading, the island rerun first.
+

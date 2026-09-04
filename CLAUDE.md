@@ -168,7 +168,13 @@ told what the builder has: `compose_world(description, seed)` for a 3D outdoor l
 for every 2D scene — the tool and its parameters, not a rule about what to leave out. A designer
 that does not know a world exists writes a tile map (measured 2026-08-29: the same ask went
 top-down noise without the clause and a real world with it), and a parameter list with no size
-in it is what keeps a size out of the design.
+in it is what keeps a size out of the design. The choice has to be ASKED FOR as a decision, made
+first, with neither answer the default: told only what the two options are, Flash-Next wrote
+2D for 24 of 24 designs across three phrasings of the same clause, an open-world island
+included; told to decide before anything else, it put the island, a night forest and a space
+station in 3D and left the card, farm and dungeon games flat (measured 2026-09-04). A rule
+keyed on the setting flips more — racing and a monster-hunt went 3D too — and is not used,
+because those are legitimately 2D games and the rule takes the call away.
 
 ### A system starves when it is one clause among many — the design stage is what feeds it
 

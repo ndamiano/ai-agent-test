@@ -1,4 +1,6 @@
-# The image-queue GPU worker: ComfyUI + the RMBG node + the pull-side agent, one container.
+# The image-queue AND video-queue GPU worker: ComfyUI + the RMBG node + the pull-side agent, one
+# container. Which queue a pod serves is `WORKER_QUEUE` at create (the scaler sets it); the
+# entrypoint stages and warms the weights that queue's graphs name.
 #
 # Base matches the home box exactly (torch 2.10.0+cu130) — the only configuration the sprite
 # workflow has ever run on. Weights come from the RunPod network volume; the image is code.
@@ -11,10 +13,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl \
 # Everything here goes to that same interpreter on purpose — a venv would shadow the CUDA build.
 ENV PIP_BREAK_SYSTEM_PACKAGES=1
 
-# Pinned to the commit the home box actually SERVES from — /home/nick/comfy/mess-with-comfy, not
-# the ComfyUI checkout beside it. Both symlink models/ to the same tree, so only the code differs.
-# Full 40-char sha: GitHub refuses fetch-by-abbreviated-sha.
-ARG COMFY_SHA=a1c434eb65113673c483a922e84cb0493622b3a3
+# Pinned to the commit the home box actually SERVES from — /home/nick/comfy/mess-with-comfy
+# (v0.30.1: the MiniMax-H3 nodes the video queue runs are core there, and every image graph was
+# measured on it 2026-09-04). Full 40-char sha: GitHub refuses fetch-by-abbreviated-sha.
+ARG COMFY_SHA=0764232429b8cfb10b79b6f186c8cb23e0b22897
 RUN git init /opt/ComfyUI \
     && cd /opt/ComfyUI \
     && git remote add origin https://github.com/comfyanonymous/ComfyUI \

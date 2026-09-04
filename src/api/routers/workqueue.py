@@ -131,13 +131,13 @@ _JOB_ID_RE = re.compile(r"[0-9a-f]{16,32}")
 
 def _offload_blobs(job_id: str, result: Optional[Dict]) -> list:
     """Big binaries do not belong in jobs rows: decode them to <data_dir>/blobs and hand the
-    row paths instead — a mesh's glb_b64 becomes glb_file, each image entry's b64 becomes
-    file. The job_id names the files, so it must be one of ours (hex), not a path. Caller
+    row paths instead — a mesh's glb_b64 becomes glb_file, an anim's sheet_b64 sheet_file, each
+    image entry's b64 file. The job_id names the files, so it must be one of ours (hex), not a path. Caller
     removes the files if the completion turns out to be stale."""
     if not result:
         return []
     has_images = any("b64" in img for img in result.get("images") or [])
-    if "glb_b64" not in result and not has_images:
+    if "glb_b64" not in result and "sheet_b64" not in result and not has_images:
         return []
     if not _JOB_ID_RE.fullmatch(job_id):
         raise HTTPException(status_code=400, detail="bad job id")
@@ -148,6 +148,11 @@ def _offload_blobs(job_id: str, result: Optional[Dict]) -> list:
         path = blob_dir / f"{job_id}.glb"
         path.write_bytes(base64.b64decode(result.pop("glb_b64")))
         result["glb_file"] = str(path)
+        written.append(path)
+    if "sheet_b64" in result:
+        path = blob_dir / f"{job_id}.png"
+        path.write_bytes(base64.b64decode(result.pop("sheet_b64")))
+        result["sheet_file"] = str(path)
         written.append(path)
     for i, img in enumerate(result.get("images") or []):
         if "b64" not in img:

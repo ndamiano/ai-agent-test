@@ -97,7 +97,7 @@ What does not change is the criteria a candidate has to meet:
 - **Cost per finished game**, which is throughput and turn count together, not tokens/sec alone.
 
 ### Image models (diffusion)
-ComfyUI is the interface; a `kind` picks the model and workflow. NetaYume Lumina v4 for sprites and scenes, DreamShaperXL Turbo v2.1 for tiles and scene-chain terrain, Qwen-Image 2512 for scene-chain subjects and Qwen-Image-Edit 2511 for the scene embed.
+ComfyUI is the interface; a `kind` picks the model and workflow. Qwen-Image 2512 for sprites, scenes and scene-chain subjects, DreamShaperXL Turbo v2.1 for tiles and scene-chain terrain, Qwen-Image-Edit 2511 for the scene embed, and MiniMax-H3 for anim sheets on the `video` queue.
 
 ### 3D models
 TRELLIS 2, behind a home-rolled server (`tools/trellis_server.py`).

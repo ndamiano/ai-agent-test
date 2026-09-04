@@ -145,7 +145,8 @@ EDIT_SCHEMA = {"type": "function", "function": {
                    "required": ["path", "old_text", "new_text"]}}}
 MEDIA_SCHEMA = {"type": "function", "function": {
     "name": "generate_media",
-    "description": ("Have an artist draw an image or a 3D model for the game. Returns the path for "
+    "description": ("Have an artist draw an image, an animated character or a 3D model for the "
+                    "game. Returns the path for "
                     "the art. A game's art shares one visual style: before the first call, write "
                     "one style phrase naming medium, palette and outline (like \"painted cartoon "
                     "style, warm forest palette, soft dark outlines\") and repeat it word for word "
@@ -163,7 +164,7 @@ MEDIA_SCHEMA = {"type": "function", "function": {
                                                  "game's background, and light the subject "
                                                  "clearly."},
                                   "kind": {"type": "string",
-                                           "enum": ["sprite", "tile", "scene", "mesh"],
+                                           "enum": ["sprite", "tile", "scene", "mesh", "anim"],
                                            "description":
                                                "sprite: one subject, cut out, drawn on top of the "
                                                "game. tile: a surface the game repeats, fills its "
@@ -179,7 +180,32 @@ MEDIA_SCHEMA = {"type": "function", "function": {
                                                "tile keeps the style phrase's palette but never "
                                                "its vividness or bold outlines. "
                                                "scene: a whole picture the game draws behind "
-                                               "everything. mesh: a 3D model."}},
+                                               "everything. mesh: a 3D model. anim: a thing that "
+                                               "moves in a way one picture cannot show — a "
+                                               "character, a car, a card that flips — drawn as a "
+                                               "sprite and animated into a sheet of the anims you "
+                                               "name; draw it with lib/sprites.js."},
+                                  "anims": {"type": "array",
+                                            "description":
+                                                "anim only: the animations, one entry each. "
+                                                "`name` is what the game asks lib/sprites.js "
+                                                "for; `action` is what happens in one sentence, "
+                                                "starting and ending at the pose in the prompt "
+                                                "(\"walks in place, legs alternating\", \"the "
+                                                "wheels spin and the body rocks over bumps\", "
+                                                "\"flips over to show its back\").",
+                                            "items": {"type": "object",
+                                                      "properties": {"name": {"type": "string"},
+                                                                     "action": {"type": "string"}},
+                                                      "required": ["name", "action"]}},
+                                  "facings": {"type": "integer", "enum": [1, 4],
+                                              "description":
+                                                  "anim only. 4: the game shows it from the side "
+                                                  "and needs it facing front, right, back and "
+                                                  "left — the sheet holds every anim in all four. "
+                                                  "1: one view is all there is (seen from above, "
+                                                  "or flat like a card) and the game rotates it "
+                                                  "in code."}},
                    "required": ["id", "prompt"]}}}
 COMPOSE_SCHEMA = {"type": "function", "function": {
     "name": "compose_scene",

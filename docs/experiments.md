@@ -1703,3 +1703,90 @@ F is `design.txt`. The designer keeps the call; the prompt now asks it to make t
 with neither answer the default. Measured on designs, not games: the first F-designed 3D builds
 are the next reading, the island rerun first.
 
+## 2026-09-04 — MiniMax-H3 image-to-video: what a clip can hold (RTX 5090)
+
+MiniMax-H3, pruned int8, via ComfyUI 0.30.1, 768² frames, 20 steps, ~1.3 s/frame:
+
+- A 73-frame PINNED clip (first frame = last frame = the source still) runs 60–75 s and holds
+  identity perfectly across the whole clip; the lower-body diff signal peaks TWICE — a real
+  two-stride walk, not a sway.
+- A 22-frame pinned clip runs ~20 s and holds one stride — enough for an idle.
+- One 209-frame TOUR clip, scripted front → right → back → left → front, runs 266 s: the turns
+  land in script order, the back view is plausible, and drift is minor and localized (a shield
+  emblem, a sword's tint, a slight scale creep) rather than identity loss.
+- A back-view still cut from the tour seeds a 73-frame walk as well as the original front-on art
+  does — the tour's frames are good enough to re-seed from, not just to look at.
+- Judging motion from an 8-frame strip called two real walks wrong. The per-frame diff signal (or
+  the clip itself) is what to judge; a sampled strip throws away the frames the motion is in.
+
+- A 22-frame PINNED TURNTABLE ("turns in place to face the right side of the screen, then away,
+  then the left side, then back; no walking") runs ~20 s and yields the other three facings —
+  the 209-frame tour did the same job at 13× the cost, and the walking it carried was never
+  used.
+
+**Scheme chosen:** one turntable clip per character (yields the three other facing stills) plus
+one pinned clip per (direction, animation) — never a time-scripted prompt asking for several
+beats in one clip. `worker/anim_sheet.py` and `tools/comfyui_tools.build_anim_payload` carry
+this scheme.
+
+**Which turntable frame is which facing** — measured on the three characters of the first
+anim-driven build (knight, troll, specter, 2026-09-04): the model turns at a steady rate, so
+the quarter marks of the moving span (the frames between the pins) are the right profile, the
+back and the left profile, on all three. Scoring frames by silhouette instead — the back as
+the most mirror-symmetric middle frame, the profiles as the most lopsided frames unlike the
+front — missed by two to three frames on the knight and the troll, because a held sword or
+club makes the true back lopsided; the shipped knight sheet drew the back when walking left.
+The frames also come in identical pairs (the model's effective rate is half the clip's), so
+"nearest frame" is a two-frame window either way.
+
+**Cost per character at full spec** (four directions, walk/idle/attack): the first build ran
+walk and attack at 73 frames (76 s each) and measured 13.4 minutes a character, 97% of it
+generation and 75% of that the eight 73-frame clips. Four arms on the knight still, same
+model, 2026-09-04 afternoon:
+
+| arm | frames | s | what came back |
+|---|---|---|---|
+| walk, pinned | 22 | 36 | one stride, legs alternate, closes on itself (last vs first 1.0) |
+| attack, pinned | 22 | 36 | wind-up 3 frames, held 8, return 3, closes; no smears |
+| "walk left, hard cut, walk right", unpinned | 39 | 42 | a real cut at the midpoint (diff 48.7) — to a MIRROR of the same front-facing walk; the facing follows the seed still, not the prompt |
+| four facings, three hard cuts, unpinned | 73 | 72 | no cuts: held front 13 frames, then walked WHILE turning — right ~26 frames, back ~10, left ~15 |
+
+Walk and attack ship at 22 frames, 8 cells at 12 fps: 13 clips × ~36 s ≈ 8 minutes a
+character. Cuts do not replace the turntable — the model will not change facing on a prompt —
+but the last arm says one clip can carry every facing's walk if it is segmented by facing;
+parked. The next lever is the fused turbo checkpoint (4 steps against 20, same weights and
+license), unmeasured.
+
+**Attack was the weak animation at 73 frames.** Walk and idle rows came back clean on every
+facing; the 73-frame attack rows carried MiniMax's slash smears (a sword drawn at three times
+its size for a frame, a club that becomes a torch) on every character. The 22-frame attack
+has no room to drift; verified on the knight, the troll and specter rows are the next look.
+
+**Where the 36 s went.** The video leg launched ComfyUI with `--cache-none`, and under it every
+prompt re-requested the 32B text encoder, the VAE and the 21 GB transformer; the two do not fit
+32 GB together, so each clip paid a swap. With node caching on, the same 22-frame clip: 20 s at
+20 steps, 12 s at 10, 8 s at 6, on the dense checkpoint; 8 s at 4 steps on the fused turbo
+checkpoint (`MATLOWAI/minimax-h3-fused-turbo-int8-convrot`, a lightx2v 8-step LoRA and a
+motion LoRA fused in). The turbo's attack ghosts the sword at 4 and at 8 steps — the fused motion
+LoRA, not the step count — where the dense checkpoint at 6 steps came back clean; seed moved
+attack quality more than steps did (two 10-step seeds: one smear, one clean). The turntable
+is the clip that does NOT survive six steps: the knight dissolved into a red blob twice
+mid-turn and its profile stills seeded every side view as a 3/4 back. Shipped: caching on, the
+turn at 20 steps (34 s, once), loops at 6. 13 clips ≈ 2 minutes a character (measured 110 s).
+The turbo stays a lab file.
+
+**Cuts.** On the turbo, "walking facing the camera, halfway a hard cut to walking seen from
+behind" CUT — frames 0–29 front, 30–38 back, no turn — where the same ask for side profiles
+mirrored the front walk instead. A cut is real; a profile is what the model will not turn to
+on a prompt, so the turntable stays.
+
+## 2026-09-04 — Sprites render through Qwen (local 5090)
+
+The art lab's sprite re-bake-off (`~/Documents/Labs/art-lab`, prompts from real builds) had
+NetaYume losing to Qwen-Image-2512 on characters, and the routing never shipped: only mesh
+subjects moved. Now every non-tile kind — sprite, scene, anim still, mesh subject — renders
+through the one Qwen subject graph, prose verbatim (no danbooru quality tags), with the
+lab's frame negative. The demo build's own knight and troll prompts, re-rendered: coherent
+armour and a readable face where NetaYume's knight was a helmet on a smear; 20 s a still
+with the model resident. The anime item workflows are deleted.
+

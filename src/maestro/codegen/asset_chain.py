@@ -10,6 +10,7 @@ the batch runs the finalize.
 """
 
 import base64
+import json
 import logging
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -23,6 +24,7 @@ from maestro.codegen.assets import (asset_path, autocrop_image, check_render, la
 from maestro.codegen.staging import stage_for_play
 from maestro.state import RunState
 from tools.build_events import _emit
+from tools.comfyui_tools import build_anim_payload
 from tools.quilting import quilt_tile
 from tools.safety import SafetyViolation, log_violation
 
@@ -69,7 +71,22 @@ def _mesh_from_image(md: Dict, result: Dict) -> Optional[Dict]:
                                         "finalize": md["then"]["finalize"]}}}
 
 
-CONTINUATIONS = {"mesh_from_image": _mesh_from_image}
+def _anim_from_image(md: Dict, result: Dict) -> Optional[Dict]:
+    """The sprite render a video job animates into a sheet. Like a mesh, the source render is kept
+    for a re-seed, and the PNG rides the payload because the worker is remote."""
+    src = _admit(md, _first_image(result))
+    if src is None:
+        return None
+    data = Path(src).read_bytes()
+    asset_path(md["run_id"], md["asset_id"], "src.png").write_bytes(data)
+    return {"queue": "video",
+            "payload": build_anim_payload(base64.b64encode(data).decode("ascii"),
+                                          md["anims"], md["facings"]),
+            "metadata": {**md, "then": {"operations": ["save_anim"],
+                                        "finalize": md["then"]["finalize"]}}}
+
+
+CONTINUATIONS = {"mesh_from_image": _mesh_from_image, "anim_from_image": _anim_from_image}
 
 
 def _record_defect(md: Dict, dst: Path) -> None:
@@ -140,7 +157,25 @@ def _decimate(md: Dict, result: Dict) -> None:
     _mark_landed(md)
 
 
-OPERATIONS = {"save_sprite": _save_sprite, "save_flat": _save_flat, "decimate": _decimate}
+def _save_anim(md: Dict, result: Dict) -> None:
+    """The sheet and its manifest land together at the promised path (the PNG the game named,
+    the JSON beside it), after the same verdict a render gets: the worker scored the four facing
+    stills every frame descends from, and the worst of them speaks for the sheet."""
+    src = (result or {}).get("sheet_file")
+    if not src:
+        return
+    if _admit(md, {"file": src, "safety": result.get("safety")}) is None:
+        return
+    dst = asset_path(md["run_id"], md["asset_id"], "png")
+    dst.write_bytes(Path(src).read_bytes())
+    dst.with_suffix(".json").write_text(json.dumps(result["manifest"]))
+    _mark_landed(md)
+    for warning in result["manifest"].get("warnings") or []:
+        logger.warning("assets %s: %s anim %s", md["run_id"], md["asset_id"], warning)
+
+
+OPERATIONS = {"save_sprite": _save_sprite, "save_flat": _save_flat, "decimate": _decimate,
+              "save_anim": _save_anim}
 
 # The scene chain rides the same registries so the completion dispatch stays one branch:
 # its jobs are asset jobs whose `then` carries scene names.

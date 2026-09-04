@@ -346,3 +346,167 @@ def test_an_idle_slot_waits_for_a_busy_sibling():
     assert null_while_busy["n"] >= 2
     assert _posts_to(a, "/worker/complete") == 1
     assert _posts_to(a, "/worker/deregister") == 1
+
+
+# ── worker/handlers.anim_sheet against a faked ComfyUI ───────────────────────────────────────
+
+
+def _anim_png_bytes(cx, cy):
+    import io
+    from PIL import Image, ImageDraw
+    im = Image.new("RGB", (64, 64), (255, 255, 255))
+    ImageDraw.Draw(im).ellipse((cx - 10, cy - 14, cx + 10, cy + 14), fill=(20, 20, 20))
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _anim_payload(facings=4):
+    import base64
+    from tools.comfyui_tools import build_anim_payload
+    still = _anim_png_bytes(32, 32)
+    anims = [{"name": "walk", "action": "walks in place"},
+             {"name": "idle", "action": "breathes"},
+             {"name": "attack", "action": "swings"}]
+    return build_anim_payload(base64.b64encode(still).decode("ascii"), anims, facings)
+
+
+def _fake_comfy_anim(monkeypatch):
+    """A ComfyUI stand-in: every /prompt call gets its own prompt_id, in call order, and each
+    prompt_id's /history lists a handful of moving frames that /view serves as real PNG bytes —
+    the turn clip's 22 frames give pick_facings a turntable to cut, each loop's 6 give
+    trim/sample something to chew on."""
+    from worker import handlers
+    calls = {"prompt": 0}
+    frame_sets = {}
+
+    def turn_frames():
+        """A pinned turntable: front held at both ends, a symmetric back in the middle,
+        lopsided profiles either side — matches what pick_facings expects."""
+        n = 22
+        out = [_anim_png_bytes(32, 32) for _ in range(3)]
+        for i in range(3, n - 3):
+            if int(n * 0.35) <= i < int(n * 0.65):
+                out.append(_anim_png_bytes(32, 20))       # symmetric-ish back stance
+            elif i < n // 2:
+                out.append(_anim_png_bytes(20, 32))       # right-side profile
+            else:
+                out.append(_anim_png_bytes(44, 32))       # left-side profile
+        out += [_anim_png_bytes(32, 32) for _ in range(3)]
+        return out
+
+    def loop_frames():
+        return [_anim_png_bytes(30 + i, 32) for i in range(6)]
+
+    frame_sets[0] = turn_frames()
+    for i in range(1, 13):
+        frame_sets[i] = loop_frames()
+
+    submitted = []
+
+    def post(url, **kw):
+        if url.endswith("/upload/image"):
+            return FakeResponse(200, {"name": "x.png"})
+        if url.endswith("/prompt"):
+            idx = calls["prompt"]
+            calls["prompt"] += 1
+            submitted.append(kw["json"]["prompt"])
+            return FakeResponse(200, {"prompt_id": f"p{idx}"})
+        return FakeResponse(200, {"ok": True})
+    calls["submitted"] = submitted
+
+    def get(url, **kw):
+        if "/history/" in url:
+            pid = url.rsplit("/", 1)[-1]
+            idx = int(pid[1:])
+            filenames = [f"{idx}-{i}.png" for i in range(len(frame_sets[idx]))]
+            return FakeResponse(200, {pid: {"outputs": {"9": {"images":
+                [{"filename": fn} for fn in filenames]}}}})
+        if "/view" in url:
+            import urllib.parse
+            q = dict(urllib.parse.parse_qsl(url.split("?", 1)[1]))
+            idx, i = (int(x) for x in q["filename"].replace(".png", "").split("-"))
+            return FakeResponse(200, content=frame_sets[idx][i])
+        raise AssertionError(f"unexpected GET {url}")
+
+    monkeypatch.setattr(handlers.safety_vision, "classify",
+                        lambda b: {"scores": {"NSFW": 0.01, "SFW": 0.99}})
+    return post, get, calls
+
+
+def test_anim_sheet_builds_a_manifest_with_every_row(monkeypatch):
+    from worker import handlers
+
+    a = agent()
+    post, get, calls = _fake_comfy_anim(monkeypatch)
+    a.session.post.side_effect = post
+    a.session.get.side_effect = get
+
+    result, err = handlers.anim_sheet(a, _anim_payload())
+
+    assert err is None
+    assert calls["prompt"] == 1 + 3 * 4
+    assert "sheet_b64" in result
+    assert result["safety"]["scores"]["NSFW"] == 0.01
+    manifest = result["manifest"]
+    for anim in ("walk", "idle", "attack"):
+        rows = manifest["anims"][anim]["rows"]
+        assert set(rows) == {"front", "right", "back", "left"}
+
+
+def test_a_one_facing_anim_skips_the_turntable(monkeypatch):
+    """A top-down car or a flat card has one view: no turn clip, one row per anim, and the
+    prompts carry no facing phrase."""
+    from worker import handlers
+
+    a = agent()
+    post, get, calls = _fake_comfy_anim(monkeypatch)
+    a.session.post.side_effect = post
+    a.session.get.side_effect = get
+    payload = _anim_payload(facings=1)
+    # the fake's first prompt is shaped like a turntable; with no turn, every prompt is a loop
+    result, err = handlers.anim_sheet(a, payload)
+
+    assert err is None
+    assert calls["prompt"] == 3
+    manifest = result["manifest"]
+    assert manifest["dirs"] == ["front"]
+    for anim in ("walk", "idle", "attack"):
+        assert manifest["anims"][anim]["rows"] == {"front": manifest["anims"][anim]["rows"]["front"]}
+    for wf in calls["submitted"]:
+        assert "facing" not in wf["5"]["inputs"]["prompt"]
+        assert wf["5"]["inputs"]["length"] == 22
+    assert result["facings"] == {"front": 0}
+
+
+def test_anim_sheet_runs_the_turn_at_its_own_step_count(monkeypatch):
+    """A loop survives the workflow's few steps; a turn dissolves at them, so the payload names
+    the turn's steps and only the turn gets them."""
+    from worker import handlers
+
+    a = agent()
+    post, get, calls = _fake_comfy_anim(monkeypatch)
+    a.session.post.side_effect = post
+    a.session.get.side_effect = get
+    payload = _anim_payload()
+
+    handlers.anim_sheet(a, payload)
+
+    turn, *loops = calls["submitted"]
+    assert turn["9"]["inputs"]["steps"] == payload["turn"]["steps"]
+    assert turn["5"]["inputs"]["length"] == payload["turn"]["length"]
+    assert {wf["9"]["inputs"]["steps"] for wf in loops} == \
+        {payload["loop"]["workflow"]["9"]["inputs"]["steps"]}
+    assert payload["turn"]["steps"] != payload["loop"]["workflow"]["9"]["inputs"]["steps"]
+
+
+def test_anim_sheet_reports_a_comfy_error_without_raising(monkeypatch):
+    from worker import handlers
+
+    a = agent()
+    a.session.post.side_effect = lambda url, **kw: FakeResponse(500, text="gpu died")
+
+    result, err = handlers.anim_sheet(a, _anim_payload())
+
+    assert result is None
+    assert "gpu died" in err

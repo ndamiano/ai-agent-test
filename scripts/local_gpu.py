@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """Drain a queue on a one-card box: start the model, start the worker, wait, stop both.
 
-A build spreads its work across three queues and one 5090 holds ONE of these models
+A build spreads its work across four queues and one 5090 holds ONE of these models
 at a time, so locally the queues are drained in turn rather than served at once.
 Nothing is lost by waiting — a job sits in the queue until a worker exists, which is
 the same thing that lets a pod come up late in production.
 
     scripts/local_gpu.py llm            # drain the llm queue, then stop
     scripts/local_gpu.py image mesh     # each leg in turn
-    scripts/local_gpu.py all            # llm, then image, then mesh
+    scripts/local_gpu.py all            # llm, then image, then mesh, then video
     scripts/local_gpu.py image --keep   # leave the model up when the queue empties
     scripts/local_gpu.py auto           # hold whichever queue has work, forever
     scripts/local_gpu.py auto --idle-exit 300   # stop and exit after 300s with nothing pending
 
 `auto` is the one to run for a world build: worldgen alternates llm/image/mesh jobs many
 times and blocks in `db.queue_client.run_job` until each completes, so there is no point at
-which the legs can be drained by hand one at a time. `auto` watches all three queues' pending
+which the legs can be drained by hand one at a time. `auto` watches every queue's pending
 counts and swaps the card to whichever queue needs it, favoring the queue it already holds so
 a tie doesn't thrash it every poll.
 
@@ -61,8 +61,12 @@ IDLE_TICKS = 3          # empty polls before a queue counts as drained; a contin
                         # once" is not empty
 POLL_SECONDS = 2.0
 
-QUEUES = ["llm", "image", "mesh"]
-PRIORITY = {"llm": 0, "image": 1, "mesh": 2}  # tie-break when nothing is currently held
+QUEUES = ["llm", "image", "mesh", "video"]
+PRIORITY = {"llm": 0, "image": 1, "mesh": 2, "video": 3}  # tie-break when nothing is currently held
+# A pending job the control plane's reaper will fail before the held queue drains has to be served
+# first: one card, a build whose turns re-fill the llm queue as fast as it empties, and five
+# sheets waited 30 minutes behind it for a worker that never came (2026-09-04, two of five lost).
+STARVE_SECONDS = 600
 
 
 def _settings() -> dict:
@@ -101,11 +105,12 @@ def _leg(queue: str) -> dict:
             "cwd": None,
             "env": {},
         }
-    if queue == "image":
+    if queue in ("image", "video"):
+        # The same ComfyUI serves both: the image graphs and MiniMax's are nodes in one checkout.
         return {
             "port": 8188,
             "ready": "http://127.0.0.1:8188/system_stats",
-            "argv": [str(COMFY_PYTHON), "main.py", "--port", "8188", "--cache-none",
+            "argv": [str(COMFY_PYTHON), "main.py", "--port", "8188",
                      "--use-pytorch-cross-attention"],
             "cwd": str(COMFY_DIR),
             "env": {},
@@ -210,6 +215,17 @@ def _waiting(queue: str) -> int:
     return int(row["n"])
 
 
+def _oldest_wait(queue: str) -> float:
+    """Seconds the queue's longest-unclaimed job has waited; 0 with nothing pending."""
+    from db import store as db_store
+    with db_store._db() as conn:
+        row = conn.execute(
+            "SELECT MIN(created_at) AS t FROM jobs WHERE queue = ? AND status = 'pending'",
+            (queue,),
+        ).fetchone()
+    return time.time() - row["t"] if row["t"] else 0.0
+
+
 def drain(queue: str, *, keep: bool, ready_timeout: float) -> None:
     leg = _leg(queue)
     if _up(leg["ready"]):
@@ -232,7 +248,7 @@ def drain(queue: str, *, keep: bool, ready_timeout: float) -> None:
              "--token", token, "--queue", queue,
              "--target", f"http://localhost:{leg['port']}"],
             str(ROOT / "src"),
-            {"SAFETY_MODEL_DIR": SAFETY_MODEL_DIR} if queue == "image" else {},
+            {"SAFETY_MODEL_DIR": SAFETY_MODEL_DIR} if queue in ("image", "video") else {},
         )
 
         idle = 0
@@ -263,16 +279,22 @@ def drain(queue: str, *, keep: bool, ready_timeout: float) -> None:
 # ---------------------------------------------------------------------------
 
 def choose_action(held: Optional[str], pending: dict, idle_ticks: dict,
-                   idle_tick_limit: int) -> Optional[str]:
+                   idle_tick_limit: int, waits: Optional[dict] = None) -> Optional[str]:
     """Pure decision function: given which queue currently holds the card (or None), the
-    pending count per queue, and how many consecutive empty ticks each queue has racked up,
-    return the queue to hold next, or None to keep the current state (including "hold nothing").
+    pending count per queue, how many consecutive empty ticks each queue has racked up, and how
+    long each queue's oldest unclaimed job has waited, return the queue to hold next, or None
+    to keep the current state (including "hold nothing").
 
-    Priority: stay on the held queue while it has work or hasn't been empty long enough to
-    count as drained (this is what keeps a mid-build swap from thrashing on a momentary zero
-    between a job finishing and its continuation landing). Otherwise prefer the held queue's
-    replacement in fixed order llm -> image -> mesh among queues with pending work. If nothing
+    Priority: a queue whose oldest job has waited STARVE_SECONDS takes the card (the longest
+    wait first) — the held queue's job in flight finishes, its next ones wait. Otherwise stay
+    on the held queue while it has work or hasn't been empty long enough to count as drained
+    (this is what keeps a mid-build swap from thrashing on a momentary zero between a job
+    finishing and its continuation landing). Otherwise prefer the held queue's replacement in
+    fixed order llm -> image -> mesh -> video among queues with pending work. If nothing
     anywhere has pending work, return None (holder should idle, not switch)."""
+    starving = {q: w for q, w in (waits or {}).items() if w >= STARVE_SECONDS and q != held}
+    if starving:
+        return max(starving, key=starving.get)
     if held is not None:
         if pending.get(held, 0) > 0 or idle_ticks.get(held, 0) < idle_tick_limit:
             return held
@@ -334,7 +356,7 @@ def auto(idle_exit: Optional[float], ready_timeout: float) -> None:
              "--token", token, "--queue", queue,
              "--target", f"http://localhost:{leg['port']}"],
             str(ROOT / "src"),
-            {"SAFETY_MODEL_DIR": SAFETY_MODEL_DIR} if queue == "image" else {},
+            {"SAFETY_MODEL_DIR": SAFETY_MODEL_DIR} if queue in ("image", "video") else {},
         )
         held = queue
 
@@ -357,7 +379,8 @@ def auto(idle_exit: Optional[float], ready_timeout: float) -> None:
                 _log_auto(f"idle {idle_exit:.0f}s, nothing pending {pending} — exiting", auto_log)
                 break
 
-            action = choose_action(held, pending, idle_ticks, IDLE_TICKS)
+            waits = {q: _oldest_wait(q) for q in QUEUES}
+            action = choose_action(held, pending, idle_ticks, IDLE_TICKS, waits)
 
             if action != held:
                 _log_auto(f"switch {held!r} -> {action!r} pending={pending}", auto_log)
@@ -394,7 +417,7 @@ def main() -> int:
         auto(args.idle_exit, args.ready_timeout)
         return 0
 
-    queues = ["llm", "image", "mesh"] if args.queues == ["all"] else args.queues
+    queues = QUEUES if args.queues == ["all"] else args.queues
     if not _up("http://localhost:8000/docs") and not _up("http://localhost:8000/"):
         print("warning: nothing answering on :8000 — start `python run.py` first, or the "
               "worker has no queue to pull from", flush=True)

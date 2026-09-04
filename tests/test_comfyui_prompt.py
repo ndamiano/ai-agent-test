@@ -1,12 +1,13 @@
 """The image job a kind resolves to.
 
-A game asks for three different KINDS of picture and they want opposite things: a sprite is cut out
-and drawn on top of the game, a tile and a scene ARE the background. Rendering all three through the
-one item-icon workflow is what matted a floor down to a handful of planks.
+A game asks for different KINDS of picture and they want opposite things: a sprite is cut out and
+drawn on top of the game, a tile and a scene ARE the background. Rendering all of them through one
+item-icon workflow is what matted a floor down to a handful of planks.
 
-A kind now picks the MODEL too: sprites and scenes render through NetaYume Lumina (anime checkpoint,
-real cfg, so the negative reaches the model), tiles through DreamShaperXL Turbo with a negative that
-holds off the photoreal drift and cracks tiles grow without it.
+A kind picks the graph too: tiles render through DreamShaperXL Turbo with a negative that holds off
+the photoreal drift and cracks tiles grow without it; everything else — sprites, scenes, anim
+stills, mesh subjects — through the Qwen subject graph, prose verbatim, since the art lab's sprite
+re-bake-off (2026-09-04) retired the anime checkpoint.
 """
 
 import pytest
@@ -15,26 +16,23 @@ from tools.comfyui_tools import (MESH_STYLE, MESH_STYLES, build_image_job, build
                                  build_img2img_job)
 
 
-def test_the_prompt_is_the_positive_substance():
-    # The manifest's saved prompt survives verbatim in job["prompt"], and the positive carries it
-    # WHOLE after the quality-tag prefix — embedding multi-sentence prose mid-phrase ("a single
-    # {X}, one object only, ...") garbled the grammar and drove subject drift.
+def test_the_prompt_is_the_positive_verbatim():
+    # The manifest's saved prompt survives verbatim in job["prompt"] and IS the positive: no
+    # quality tags (Qwen takes prose), and never embedded mid-phrase ("a single {X}, one object
+    # only, ...") — that garbled the grammar and drove subject drift.
     job = build_image_job("A rusty iron key with a worn bow. A single object icon, centered.")
     assert job["prompt"] == "A rusty iron key with a worn bow. A single object icon, centered."
-    assert job["workflow_override"]["6"]["inputs"]["text"] == \
-        "masterpiece, best quality, A rusty iron key with a worn bow. " \
-        "A single object icon, centered."
-    assert job["workflow_override"]["5"]["inputs"]["width"] == 1024
-    assert job["workflow_override"]["5"]["inputs"]["height"] == 1024
+    assert job["workflow_override"]["p"]["inputs"]["text"] == job["prompt"]
+    assert job["workflow_override"]["l"]["inputs"]["width"] == 1024
+    assert job["workflow_override"]["l"]["inputs"]["height"] == 1024
 
 
-@pytest.mark.parametrize("kind", ["sprite", "scene"])
-def test_items_render_through_netayume(kind):
+@pytest.mark.parametrize("kind", ["sprite", "scene", "anim"])
+def test_subjects_render_through_qwen(kind):
     wf = build_image_job("A key.", kind)["workflow_override"]
-    assert wf["4"]["inputs"]["ckpt_name"] == "NetaYume_v4_all_in_one.safetensors"
-    # the sampler reads the shifted model, at a cfg where the negative is real
-    assert wf["3"]["inputs"]["model"] == ["10", 0]
-    assert wf["3"]["inputs"]["cfg"] == 4.5
+    assert wf["u"]["inputs"]["unet_name"].startswith("qwen_image_2512")
+    assert wf["k"]["inputs"]["model"] == ["ms", 0]
+    assert wf["k"]["inputs"]["cfg"] == 2.5
 
 
 def test_tiles_render_through_dreamshaper():
@@ -43,42 +41,44 @@ def test_tiles_render_through_dreamshaper():
     assert wf["3"]["inputs"]["model"] == ["4", 0]
     assert wf["5"]["inputs"]["width"] == 1024
     assert wf["5"]["inputs"]["height"] == 1024
-
-
-def test_a_tile_positive_stays_verbatim():
-    """DreamShaperXL is not danbooru-trained; quality tags are off-distribution there."""
-    wf = build_image_job("Worn wooden floorboards.", "tile")["workflow_override"]
     assert wf["6"]["inputs"]["text"] == "Worn wooden floorboards."
 
 
-def test_the_negative_reaches_node_7_and_varies_by_kind():
-    item = build_image_job("A key.", "sprite")["workflow_override"]["7"]["inputs"]["text"]
-    scene = build_image_job("A key.", "scene")["workflow_override"]["7"]["inputs"]["text"]
+def test_the_negative_varies_by_kind():
+    sprite = build_image_job("A key.", "sprite")["workflow_override"]["n"]["inputs"]["text"]
+    scene = build_image_job("A key.", "scene")["workflow_override"]["n"]["inputs"]["text"]
     tile = build_image_job("A key.", "tile")["workflow_override"]["7"]["inputs"]["text"]
-    assert "photorealistic" in item
-    assert scene == item
+    assert "photorealistic" in sprite
+    # a subject Qwen draws is cropped by the frame without these
+    assert "cropped" in sprite
+    assert scene == sprite
     # tiles measured 2026-08-06 drift photoreal and grow cracks/objects without the extra terms
-    assert tile.startswith(item)
     for term in ("person", "border", "cracks"):
         assert term in tile
-    assert "cracks" not in item
+    assert "cracks" not in sprite
 
 
 def test_the_seed_is_set_per_job():
-    wf = build_image_job("A key.")["workflow_override"]
-    assert isinstance(wf["3"]["inputs"]["seed"], int)
-    assert wf["3"]["inputs"]["seed"] != 0
+    a = build_image_job("A key.")["workflow_override"]["k"]["inputs"]["seed"]
+    b = build_image_job("A key.")["workflow_override"]["k"]["inputs"]["seed"]
+    assert isinstance(a, int) and a != b
 
 
-def test_a_sprite_is_matted():
-    wf = build_image_job("A rusty iron key.", "sprite")["workflow_override"]
-    assert wf["9"]["inputs"]["images"] == ["47", 0]      # the output reads BiRefNet
+@pytest.mark.parametrize("kind", ["sprite", "anim"])
+def test_a_sprite_is_matted(kind):
+    wf = build_image_job("A rusty iron key.", kind)["workflow_override"]
+    assert wf["s"]["inputs"]["images"] == ["m", 0]      # the output reads BiRefNet
 
 
-@pytest.mark.parametrize("kind", ["tile", "scene"])
-def test_a_background_keeps_its_whole_frame(kind):
-    """Matting a floor leaves the ragged fragments of a floor that used to be a floor."""
-    wf = build_image_job("Worn wooden floorboards.", kind)["workflow_override"]
+def test_a_scene_keeps_its_whole_frame():
+    """Matting a backdrop leaves the ragged fragments of a backdrop."""
+    wf = build_image_job("A cobblestone courtyard.", "scene")["workflow_override"]
+    assert "m" not in wf
+    assert wf["s"]["inputs"]["images"] == ["d", 0]
+
+
+def test_a_tile_keeps_its_whole_frame():
+    wf = build_image_job("Worn wooden floorboards.", "tile")["workflow_override"]
     assert "47" not in wf
     assert wf["9"]["inputs"]["images"] == ["8", 0]
 
@@ -86,12 +86,12 @@ def test_a_background_keeps_its_whole_frame(kind):
 def test_img2img_job_seeds_from_the_init_image():
     job = build_img2img_job("A rusty iron key, now golden.", "init_abc.png", denoise=0.5)
     wf = job["workflow_override"]
-    assert wf["50"]["inputs"]["image"] == "init_abc.png"
-    assert wf["3"]["inputs"]["denoise"] == 0.5
+    assert wf["li"]["inputs"]["image"] == "init_abc.png"
+    assert wf["k"]["inputs"]["denoise"] == 0.5
     # the sampler denoises the ENCODED init image, not an empty latent
-    assert wf["3"]["inputs"]["latent_image"] == ["51", 0]
-    assert wf["51"]["inputs"]["pixels"] == ["50", 0]
-    assert wf["6"]["inputs"]["text"] == "masterpiece, best quality, A rusty iron key, now golden."
+    assert wf["k"]["inputs"]["latent_image"] == ["ve", 0]
+    assert wf["ve"]["inputs"]["pixels"] == ["li", 0]
+    assert wf["p"]["inputs"]["text"] == "A rusty iron key, now golden."
 
 
 def test_img2img_honours_the_kind_too():
@@ -103,6 +103,7 @@ def test_img2img_honours_the_kind_too():
     assert "47" not in wf
     assert wf["9"]["inputs"]["images"] == ["8", 0]
     assert wf["3"]["inputs"]["latent_image"] == ["51", 0]
+    assert wf["50"]["inputs"]["image"] == "init_abc.png"
 
 
 def test_payload_with_init_image_carries_the_upload():
@@ -111,13 +112,13 @@ def test_payload_with_init_image_carries_the_upload():
     (up,) = payload["uploads"]
     assert up["b64"] == "aGk="
     # the workflow's LoadImage reads exactly the name the worker will upload under
-    assert payload["workflow"]["50"]["inputs"]["image"] == up["name"]
+    assert payload["workflow"]["li"]["inputs"]["image"] == up["name"]
 
 
 def test_payload_without_init_image_has_no_uploads():
     payload = build_image_payload("A rusty iron key.")
     assert "uploads" not in payload
-    assert "50" not in payload["workflow"]   # txt2img: empty latent, no LoadImage
+    assert "li" not in payload["workflow"]   # txt2img: empty latent, no LoadImage
 
 
 def test_a_mesh_subject_renders_through_qwen_with_the_style_fixed():

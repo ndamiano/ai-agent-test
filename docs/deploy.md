@@ -192,9 +192,11 @@ A queue with no worker means every job on it times out.
 
 ## RunPod worker images
 
-One image per queue, weights on a RunPod **network volume** (the image is code, the volume is
-weights), so a pod boots without re-downloading the weights. Pods never talk to Hugging Face after
-provisioning.
+One image per engine, weights on a RunPod **network volume** (the image is code, the volume is
+weights), so a pod boots without re-downloading the weights. The `image` and `video` queues share
+one image — the same ComfyUI serves both — and a pod learns which it is from `WORKER_QUEUE`, set
+by the scaler at create; it stages and warms that queue's weights alone. Pods never talk to
+Hugging Face after provisioning.
 
 There is more than one volume, because a volume pins its datacenter: the art volume
 (`runpod.network_volume_id`, EU-RO-1, 5090-class hosts) holds the image and mesh weights, and
@@ -210,7 +212,8 @@ What the art volume holds (`scripts/provision_volume.sh` is the authority):
 
 | queue | weights | GB |
 |---|---|---|
-| image | `checkpoints/NetaYume_v4_all_in_one` (sprites, scenes), `checkpoints/DreamShaperXL_Turbo_v2_1` (tiles, scene-chain terrain), `diffusion_models/qwen_image_2512_fp8_e4m3fn` (scene-chain subjects), `diffusion_models/qwen_image_edit_2511_fp8mixed` (the scene embed) + the `text_encoders/qwen_2.5_vl_7b_fp8_scaled` and `vae/qwen_image_vae` both Qwen graphs share, `RMBG/BiRefNet` (the matte) | 69 |
+| image | `checkpoints/DreamShaperXL_Turbo_v2_1` (tiles, scene-chain terrain), `diffusion_models/qwen_image_2512_fp8_e4m3fn` (sprites, scenes, anim stills, mesh subjects), `diffusion_models/qwen_image_edit_2511_fp8mixed` (the scene embed) + the `text_encoders/qwen_2.5_vl_7b_fp8_scaled` and `vae/qwen_image_vae` both Qwen graphs share, `RMBG/BiRefNet` (the matte) | 58 |
+| video | `diffusion_models/minimax_h3_fl2va_pruned_int8_convrot` (image-to-video), `text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq`, `vae/minimax_h3_video_vae_fp16` — the anim sheets | 42 |
 | mesh | `trellis2-weights` + `encoders/` (dinov3 mirror, BiRefNet) + the `hf-cache` pre-seed | 21 |
 | image (safety) | `comfy/models/safety/` — the NSFW classifier | 0.02 |
 
@@ -281,8 +284,9 @@ docker build --target env --output type=local,dest=docker/out -f docker/Dockerfi
 ID=$(cat docker/out/env.id)                      # then docker/out/env.tar → every llm volume:
 aws s3 cp --profile runpod --region eu-ro-1 --endpoint-url https://s3api-eu-ro-1.runpod.io \
     docker/out/env.tar s3://<llm-volume>/env/llm-env-$ID.tar   # ~8 min per volume from home
-docker build -f docker/Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v15 .
-docker build -f docker/Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v8 .
+docker build -f docker/Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v17 .
+docker build -f docker/Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v9 .
+docker tag ndamiano100/maestro-worker:image-v9 ndamiano100/maestro-worker:video-v1
 docker build -f docker/Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v17 .
 docker push ndamiano100/maestro-worker:mesh-v17   # etc.
 ```
@@ -292,7 +296,12 @@ disk with room. The Docker Hub repo is private, so every template carries the re
 without it a pod exits in one second with no logs.
 
 The deployed tag is whatever each RunPod TEMPLATE names; the templates are the only record of it
-(`llm-v15`, `image-v8`, `mesh-v17` at the last check).
+(`llm-v17`, `image-v8`, `mesh-v17` at the last check). The `video` queue's template names its
+own `video-*` tag — the same build as the image queue's, tagged twice, so the two templates roll
+independently — from `video-v1` / `image-v9` on (ComfyUI 0.30.1, where the MiniMax-H3 nodes are
+core). It needs no env of its own: `WORKER_QUEUE` arrives from the scaler. A video pod stages its
+~42 GB of weights into `/dev/shm`, and falls back to reading them off the FUSE mount when the
+host gives it less than ~46 GB there (`COMFY_STAGE_DIR` moves the stage to another disk).
 An image tag and the volume's weights go live in LOCKSTEP: the entrypoint stages and warms up on
 the checkpoints the workflows name, so a pod predating a model swap dies at boot on a weight that
 is not there. Roll the volume forward first, the template second, and retire the old weight last.
@@ -451,6 +460,10 @@ Settings block (`settings.json` → `runpod`, the full key list in `docs/local_d
   default wholesale — carry complete blocks.
 - Scale-from-zero fires on ANY pending job with no cooldown; a booting pod counts as capacity, so
   a 5-minute boot can't trigger add-forever.
+- `queues.video` is the image block with its own `template_id` (the `video-*` tag), the same cards
+  and CUDA floor, and a longer `idle_exit_seconds`: an anim's sheet job lands ~20 s after its
+  still renders, and a build asks for its characters together, so a video pod that exits on a
+  short idle re-pays its ~40 GB stage for the next character.
 
 **One-time manual check (unverified RunPod detail):** whether create-time `env` *merges with* or
 *replaces* the template's env. The scaler passes the full worker env at create either way, but on

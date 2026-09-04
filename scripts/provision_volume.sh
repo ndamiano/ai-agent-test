@@ -53,12 +53,10 @@ VOL = sys.argv[1]
 # and optionally the name it is stored under
 #
 # The LLM is not here: it lives prepacked on the llm volume in another datacenter (docs/deploy.md).
-    # The image queue's four checkpoints, one per kind (see maestro/codegen: sprites/scenes ->
-    # NetaYume, tiles + scene-chain terrain -> DreamShaperXL Turbo, scene-chain subjects ->
-    # Qwen-Image-2512, the scene embed -> Qwen-Image-Edit-2511). The two Qwen graphs share the
-    # VL text encoder and the VAE.
-    (f"{VOL}/comfy/models/checkpoints", "duongve/NetaYume-Lumina-Image-2.0",
-     "NetaYume_v4_all_in_one.safetensors", 10620229821, None),
+    # The image queue's checkpoints, by kind (see maestro/codegen: sprites, scenes, anim stills
+    # and mesh subjects -> Qwen-Image-2512; tiles + scene-chain terrain -> DreamShaperXL Turbo;
+    # the scene embed -> Qwen-Image-Edit-2511). The two Qwen graphs share the VL text encoder
+    # and the VAE.
     (f"{VOL}/comfy/models/checkpoints", "Lykon/dreamshaper-xl-v2-turbo",
      "DreamShaperXL_Turbo_v2_1.safetensors", 6939220250, None),
     (f"{VOL}/comfy/models/diffusion_models", "Comfy-Org/Qwen-Image_ComfyUI",
@@ -69,6 +67,14 @@ VOL = sys.argv[1]
      "split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors", 9384670680, None),
     (f"{VOL}/comfy/models/vae", "Comfy-Org/Qwen-Image_ComfyUI",
      "split_files/vae/qwen_image_vae.safetensors", 253806246, None),
+    # The video queue: MiniMax-H3 image-to-video (pruned int8), its Qwen3-VL text encoder and
+    # video VAE. Same ComfyUI image as the image queue, staged only on a video pod.
+    (f"{VOL}/comfy/models/diffusion_models", "Comfy-Org/MiniMax-H3",
+     "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors", 20970379616, None),
+    (f"{VOL}/comfy/models/text_encoders", "Comfy-Org/MiniMax-H3",
+     "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors", 15687142551, None),
+    (f"{VOL}/comfy/models/vae", "Comfy-Org/MiniMax-H3",
+     "vae/minimax_h3_video_vae_fp16.safetensors", 5207808496, None),
     (f"{VOL}/comfy/models/RMBG/BiRefNet", "1038lab/BiRefNet",
      "BiRefNet-general.safetensors", 0, None),
     (f"{VOL}/comfy/models/RMBG/BiRefNet", "1038lab/BiRefNet", "birefnet.py", 0, None),

@@ -124,6 +124,7 @@ class Autoscaler:
                 env = {
                     "CP_URL": rp.get("cp_url", ""),
                     "WORKER_TOKEN": token,
+                    "WORKER_QUEUE": queue,
                     "IDLE_EXIT_SECONDS": str(qcfg.get("idle_exit_seconds", 10)),
                 }
                 if queue == "llm":

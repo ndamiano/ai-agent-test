@@ -299,7 +299,7 @@ def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client, monkeypat
     job = db_store.claim_job("image", "w1", 60)
     assert job is not None and job["game_id"] == run_id and job["batch_id"]
     # the merged prompt reaches the positive behind the item quality-tag prefix
-    assert job["payload"]["workflow"]["6"]["inputs"]["text"].endswith("a brave knight, pixel art")
+    assert job["payload"]["workflow"]["p"]["inputs"]["text"].endswith("a brave knight, pixel art")
     meta = json.loads(job["metadata"])
     assert meta["asset_id"] == "hero"
     assert meta["then"] == {"operations": ["save_sprite"], "finalize": "assets"}

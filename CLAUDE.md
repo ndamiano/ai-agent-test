@@ -125,9 +125,10 @@ measurement first (`docs/experiments.md`).
 `generate_media(id, prompt, kind)` enqueues one render and answers IMMEDIATELY with the path the file
 will appear at; the model writes that path into the game as it writes the code that uses it. No
 planning call, no source rewrite, no static analysis of what the game spawns — the GPU draws art
-while the llm turns keep writing code. `kind` (sprite, tile, scene, mesh) is the one thing the prose
-cannot carry, because it decides what a landed render owes: a sprite is matted to its subject, a
-tile or scene keeps its frame, a mesh lands at a known scale. The compute budget is the only cap on
+while the llm turns keep writing code. `kind` (sprite, tile, scene, mesh, anim) is the one thing the
+prose cannot carry, because it decides what a landed render owes: a sprite is matted to its
+subject, a tile or scene keeps its frame, a mesh lands at a known scale, an anim comes back as a
+sheet of the animations the build named for one thing, in the facings it asked for. The compute budget is the only cap on
 how much art a build may ask for, and a refused enqueue is REPORTED as "draw this one with code
 instead" — a build that cannot have art is told to draw one, never left waiting for a file that is
 not coming. Mechanism: `assets.py` and `asset_chain.py` in `docs/build_path.md`.

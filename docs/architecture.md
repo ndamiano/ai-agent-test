@@ -51,6 +51,7 @@ Consequences worth stating:
 | `llm` | one build turn (one inference) | Pennyroyal SGLang on an RTX PRO 6000 (prod); ninfer on the local 5090; any OpenAI-shaped server |
 | `image` | one sprite or texture render | ComfyUI |
 | `mesh` | image → 3D | TRELLIS |
+| `video` | image → an animated character's sprite sheet | ComfyUI (MiniMax-H3 image-to-video, the same instance as `image`) |
 
 One worker per queue, and a queue owns its card. `exec_seconds` are debited to the game named by the
 job row's `game_id`; a job without one is neither metered nor gated.
@@ -81,8 +82,9 @@ db holds live work and the run dir holds the archive. The append comes first: th
 share a transaction, and the order is what guarantees the body is never in neither place.
 
 **Assets.** `generate_media` enqueues one `image` job and answers immediately with the path the file
-will appear at. Chained work is named in the job's `metadata.then` (`mesh_from_image`, save/decimate
-operations, the batch finalize) and dispatched by `asset_chain`, so the queue stays a generic
+will appear at. Chained work is named in the job's `metadata.then` (`mesh_from_image`,
+`anim_from_image`, save/decimate operations, the batch finalize) and dispatched by `asset_chain`,
+so the queue stays a generic
 transport that never learns what an asset is.
 
 **Adding a stage** beyond build/design/asset means one more branch on `metadata.stage` in

@@ -1,3 +1,4 @@
+import json
 """`generate_media` — the tool the game asks for its own art with.
 
 What is pinned here is the ANSWER, not the render: the model gets the path the file will live at
@@ -249,6 +250,87 @@ def _jobs(queue):
     with store._db() as conn:
         rows = conn.execute("SELECT * FROM jobs WHERE queue = ? ORDER BY id", (queue,)).fetchall()
     return [store._job_dict(r) for r in rows]
+
+
+KNIGHT_ANIMS = [{"name": "walk", "action": "walks in place, legs alternating"},
+                {"name": "attack", "action": "swings the sword once"}]
+
+
+def test_an_anim_answers_with_a_png_path_and_chains_the_video_worker(run_dir):
+    out = request_media(RUN, run_dir, "knight", "a knight", kind="anim", anims=KNIGHT_ANIMS, facings=4)
+    assert out["path"] == "assets/knight.png"
+    md = _image_jobs()[0]["metadata"]
+    assert md["kind"] == "anim"
+    assert md["then"] == {"enqueue": "anim_from_image", "finalize": "assets"}
+
+
+def test_an_anim_placeholder_writes_both_the_png_and_the_manifest(run_dir):
+    request_media(RUN, run_dir, "knight", "a knight", kind="anim", anims=KNIGHT_ANIMS, facings=4)
+    png = run_dir / "game" / "assets" / "knight.png"
+    manifest = run_dir / "game" / "assets" / "knight.json"
+    assert png.exists() and manifest.exists()
+    entry = read_manifest(run_dir)[0]
+    assert entry["kind"] == "anim"
+    assert entry["anims"] == KNIGHT_ANIMS and entry["facings"] == 4
+    # the stand-in manifest already answers to the names the game will ask for
+    assert set(json.loads(manifest.read_text())["anims"]) == {"walk", "attack"}
+
+
+def test_an_anim_request_carries_its_spec_to_the_video_leg(run_dir):
+    request_media(RUN, run_dir, "car", "a red racing car seen from above", kind="anim",
+                  anims=[{"name": "drive", "action": "the wheels spin"}], facings=1)
+    md = _image_jobs()[0]["metadata"]
+    assert md["anims"] == [{"name": "drive", "action": "the wheels spin"}]
+    assert md["facings"] == 1
+
+
+@pytest.mark.parametrize("anims, facings, word", [
+    (None, 4, "anims"),
+    ([], 4, "anims"),
+    ([{"name": "walk"}], 4, "action"),
+    ([{"name": "walk", "action": "walks"}, {"name": "walk", "action": "walks"}], 4, "distinct"),
+    ([{"name": "walk", "action": "walks"}], 2, "facings"),
+    ([{"name": "walk", "action": "walks"}], None, "facings"),
+])
+def test_an_anim_without_a_full_spec_is_refused_with_the_reason(run_dir, anims, facings, word):
+    out = request_media(RUN, run_dir, "knight", "a knight", kind="anim", anims=anims,
+                        facings=facings)
+    assert out["ok"] is False and word in out["error"]
+    assert _image_jobs() == []
+
+
+def test_a_top_up_resumes_an_anim_from_its_source_render_onto_the_video_queue(run_dir):
+    """A mesh needs its source render to skip back to TRELLIS; an anim needs the same to skip
+    back to the video worker instead of re-paying for the still."""
+    request_media(RUN, run_dir, "knight", "a knight", kind="anim", anims=KNIGHT_ANIMS, facings=4)
+    src = assets.asset_path(RUN, "knight", "src.png")
+    src.parent.mkdir(parents=True, exist_ok=True)
+    src.write_bytes(b"\x89PNG-the-still-we-already-paid-for")
+
+    assets.start_from_manifest(RUN, run_dir)
+
+    video_jobs = _jobs("video")
+    assert len(video_jobs) == 1, "the top-up went to the video worker, not back to ComfyUI"
+    assert video_jobs[0]["payload"]["kind"] == "anim_sheet"
+    assert set(video_jobs[0]["payload"]["anims"]) == {"walk", "attack"}
+    assert video_jobs[0]["payload"]["turn"] is not None
+    assert video_jobs[0]["metadata"]["then"]["operations"] == ["save_anim"]
+    assert len(_jobs("image")) == 1, "no second still render was paid for"
+
+
+def test_an_anim_with_no_source_render_still_starts_at_the_image(run_dir):
+    request_media(RUN, run_dir, "knight", "a knight", kind="anim", anims=KNIGHT_ANIMS, facings=4)
+
+    assets.start_from_manifest(RUN, run_dir)
+
+    assert len(_jobs("image")) == 2 and _jobs("video") == []
+
+
+def test_kind_video_is_still_an_unknown_kind(run_dir):
+    """anim is the new kind; video (the queue it lands on, not something a game asks for) must
+    stay refused."""
+    out = request_media(RUN, run_dir, "knight", "a knight", kind="video")
+    assert out["ok"] is False and "video" in out["error"]
 
 
 def test_a_top_up_resumes_a_mesh_from_the_source_render_it_already_has(run_dir):

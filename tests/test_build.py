@@ -578,10 +578,12 @@ def test_seed_places_the_helper_library_and_leaves_edits_alone(tmp_path):
     from maestro.codegen import staging
     staging.seed_vendor(tmp_path)
     lib = tmp_path / "game" / "lib"
-    assert sorted(p.name for p in lib.iterdir()) == ["audio.js", "canvas.js", "input.js", "lights.js"]
-    (lib / "input.js").write_text("// edited")
+    vendored = sorted(p.name for p in (staging.RUNTIME_DIR / "vendor" / "lib").glob("*.js"))
+    assert vendored and sorted(p.name for p in lib.iterdir()) == vendored
+    edited = lib / vendored[0]
+    edited.write_text("// edited")
     staging.seed_vendor(tmp_path)
-    assert (lib / "input.js").read_text() == "// edited"
+    assert edited.read_text() == "// edited"
 
 
 def _file_history(n=6):

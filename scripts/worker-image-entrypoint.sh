@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Stage weights off the FUSE volume, start ComfyUI, run one warmup render, THEN hand the
-# container to the worker agent.
+# container to the worker agent. One image serves two queues: `WORKER_QUEUE=image` (stills) or
+# `WORKER_QUEUE=video` (MiniMax-H3 sprite sheets) — same ComfyUI, different weights staged and
+# warmed, a different queue pulled.
 #
 # The staging + warmup exist because of how the volume behaves under mmap: bulk reads stream at
 # 2.7GB/s, but safetensors' mmap page-faults re-read at ~200MB/s and the FUSE mount keeps no page
@@ -17,6 +19,8 @@ set -euo pipefail
 
 : "${CP_URL:?CP_URL (control plane base URL) is required}"
 : "${WORKER_TOKEN:?WORKER_TOKEN is required}"
+WORKER_QUEUE="${WORKER_QUEUE:-image}"
+case "$WORKER_QUEUE" in image|video) ;; *) echo "WORKER_QUEUE must be image or video, not '$WORKER_QUEUE'" >&2; exit 1 ;; esac
 
 boot_t0=$(date +%s)
 mark() { echo "[boot +$(( $(date +%s) - boot_t0 ))s] $*"; }
@@ -40,22 +44,29 @@ done
 # Stage in the background while ComfyUI imports torch — the copy is shorter than the import, so
 # it rides free. The python does a chunked parallel copy: one 17GB file in single-stream cp reads
 # well below the 2.7GB/s the volume serves to concurrent readers.
-python - "$VOL_MODELS" "$STAGE_DIR" "$TREE" <<'PY' &
+python - "$VOL_MODELS" "$STAGE_DIR" "$TREE" "$WORKER_QUEUE" <<'PY' &
 import os, shutil, sys, time
 from concurrent.futures import ThreadPoolExecutor
 
-vol, stage, tree = sys.argv[1], sys.argv[2], sys.argv[3]
-# What this pod loads: every weight the live workflows name — the two checkpoints, the two Qwen
-# unets with their shared encoder and VAE, and the BiRefNet matte. Everything else on the volume
-# belongs to other queues.
+vol, stage, tree, queue = sys.argv[1:5]
+# What this pod loads: every weight the queue's live workflows name. The image queue: the tile
+# checkpoint, the two Qwen unets with their shared encoder and VAE, and the BiRefNet matte. The
+# video queue: the MiniMax-H3 image-to-video unet, its own Qwen3-VL encoder and video VAE.
+# Everything else on the volume belongs to other queues.
 FOLDERS = {
-    "checkpoints": ["NetaYume_v4_all_in_one.safetensors",
-                    "DreamShaperXL_Turbo_v2_1.safetensors"],
-    "diffusion_models": ["qwen_image_2512_fp8_e4m3fn.safetensors",
-                         "qwen_image_edit_2511_fp8mixed.safetensors"],
-    "text_encoders": ["qwen_2.5_vl_7b_fp8_scaled.safetensors"],
-    "vae": ["qwen_image_vae.safetensors"],
-}
+    "image": {
+        "checkpoints": ["DreamShaperXL_Turbo_v2_1.safetensors"],
+        "diffusion_models": ["qwen_image_2512_fp8_e4m3fn.safetensors",
+                             "qwen_image_edit_2511_fp8mixed.safetensors"],
+        "text_encoders": ["qwen_2.5_vl_7b_fp8_scaled.safetensors"],
+        "vae": ["qwen_image_vae.safetensors"],
+    },
+    "video": {
+        "diffusion_models": ["minimax_h3_fl2va_pruned_int8_convrot.safetensors"],
+        "text_encoders": ["qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"],
+        "vae": ["minimax_h3_video_vae_fp16.safetensors"],
+    },
+}[queue]
 rmbg = os.path.join(vol, "RMBG")
 
 def tree_size(p):
@@ -126,35 +137,84 @@ mark "ComfyUI up: $(curl -s "http://127.0.0.1:$COMFY_PORT/system_stats" | head -
 wait "$stage_pid" || true
 mark "staging settled"
 
-# Warmup render — the same graph a sprite job runs (NetaYume + the BiRefNet matte), one step at
-# 256px, so the checkpoint load, the matte's lazy import and the first-use CUDA kernels are all
-# paid HERE, before the worker can claim. A pod that cannot render dies at boot instead of
-# failing a user's job.
-python - "$COMFY_PORT" <<'PY'
-import json, sys, time, urllib.request, uuid
+# Warmup render — the graph the queue's jobs run, one step at the smallest size the model takes:
+# a sprite (the Qwen subject graph + the BiRefNet matte) for the image queue, a 5-frame
+# image-to-video clip for the video queue — so the weight load, the matte's lazy import and the
+# first-use CUDA kernels are all paid HERE, before the worker can claim. A pod that cannot render
+# dies at boot instead of failing a user's job.
+python - "$COMFY_PORT" "$WORKER_QUEUE" <<'PY'
+import json, struct, sys, time, urllib.request, uuid, zlib
 
-port = sys.argv[1]
+port, queue = sys.argv[1], sys.argv[2]
 base = f"http://127.0.0.1:{port}"
-wf = {
-    "4": {"class_type": "CheckpointLoaderSimple",
-          "inputs": {"ckpt_name": "NetaYume_v4_all_in_one.safetensors"}},
-    "10": {"class_type": "ModelSamplingAuraFlow", "inputs": {"shift": 6.0, "model": ["4", 0]}},
-    "6": {"class_type": "CLIPTextEncode", "inputs": {"text": "warmup", "clip": ["4", 1]}},
-    "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["4", 1]}},
-    "5": {"class_type": "EmptySD3LatentImage",
-          "inputs": {"width": 256, "height": 256, "batch_size": 1}},
-    "3": {"class_type": "KSampler",
-          "inputs": {"seed": 0, "steps": 1, "cfg": 4.5, "sampler_name": "res_multistep",
-                     "scheduler": "simple", "denoise": 1.0, "model": ["10", 0],
-                     "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["5", 0]}},
-    "8": {"class_type": "VAEDecode", "inputs": {"samples": ["3", 0], "vae": ["4", 2]}},
-    "47": {"class_type": "BiRefNetRMBG",
-           "inputs": {"model": "BiRefNet-general", "mask_blur": 0, "mask_offset": -1,
-                      "invert_output": False, "refine_foreground": False,
-                      "background": "Alpha", "background_color": "#ffffff",
-                      "image": ["8", 0]}},
-    "9": {"class_type": "PreviewImage", "inputs": {"images": ["47", 0]}},
-}
+if queue == "image":
+    wf = {
+        "u": {"class_type": "UNETLoader",
+              "inputs": {"unet_name": "qwen_image_2512_fp8_e4m3fn.safetensors",
+                         "weight_dtype": "default"}},
+        "c": {"class_type": "CLIPLoader",
+              "inputs": {"clip_name": "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+                         "type": "qwen_image", "device": "default"}},
+        "v": {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_vae.safetensors"}},
+        "ms": {"class_type": "ModelSamplingAuraFlow", "inputs": {"shift": 3.1, "model": ["u", 0]}},
+        "p": {"class_type": "CLIPTextEncode", "inputs": {"text": "warmup", "clip": ["c", 0]}},
+        "n": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["c", 0]}},
+        "l": {"class_type": "EmptySD3LatentImage",
+              "inputs": {"width": 256, "height": 256, "batch_size": 1}},
+        "k": {"class_type": "KSampler",
+              "inputs": {"seed": 0, "steps": 1, "cfg": 2.5, "sampler_name": "euler",
+                         "scheduler": "simple", "denoise": 1.0, "model": ["ms", 0],
+                         "positive": ["p", 0], "negative": ["n", 0], "latent_image": ["l", 0]}},
+        "d": {"class_type": "VAEDecode", "inputs": {"samples": ["k", 0], "vae": ["v", 0]}},
+        "m": {"class_type": "BiRefNetRMBG",
+              "inputs": {"model": "BiRefNet-general", "mask_blur": 0, "mask_offset": -1,
+                         "invert_output": False, "refine_foreground": False,
+                         "background": "Alpha", "background_color": "#ffffff",
+                         "image": ["d", 0]}},
+        "s": {"class_type": "PreviewImage", "inputs": {"images": ["m", 0]}},
+    }
+else:
+    # A 256px white PNG, uploaded as the clip's pinned first frame: the i2v graph has no
+    # empty-latent entry and LoadImage reads only ComfyUI's input folder.
+    raw = b"".join(b"\x00" + b"\xff" * (256 * 3) for _ in range(256))
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+    png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 256, 256, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+    boundary = uuid.uuid4().hex
+    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; "
+            f"filename=\"warmup.png\"\r\nContent-Type: image/png\r\n\r\n").encode() + png + \
+           f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(f"{base}/upload/image", data=body,
+                                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        still = json.load(r)["name"]
+    wf = {
+        "1": {"class_type": "UNETLoader",
+              "inputs": {"unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+                         "weight_dtype": "default"}},
+        "2": {"class_type": "CLIPLoader",
+              "inputs": {"clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+                         "type": "minimax"}},
+        "3": {"class_type": "VAELoader", "inputs": {"vae_name": "minimax_h3_video_vae_fp16.safetensors"}},
+        "4": {"class_type": "LoadImage", "inputs": {"image": still}},
+        "5": {"class_type": "MiniMaxH3ImageToVideo",
+              "inputs": {"prompt": "warmup", "width": 256, "height": 256, "length": 5,
+                         "clip": ["2", 0], "vae": ["3", 0],
+                         "first_frame": ["4", 0], "last_frame": ["4", 0]}},
+        "6": {"class_type": "MiniMaxH3SigmaShift",
+              "inputs": {"shift_video": 12.0, "shift_audio": 3.0, "model": ["1", 0]}},
+        "7": {"class_type": "BasicGuider", "inputs": {"model": ["6", 0], "conditioning": ["5", 0]}},
+        "8": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "res_multistep"}},
+        "9": {"class_type": "BasicScheduler",
+              "inputs": {"scheduler": "simple", "steps": 1, "denoise": 1.0, "model": ["6", 0]}},
+        "10": {"class_type": "RandomNoise", "inputs": {"noise_seed": 0}},
+        "11": {"class_type": "SamplerCustomAdvanced",
+               "inputs": {"noise": ["10", 0], "guider": ["7", 0], "sampler": ["8", 0],
+                          "sigmas": ["9", 0], "latent_image": ["5", 1]}},
+        "12": {"class_type": "VAEDecode", "inputs": {"samples": ["11", 1], "vae": ["3", 0]}},
+        "13": {"class_type": "PreviewImage", "inputs": {"images": ["12", 0]}},
+    }
 body = json.dumps({"prompt": wf, "client_id": str(uuid.uuid4())}).encode()
 req = urllib.request.Request(f"{base}/prompt", data=body,
                              headers={"Content-Type": "application/json"})
@@ -183,7 +243,7 @@ mark "warmup render done — registering"
 # is free crash recovery.
 python -m worker.agent \
     --server "$CP_URL" \
-    --queue image \
+    --queue "$WORKER_QUEUE" \
     --target "http://127.0.0.1:$COMFY_PORT" \
     --source runpod \
     ${IDLE_EXIT_SECONDS:+--idle-exit-seconds "$IDLE_EXIT_SECONDS"} &

@@ -29,6 +29,9 @@ QUEUE_SECONDS = {
     "llm": 15.0,
     "image": 8.0,
     "mesh": 90.0,
+    # One anim_sheet job is a whole character: a tour clip and twelve loop clips, ~2 min on a
+    # 5090 (docs/experiments.md 2026-09-04).
+    "video": 180.0,
 }
 
 

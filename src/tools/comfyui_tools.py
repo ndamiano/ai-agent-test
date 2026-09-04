@@ -1,5 +1,5 @@
-"""Image + mesh job PAYLOADS: this side resolves a workflow and screens the prompt, the worker next
-to the GPU runs it.
+"""Image, mesh and anim job PAYLOADS: this side resolves a workflow and screens the prompt, the
+worker next to the GPU runs it.
 
 Nothing here enqueues or waits — a caller lands the payload on the `image` queue itself, so every
 producer of GPU work passes through one place that can meter it.
@@ -10,22 +10,21 @@ import json
 import logging
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 from tools.safety import log_violation, screen_image_prompt
 
 logger = logging.getLogger(__name__)
 
 _WORKFLOWS_DIR = Path(__file__).parent.parent / "config" / "workflows"
-_TXT2IMG_ITEM_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_item.json"
-_IMG2IMG_ITEM_WORKFLOW_PATH = _WORKFLOWS_DIR / "img2img_item.json"
 _TXT2IMG_TILE_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_tile.json"
 _IMG2IMG_TILE_WORKFLOW_PATH = _WORKFLOWS_DIR / "img2img_tile.json"
 _TXT2IMG_SUBJECT_WORKFLOW_PATH = _WORKFLOWS_DIR / "txt2img_subject.json"
 _IMG2IMG_SUBJECT_WORKFLOW_PATH = _WORKFLOWS_DIR / "img2img_subject.json"
+_I2V_LOOP_WORKFLOW_PATH = _WORKFLOWS_DIR / "i2v_loop.json"
 
 
-def _build_background_workflow(base_workflow: dict, positive: str, negative: str) -> dict:
+def _build_tile_workflow(base_workflow: dict, positive: str, negative: str) -> dict:
     wf = copy.deepcopy(base_workflow)
     wf["6"]["inputs"]["text"] = positive
     wf["7"]["inputs"]["text"] = negative
@@ -33,17 +32,15 @@ def _build_background_workflow(base_workflow: dict, positive: str, negative: str
     return wf
 
 
-# Both samplers run at a real cfg now, so the negative reaches the model. The item negative pushes
-# away from photoreal (an anime checkpoint asked for game art); tiles measured today drift photoreal
-# and grow cracks and objects without their extra terms.
-_NEGATIVE_ITEM = "worst quality, low quality, blurry, watermark, signature, text, photo, " \
+# Both samplers run at a real cfg, so the negative reaches the model. Tiles measured 2026-08-06
+# drift photoreal and grow cracks and objects without their extra terms; a subject drawn by Qwen
+# is cropped by the frame without its own (the art lab's sprite re-bake-off, 2026-09-04).
+_NEGATIVE_BASE = "worst quality, low quality, blurry, watermark, signature, text, photo, " \
                  "photorealistic"
-_NEGATIVE_TILE = _NEGATIVE_ITEM + ", people, person, animal, border, frame, vignette, cracks, " \
+_NEGATIVE_TILE = _NEGATIVE_BASE + ", people, person, animal, border, frame, vignette, cracks, " \
                  "cracked ground"
-
-# NetaYume is danbooru-trained, so quality tags are on-distribution and prepend cleanly. Tiles
-# render through DreamShaperXL, where they are not, so tile positives stay verbatim.
-_POSITIVE_PREFIX_ITEM = "masterpiece, best quality, "
+_NEGATIVE_SUBJECT = _NEGATIVE_BASE + ", cropped, cut off, out of frame, partial, close-up, " \
+                    "clipped edges"
 
 # A mesh's picture is never seen by the player, so its style serves TRELLIS, not the game: a
 # hand-painted game-asset render lifts into geometry where a photo smears and the anime item
@@ -66,7 +63,28 @@ _NEGATIVE_MESH = ("blurry, low detail, cropped, cut off, partial object, multipl
 # mesh's subject is matted because TRELLIS lifts a cut-out. A tile or a backdrop IS the
 # background: matting one leaves the ragged fragments of a floor that used to be a floor, so those
 # keep the full opaque frame the sampler drew.
-MATTED_KINDS = ("sprite", "mesh")
+MATTED_KINDS = ("sprite", "mesh", "anim")
+
+# MiniMax-H3 image-to-video. A clip's length snaps to 17k+5 frames at 24 fps; a pinned clip
+# (first frame = last frame) closes on itself, and 22 frames is one stride, one swing or one
+# full turn in place — the sheet keeps 8 of them at 12 fps. Measured 2026-09-04 on a 5090: ~8 s
+# a clip at 6 steps with the models resident; a 73-frame clip at 20 steps cost 76 s and its
+# attack drifted into smears the short one has no room for.
+_I2V_STYLE = ("2D game character sprite on a plain white background. No camera movement, the "
+              "character stays centered, consistent character design, plain white background.")
+_I2V_TURN = ("The character stands still and turns once in place like a turntable: it turns to "
+             "face the right side of the screen, then turns to face away from the camera, then "
+             "turns to face the left side of the screen, then turns back to face the camera "
+             "exactly as it started. No walking.")
+_I2V_TURN_LENGTH = 22
+# A loop survives the six steps the workflow runs; a turn does not — at six the character
+# dissolved mid-turn and the profile stills seeded every side view wrong (2026-09-04).
+_I2V_TURN_STEPS = 20
+_I2V_LOOP = {"frames": 22, "cells": 8, "fps": 12}
+# The build names each animation as an action in prose; the clip is pinned, so the tail says
+# what the pin already enforces and the model stops fighting it.
+_I2V_ACTION_TAIL = " It ends exactly as it started."
+I2V_DIRS = ("front", "right", "back", "left")
 
 _MATTE_NODE = "47"
 _DECODE_NODE = "8"
@@ -80,43 +98,44 @@ def _drop_matte(wf: dict) -> dict:
     return wf
 
 
-def _build_subject_workflow(base_workflow: dict, description: str) -> dict:
-    """The Qwen subject graph carries its own matte; the prose goes first and the style last, so
-    the object stays the subject of the sentence."""
+def _subject_prompt(description: str, kind: str) -> tuple:
+    """(positive, negative) for the Qwen subject graph. A mesh's prose goes first and the style
+    last, so the object stays the subject of the sentence; everything else is the prompt verbatim —
+    Qwen takes prose, and the quality tags the anime checkpoint wanted are off-distribution."""
+    if kind == "mesh":
+        return description.rstrip(". ") + "." + MESH_STYLES[MESH_STYLE], _NEGATIVE_MESH
+    return description, _NEGATIVE_SUBJECT
+
+
+def _build_subject_workflow(base_workflow: dict, description: str, kind: str) -> dict:
+    """The Qwen subject graph: sprites, scenes, anim stills and mesh subjects all render here
+    (the sprite re-bake-off of 2026-09-04 retired the anime checkpoint). It carries its own matte,
+    which a scene — the background itself — has taken out."""
     wf = copy.deepcopy(base_workflow)
-    wf["p"]["inputs"]["text"] = description.rstrip(". ") + "." + MESH_STYLES[MESH_STYLE]
-    wf["n"]["inputs"]["text"] = _NEGATIVE_MESH
+    positive, negative = _subject_prompt(description, kind)
+    wf["p"]["inputs"]["text"] = positive
+    wf["n"]["inputs"]["text"] = negative
     wf["k"]["inputs"]["seed"] = int(uuid.uuid4().int % (2**32))
+    if kind not in MATTED_KINDS:
+        wf["s"]["inputs"]["images"] = ["d", 0]
+        wf.pop("m")
     return wf
-
-
-def _kind_recipe(kind: str, txt2img: bool) -> tuple:
-    """(workflow path, positive prefix, negative) for a kind: tiles render through DreamShaperXL
-    Turbo, sprites and scenes through NetaYume Lumina. A mesh subject has its own graph and never
-    comes through here."""
-    if kind == "tile":
-        path = _TXT2IMG_TILE_WORKFLOW_PATH if txt2img else _IMG2IMG_TILE_WORKFLOW_PATH
-        return path, "", _NEGATIVE_TILE
-    path = _TXT2IMG_ITEM_WORKFLOW_PATH if txt2img else _IMG2IMG_ITEM_WORKFLOW_PATH
-    return path, _POSITIVE_PREFIX_ITEM, _NEGATIVE_ITEM
 
 
 def build_image_job(description: str, kind: str = "sprite") -> dict:
     """Return a {prompt, workflow_override} job dict for ONE rendered image.
 
-    `description` is the manifest's SAVED prompt and the whole of the positive's substance: quality
-    tags are prepended for the anime checkpoint, but the prose is never embedded mid-phrase ("a
-    single {X}, one object only, ...") — that garbled the grammar and drove subject drift. `kind`
-    picks the model, the negative and whether the matte runs."""
-    if kind == "mesh":
-        wf = _build_subject_workflow(_load_workflow(_TXT2IMG_SUBJECT_WORKFLOW_PATH), description)
+    `description` is the manifest's SAVED prompt and the whole of the positive's substance: the
+    prose is never embedded mid-phrase ("a single {X}, one object only, ...") — that garbled the
+    grammar and drove subject drift. `kind` picks the graph, the negative and whether the matte
+    runs."""
+    if kind != "tile":
+        wf = _build_subject_workflow(_load_workflow(_TXT2IMG_SUBJECT_WORKFLOW_PATH), description, kind)
         return {"prompt": description, "workflow_override": wf}
-    path, prefix, negative = _kind_recipe(kind, txt2img=True)
-    wf = _build_background_workflow(_load_workflow(path), prefix + description, negative)
+    wf = _build_tile_workflow(_load_workflow(_TXT2IMG_TILE_WORKFLOW_PATH), description, _NEGATIVE_TILE)
     wf["5"]["inputs"]["width"] = 1024
     wf["5"]["inputs"]["height"] = 1024
-    if kind not in MATTED_KINDS:
-        _drop_matte(wf)
+    _drop_matte(wf)
     return {"prompt": description, "workflow_override": wf}
 
 
@@ -125,18 +144,41 @@ def build_img2img_job(description: str, init_name: str, kind: str = "sprite",
     """The same per-kind workflow seeded from an EXISTING render instead of an empty latent: the
     init image (uploaded to ComfyUI under `init_name` by the worker) is VAE-encoded and partially
     denoised, so the output keeps the original's composition while the prompt steers the change."""
-    if kind == "mesh":
-        wf = _build_subject_workflow(_load_workflow(_IMG2IMG_SUBJECT_WORKFLOW_PATH), description)
+    if kind != "tile":
+        wf = _build_subject_workflow(_load_workflow(_IMG2IMG_SUBJECT_WORKFLOW_PATH), description, kind)
         wf["li"]["inputs"]["image"] = init_name
         wf["k"]["inputs"]["denoise"] = denoise
         return {"prompt": description, "workflow_override": wf}
-    path, prefix, negative = _kind_recipe(kind, txt2img=False)
-    wf = _build_background_workflow(_load_workflow(path), prefix + description, negative)
+    wf = _build_tile_workflow(_load_workflow(_IMG2IMG_TILE_WORKFLOW_PATH), description, _NEGATIVE_TILE)
     wf["50"]["inputs"]["image"] = init_name
     wf["3"]["inputs"]["denoise"] = denoise
-    if kind not in MATTED_KINDS:
-        _drop_matte(wf)
+    _drop_matte(wf)
     return {"prompt": description, "workflow_override": wf}
+
+
+def build_anim_payload(still_png_b64: str, anims: Sequence[Dict[str, str]],
+                       facings: int) -> Dict[str, Any]:
+    """The queue payload that turns ONE matted still into a sprite sheet of the animations the
+    build named (`anims`: [{name, action}]) — a walking knight, a car whose wheels spin, a card
+    that flips. `facings` is 4 when the thing is seen from the side and the game needs it
+    facing front, right, back and left (a turntable clip yields the other three stills), or 1
+    when one view is all there is (top-down, or flat) and the game rotates it in code. The one
+    pinned workflow rides the payload fully resolved but for the still's name, the prompt and
+    the length, which the worker fills per clip: it is the worker that knows which clip it is
+    submitting."""
+    turn = None
+    if facings == 4:
+        turn = {"prompt": _I2V_STYLE + " " + _I2V_TURN, "length": _I2V_TURN_LENGTH,
+                "steps": _I2V_TURN_STEPS}
+    return {"kind": "anim_sheet",
+            "image_b64": still_png_b64,
+            "turn": turn,
+            "loop": {"workflow": _load_workflow(_I2V_LOOP_WORKFLOW_PATH)},
+            "anims": {a["name"]: {**_I2V_LOOP,
+                                  "prompt": _I2V_STYLE + " " + a["action"].strip().rstrip(".")
+                                            + "." + _I2V_ACTION_TAIL}
+                      for a in anims},
+            "dirs": list(I2V_DIRS) if facings == 4 else [I2V_DIRS[0]]}
 
 
 def build_image_payload(description: str, kind: str = "sprite",

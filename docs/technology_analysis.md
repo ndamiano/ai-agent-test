@@ -13,16 +13,16 @@ the ones we reject, because "why we didn't switch" is the expensive thing to rel
 | Job | Model | Served by | Defined in |
 |---|---|---|---|
 | Build turns (the LLM) | Qwen3.8 27B, NVFP4 | ninfer on a 5090; llama.cpp elsewhere | `llm.model` in settings.json |
-| Sprites + scenes | NetaYume Lumina v4 | ComfyUI | `workflows/txt2img_item.json` |
 | Tiles | DreamShaperXL Turbo v2.1 → min-cut quilting | ComfyUI + `tools/quilting.py` | `workflows/txt2img_tile.json` |
-| Mesh subjects, scene-chain subjects | Qwen-Image 2512 | ComfyUI | `workflows/txt2img_subject.json` |
+| Sprites, scenes, anim stills, mesh subjects, scene-chain subjects | Qwen-Image 2512 | ComfyUI | `workflows/txt2img_subject.json` |
+| Anim sheets (image-to-video loops) | MiniMax-H3 | ComfyUI, the `video` queue | `workflows/i2v_loop.json` + `worker/anim_sheet.py` |
 | Scene-chain terrain | DreamShaperXL Turbo v2.1 (masked img2img) | ComfyUI | graph built in `scenegen/paint.py` |
 | Scene-chain embed | Qwen-Image-Edit 2511 | ComfyUI | `workflows/imgedit_scene.json` |
 | 3D meshes | TRELLIS 2 | home-rolled runtime, `tools/trellis_server.py` | — |
 | Render safety scoring | small timm ViT, locally exported | in the image worker | `scripts/export_safety_model.py` |
 | Sound effects, music, voice | **nothing** | — | — |
 
-A `kind` picks the model and the workflow (`tools/comfyui_tools._kind_recipe`). Audio is the one
+A `kind` picks the model and the workflow (`tools/comfyui_tools.build_image_job`). Audio is the one
 whole category we do not produce at all, and it is wanted.
 
 ## Things to validate
@@ -75,7 +75,7 @@ whole category we do not produce at all, and it is wanted.
   stays the fallback everywhere else. Thinking and sampling are launch flags on both — see
   `docs/local_dev.md`.
 - **Image models: flux1-schnell-fp8 and animaOfficial retired** (bake-off 2026-08-06). Replaced by
-  per-kind routing: NetaYume Lumina for sprites/scenes, Qwen-Image 2512 for objects/scenes,
+  per-kind routing: Qwen-Image 2512 for sprites, scenes and objects,
   DreamShaperXL Turbo for tile textures. Both run at a real cfg, so the negative prompt is live on
   every kind. animaOfficial's weights are non-commercial, so its orphaned workflow was deleted
   outright (2026-08-08) rather than left to be picked up again — every model in the table above is

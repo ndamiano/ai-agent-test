@@ -7,7 +7,7 @@ itself as the request, because a designer that dies must never cost the user the
 
 import pytest
 
-from maestro.codegen import design
+from maestro.codegen import build_chain, design
 import maestro.codegen.run as run_mod
 from maestro.state import RunState
 
@@ -31,6 +31,14 @@ def _no_db(monkeypatch):
     monkeypatch.setattr(run_mod.db_store, "create_game", lambda *a, **k: None)
     monkeypatch.setattr(run_mod.db_store, "update_prompt_meta", lambda *a, **k: None)
     monkeypatch.setattr(run_mod.db_store, "charge_game", lambda *a, **k: None)
+
+
+@pytest.fixture
+def kicked(monkeypatch):
+    """The builds the design's completion starts."""
+    started = []
+    monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: started.append((rid, kw)) or "bid")
+    return started
 
 
 @pytest.fixture
@@ -76,8 +84,10 @@ def test_the_ask_is_stored_verbatim_with_no_request_yet(tmp_runs, events, connec
     assert events == []
 
 
-def test_the_landed_design_becomes_the_prompt(tmp_runs, events, connector, monkeypatch):
-    """What the completion writes is what the build sends, so the human reads the design itself."""
+def test_the_landed_design_becomes_the_prompt_and_the_build_starts(
+        tmp_runs, events, connector, kicked, monkeypatch):
+    """What the completion writes is what the build sends, and the build starts on it at once —
+    nobody reads the design first."""
     monkeypatch.setattr(design.db_store, "enqueue_job", lambda *a, **kw: "job1")
     run_id = run_mod.create_run("u1")
     run_mod.propose_prompt(ASK, run_id)
@@ -88,6 +98,22 @@ def test_the_landed_design_becomes_the_prompt(tmp_runs, events, connector, monke
     assert spec["request"] == DESIGN
     assert spec["ask"] == ASK          # the words the designer read are kept
     assert [e[0] for e in events] == ["prompt_proposed"]
+    assert kicked == [(run_id, {"kind": "build"})]
+
+
+def test_a_refused_kickoff_leaves_the_design_landed(tmp_runs, events, connector, monkeypatch):
+    """A build the budget refuses must not lose the design — the run stays designed and idle, and
+    the page's Build button retries it."""
+    monkeypatch.setattr(design.db_store, "enqueue_job", lambda *a, **kw: "job1")
+    monkeypatch.setattr(build_chain, "kickoff",
+                        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no compute")))
+    run_id = run_mod.create_run("u1")
+    run_mod.propose_prompt(ASK, run_id)
+
+    design.on_complete(run_id, _reply(DESIGN), None)
+
+    assert RunState(run_id).read_spec()["request"] == DESIGN
+    assert [e[0] for e in events] == ["prompt_proposed"]
 
 
 @pytest.mark.parametrize("result, error", [
@@ -97,8 +123,8 @@ def test_the_landed_design_becomes_the_prompt(tmp_runs, events, connector, monke
     ({}, None),                         # a reply with no choices at all
 ])
 def test_a_design_that_never_lands_leaves_the_ask_as_the_prompt(
-        tmp_runs, events, connector, monkeypatch, result, error):
-    """A dead designer must not cost the user their build: the words they wrote still build."""
+        tmp_runs, events, connector, kicked, monkeypatch, result, error):
+    """A dead designer must not cost the user their build: the words they wrote build instead."""
     monkeypatch.setattr(design.db_store, "enqueue_job", lambda *a, **kw: "job1")
     run_id = run_mod.create_run("u1")
     run_mod.propose_prompt(ASK, run_id)
@@ -107,6 +133,7 @@ def test_a_design_that_never_lands_leaves_the_ask_as_the_prompt(
 
     assert RunState(run_id).read_spec()["request"] == ASK
     assert [e[0] for e in events] == ["prompt_proposed"]
+    assert [r for r, _ in kicked] == [run_id]
 
 
 def test_an_enqueue_that_is_refused_lands_the_ask_immediately(tmp_runs, events, connector,
@@ -133,7 +160,7 @@ def test_the_designer_reads_the_ask_through_its_own_prompt_file(tmp_runs, connec
     assert "SYSTEMS:" in sent and "{request}" not in sent
 
 
-def test_the_human_edit_moves_only_the_request(tmp_runs, events, connector, monkeypatch):
+def test_the_human_edit_moves_only_the_request(tmp_runs, events, connector, kicked, monkeypatch):
     """The ask is the record of what was actually wanted; editing the design must not rewrite it,
     and the title stays the user's words rather than the design's first line."""
     monkeypatch.setattr(design.db_store, "enqueue_job", lambda *a, **kw: "job1")

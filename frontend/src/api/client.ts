@@ -169,7 +169,7 @@ export const api = {
     // The caller owns the URL and must revokeObjectURL it when done.
     getAssetBlobUrl: async (runId: string, assetId: string): Promise<string> =>
         URL.createObjectURL(await (await send(`/api/games/${runId}/assets/${assetId}`)).blob()),
-    // `prompt` is the text in the box: pressing Build is what approves it, so the build call is
+    // `prompt` is the text in the box, edited after a build: the build call is
     // the only thing that writes it.
     buildGame: (runId: string, prompt?: string) =>
         request<{ status: string; run_id: string }>(`/api/games/${runId}/build`, { method: 'POST', body: JSON.stringify({ prompt }) }),

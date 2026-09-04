@@ -54,8 +54,8 @@ def test_list_and_detail_come_from_the_db(client):
 
 
 def test_new_game_creates_the_run_and_starts_its_design(client, monkeypatch):
-    """Create opens the ask and enqueues the DESIGN — no build starts until the human has read the
-    design and pressed Build, so the run is charged but nothing is authored yet."""
+    """Create opens the ask and enqueues the DESIGN — the build starts from the design's own
+    completion, so at this point the run is charged but nothing is authored yet."""
     user, headers = _user()
     started, enqueued = [], []
     monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: started.append(rid) or "bid")
@@ -77,7 +77,7 @@ def test_new_game_creates_the_run_and_starts_its_design(client, monkeypatch):
 
 def test_a_game_still_designing_reports_no_prompt_and_refuses_to_build(client, monkeypatch):
     """`prompt: null` is the page's only signal for the designing state, and a build sent before
-    the design lands would send the empty box."""
+    the design lands has nothing to send."""
     _, headers = _user()
     monkeypatch.setattr(design.db_store, "enqueue_job", lambda *a, **kw: "job1")
 
@@ -108,7 +108,7 @@ def test_new_game_with_an_empty_prompt_is_400(client):
 
 
 def test_build_stores_the_edited_prompt_it_was_given(client, monkeypatch):
-    """Pressing Build is what approves the text, so the build call is the only writer."""
+    """The build call is the only writer of the edited design."""
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "a maze game", "title": "Maze"})
     monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: "bid")

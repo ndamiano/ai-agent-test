@@ -573,5 +573,5 @@ def compact(run_dir, cursor, keep_chars: int) -> int:
 
 
 def _request_from(spec) -> str:
-    """The build's one user message: the run's prompt, byte for byte as the human approved it."""
+    """The build's one user message: the run's prompt, byte for byte as stored."""
     return str((spec or {}).get("request") or "").strip() or "Make a small, playable browser game."

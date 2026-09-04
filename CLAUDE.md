@@ -29,15 +29,13 @@ docstring — the docstrings are the authority on contracts.
 The model writes **real browser game code** — plain HTML/CSS/JavaScript, no framework, no build
 step, no engine of ours between it and the screen. Two stages:
 
-1. **Prompt (human-gated):** the run keeps the user's words VERBATIM as `ask` and shows them; one
-   inference — the DESIGNER (`maestro/codegen/design.py`) — turns them into a systems design, and
-   the human reads THAT in the box it will be sent from. **THE PROMPT IS THE ARTIFACT** — what is
-   on screen is byte for byte the build's one user message, so approving it and building it are the
-   same act. The designer does not break this because the design is what the box shows and the
-   design is what builds; nothing sits between the box and the build's input. A designer that fails
-   or answers empty leaves the words themselves in the box. Pressing **Build** stores the edit and
-   starts the build, so there is one action and one writer. The page renders the design as headed
-   sections read from its shape, over the same string the edit box holds — a view, never a copy.
+1. **Design:** the run keeps the user's words VERBATIM as `ask` and shows them; one inference —
+   the DESIGNER (`maestro/codegen/design.py`) — turns them into a systems design, and the design
+   is byte for byte the build's one user message. The build starts the moment the design lands;
+   nobody reads or approves it first. A designer that fails or answers empty leaves the words
+   themselves as the prompt, and the build starts on those. After the build the page renders the
+   design as headed sections read from its shape, over the same string the edit box holds — a
+   view, never a copy — and an edit there is what a rebuild sends.
 2. **Build:** a non-LLM **driver** (`maestro/codegen/build_chain.py`) hands the model eight tools —
    `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `compose_scene`,
    `compose_world`, `done` —
@@ -165,11 +163,12 @@ systems; the count falls out of the game. A roster lists KINDS; which member is 
 layout or the route is the generator's. The examples in the prompt are never a battery game's
 words — a designer given the motivating game's nouns writes them back.
 
-The design says 2D or 3D, and a 3D landscape outdoors is a GENERATED WORLD named in one sentence
-with no size or count, because the builder is offered `compose_world` only for a 3D game and a
-designer that does not know a world exists writes a tile map. Measured 2026-08-29: the same ask
-went top-down noise without the clause and a real world with it — and a size the designer wrote
-anyway was honoured over the size the world answered.
+The design says 2D or 3D, and the designer picks which with no rule pushing it either way. It is
+told what the builder has: `compose_world(description, seed)` for a 3D outdoor landscape, code
+for every 2D scene — the tool and its parameters, not a rule about what to leave out. A designer
+that does not know a world exists writes a tile map (measured 2026-08-29: the same ask went
+top-down noise without the clause and a real world with it), and a parameter list with no size
+in it is what keeps a size out of the design.
 
 ### A system starves when it is one clause among many — the design stage is what feeds it
 

@@ -2,16 +2,16 @@
 
   create_run(user_id)          → a fresh run dir
   open_ask(run_id, ask)        → the user's words, verbatim, as the run's ASK (and its title)
-  propose_prompt(ask, id)      → open the ask and start the DESIGN that becomes the run's PROMPT
-                                 (maestro.codegen.design; the web path, fire-and-forget)
-  set_prompt(run_id, text)     → the human's edit of that prompt
+  propose_prompt(ask, id)      → open the ask and start the DESIGN that becomes the run's PROMPT;
+                                 its landing starts the build (maestro.codegen.design; the web
+                                 path, fire-and-forget)
+  set_prompt(run_id, text)     → the human's edit of that prompt, before a rebuild
   run_build(run_id)            → kick the build off + BLOCK-poll the cursor to done (CLI only; the web
                                  path is fire-and-forget via build_chain.kickoff)
   python -m maestro.codegen.run "<request>"  → prompt → build → play path
 
-THE PROMPT IS THE ARTIFACT: what the run stores is what the build's one user message contains,
-byte for byte, so the text a human approves is the text the model reads. The ask is what the
-designer read; the prompt is what the human approves.
+What the run stores is what the build's one user message contains, byte for byte. The ask is
+what the designer read; the prompt is what the build sends.
 
 The build itself is a chain of llm jobs driven by build_chain's completion handler, so
 `run_build`/`change_from_note` only START it and wait — the API server (where worker completions

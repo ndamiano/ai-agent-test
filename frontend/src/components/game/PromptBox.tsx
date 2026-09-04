@@ -37,8 +37,8 @@ const DesignView: React.FC<{ text: string }> = ({ text }) => {
 }
 
 // The build's user message. Read as headed sections or edited as the text itself — both views
-// are the ONE string, and that string is what Build sends. Nothing is saved on its own: the text
-// goes with Build, which is the moment the user approves it.
+// are the ONE string, and that string is what a rebuild sends. Nothing is saved on its own: the
+// text goes with Rebuild.
 export const PromptBox: React.FC<{
     ask: string
     prompt: string

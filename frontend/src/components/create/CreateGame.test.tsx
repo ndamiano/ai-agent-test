@@ -14,7 +14,7 @@ const create = (onCreated = () => {}, onCancel = () => {}) =>
     )
 
 const box = () => screen.getByPlaceholderText(/snail racing game/i) as HTMLTextAreaElement
-const designButton = () => screen.getByRole('button', { name: /design it/i })
+const designButton = () => screen.getByRole('button', { name: /summon it/i })
 
 describe('CreateGame', () => {
     it('cannot design an empty request', () => {

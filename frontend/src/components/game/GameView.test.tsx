@@ -75,11 +75,11 @@ describe('GameView before the first build', () => {
         expect(screen.getByText(/writing the design from your request/i)).toBeTruthy()
         expect(screen.getByText(ASK)).toBeTruthy()
         expect(screen.queryByPlaceholderText(/describe the game/i)).toBeNull()
-        expect(buildButton().hasAttribute('disabled')).toBe(true)
+        expect(screen.queryByRole('button', { name: /build it/i })).toBeNull()
         expect(screen.queryByRole('progressbar')).toBeNull()
     })
 
-    it('fills the box when prompt_proposed lands', async () => {
+    it('shows the design when prompt_proposed lands without a build behind it', async () => {
         mount(detail({ prompt: null }), detail())
         await screen.findByRole('status')
 

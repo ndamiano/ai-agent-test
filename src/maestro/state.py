@@ -2,8 +2,8 @@
 
 Each game gets its own run directory under <working_directory>/runs/<run_id>/.
 Inside it:
-  - spec.json             the run's PROMPT ({request, title}) — what the build sends as its
-                          user message, and what the human approved
+  - spec.json             the run's ASK and PROMPT ({ask, request, title}) — `request` is what
+                          the build sends as its user message
   - build_state.json      the durable build cursor (maestro.codegen.build_state)
   - turns.jsonl           every llm turn the run has spent (maestro.codegen.turn_log) — the
                           archive, once the jobs row that carried it is emptied

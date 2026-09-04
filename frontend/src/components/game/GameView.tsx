@@ -250,11 +250,8 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
                         <div role="status" className="bg-panel border border-edge rounded-md p-6 flex items-center gap-3">
                             <span aria-hidden="true" className="w-2 h-2 rounded-full bg-ember animate-pulse" />
                             <span className="text-sm text-slate">
-                                Writing the design from your request — a few minutes. It will appear here for you to read and edit.
+                                Writing the design from your request — a few minutes. The build starts on its own once it lands.
                             </span>
-                        </div>
-                        <div>
-                            <Button variant="primary" size="md" disabled>Build it · 1 credit</Button>
                         </div>
                     </div>
                 )}
@@ -265,7 +262,7 @@ export const GameView: React.FC<{ runId: string; onChanged: () => void; onBack: 
                             text={promptText} onChange={setPromptText} />
                         <div className="flex items-center gap-3">
                             <Button variant="primary" size="md" onClick={build} disabled={acting}>
-                                Build it · 1 credit
+                                Build it
                             </Button>
                             {detail.has_game && (
                                 <Button variant="ghost" size="md" onClick={regenerate} disabled={acting}>

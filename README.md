@@ -21,7 +21,7 @@ An AI platform that makes things. The user says "make me a game" — a while lat
 
 ## How it works
 
-Press **Make a new game**, describe the game you want, and press **Build**. What you typed is byte for byte the one message the model is given, so approving it and building it are the same act. Nothing is stored server-side until you build.
+Press **Make a new game** and describe the game you want. A designer turns your words into a systems design, and the build starts on it the moment it lands. Nothing is stored server-side until you press Make.
 
 A non-LLM **driver** then hands the model eight tools — `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `compose_scene`, `compose_world`, `done` — plus a running transcript, and lets it write the game. The model decides the file layout, the systems, and what art gets drawn; it calls `done` when the game is playable. Output is **plain browser HTML/CSS/JavaScript**, served as written. Every game folder is seeded with the vendored three.js, GLTFLoader, BufferGeometryUtils and `world.js` (the loader for a `compose_world` world), plus `lib/` — a helper library for input, audio, a scaling canvas and lights, each file's header comment its API.
 

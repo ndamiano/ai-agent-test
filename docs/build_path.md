@@ -226,15 +226,17 @@ src/
                          verbatim, kept for the human to see) into `request` (a 900–1400-word
                          systems design: the systems named, every entity a record with fields,
                          structure from seeded generators with verifiers, numbers given, art named
-                         as art, screens as a state machine — `CLAUDE.md`). `request` is what the
-                         box shows and what builds; it is absent while the design is pending and
-                         is the human's edit after Build. Web: an llm job tagged
-                         metadata.stage="design", whose completion writes `request` and emits
-                         `prompt_proposed`; a failed or empty design writes `request = ask`, so the
-                         box never stays empty. The web page renders `request` as headed
-                         sections read from its shape (the lead line, the SYSTEMS list, one
+                         as art, screens as a state machine — `CLAUDE.md`). `request` is what
+                         builds; it is absent while the design is pending. Web: an llm job tagged
+                         metadata.stage="design", whose completion writes `request`, emits
+                         `prompt_proposed` and KICKS OFF THE BUILD — no human reads the design
+                         first; a failed or empty design writes `request = ask` and builds on
+                         that. A kickoff the budget refuses leaves the run designed and idle, and
+                         the page's Build button retries it. The built page renders `request` as
+                         headed sections read from its shape (the lead line, the SYSTEMS list, one
                          section per NAME: paragraph) over the SAME string the edit box holds
-                         and Build sends — a view, never a second copy. CLI: synchronous. The
+                         and a rebuild sends — a view, never a second copy. CLI: synchronous,
+                         and the build is the CLI's own next call. The
                          create call is where the game is charged — the credit, and the
                          compute-seconds grant the queue meters against (`db_store.charge_game`,
                          through `tools/execution_context.run_scope`): the design is the game's

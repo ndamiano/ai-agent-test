@@ -123,8 +123,8 @@ async def list_games(user: User = Depends(get_current_user)):
 
 @router.post("", response_model=Dict)
 async def create_game(body: NewGameBody, user: User = Depends(get_current_user)):
-    """Make a new game: the words the user wrote become the run's ask, and its DESIGN starts. The
-    design lands as the prompt (`prompt_proposed`) for the user to read, edit and Build. Nothing
+    """Make a new game: the words the user wrote become the run's ask, its DESIGN starts, and the
+    build starts the moment the design lands (`prompt_proposed`, then `build_started`). Nothing
     exists server-side until this call, so an abandoned box leaves nothing behind.
 
     The credit is charged here: the design is the game's first inference, and it meters against
@@ -298,20 +298,20 @@ async def game_events(run_id: str, after: int = 0, user: User = Depends(get_curr
 @router.post("/{run_id}/build", response_model=Dict)
 async def build_game(run_id: str, body: BuildBody = BuildBody(),
                      user: User = Depends(get_current_user)):
-    """Start a build. Progress streams over the websocket.
+    """Start a build by hand — a rebuild of a built game, a retry after the design's own kickoff
+    was refused, or the from-scratch button. Progress streams over the websocket.
 
-    `prompt` carries the user's edit of the text: pressing Build IS approving what is in the box,
-    so the build is the only thing that writes it. The driver reads it from disk, not from this
-    request — a build outlives the process that started it.
+    `prompt` carries the user's edit of the design: the build is the only thing that writes it.
+    The driver reads it from disk, not from this request — a build outlives the process that
+    started it.
 
     `fresh` is the from-scratch button: it empties the game folder first, so the model opens on
     nothing rather than on a dead build's half-written files. Without it a re-trigger carries them
     forward, which is what a resumed build wants and what a second attempt does not.
 
-    A run is charged ONCE, gated on a durable `charged` flag: the first enqueue deducts
-    `cost(spec)`; every later enqueue for the same run (a re-trigger, a resume after a dead build)
-    finds it already flagged and never re-charges. Charged stays charged — there is no automatic
-    refund."""
+    A run is charged ONCE, gated on a durable `charged` flag — create charges it before the design,
+    so this path only charges a run that was made without one. Charged stays charged — there is
+    no automatic refund."""
     state = _require_state(run_id, user)
     _require_not_held(run_id)
     if build_chain.is_active(run_id):

@@ -46,7 +46,7 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
                 <div className="flex flex-col gap-1.5 text-center">
                     <h2 className="font-display text-3xl">What should exist?</h2>
                     <p className="text-sm text-slate">
-                        Your words become a design you read and edit before anything builds.
+                        Your words become a systems design, and the game is built from it.
                     </p>
                 </div>
 
@@ -57,10 +57,10 @@ export const CreateGame: React.FC<{ onCreated: (runId: string) => void; onCancel
 
                 <div className="flex items-center gap-3 flex-wrap">
                     <Button variant="primary" size="md" onClick={create} disabled={busy || !text.trim()}>
-                        {busy ? 'Starting…' : 'Design it · 1 credit'}
+                        {busy ? 'Starting…' : 'Summon it · 1 credit'}
                     </Button>
                     <span className="text-xs text-dim">
-                        The design takes a few minutes. Building it starts no new charge.
+                        One credit covers the design and the build. It takes a while.
                     </span>
                 </div>
 

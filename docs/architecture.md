@@ -124,8 +124,9 @@ These are load-bearing; breaking one is a redesign, not a bug fix.
 4. **A gate may only detect broken, never "bad."** Two things stand between a build and `built`:
    `index.html` exists, and the error gate — run against the run dir's `game/` — finds no uncaught
    exception. See `CLAUDE.md`.
-5. **The prompt is the artifact.** No inference runs between the person's words and the build's
-   user message.
+5. **The design is the prompt.** One inference — the designer — runs between the person's words
+   and the build's user message, and its landing starts the build; nothing waits on a human
+   in between.
 6. **Nothing proprietary in the loop.** MIT/Apache-2.0 weights and tooling only (`vision.md`).
 
 ---

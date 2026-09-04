@@ -231,6 +231,9 @@ aws s3 cp --profile runpod --region eu-ro-1 --endpoint-url https://s3api-eu-ro-1
     <file> s3://<volume-id>/comfy/models/checkpoints/
 ```
 
+A large `cp` (anything past ~10 GB) can end in `InvalidPart … N parts missing` from
+`CompleteMultipartUpload` with the object already whole on the volume — the gateway races its own
+part bookkeeping. Trust `head-object`'s `ContentLength` against the local size, not the exit code.
 The bucket name IS the network volume id, and the region/endpoint pair is the datacenter the volume
 lives in — a volume in another datacenter answers on its own endpoint or not at all (the llm
 volume answers at `--region us-nc-2 --endpoint-url https://s3api-us-nc-2.runpod.io`).
@@ -299,9 +302,9 @@ The deployed tag is whatever each RunPod TEMPLATE names; the templates are the o
 (`llm-v17`, `image-v8`, `mesh-v17` at the last check). The `video` queue's template names its
 own `video-*` tag — the same build as the image queue's, tagged twice, so the two templates roll
 independently — from `video-v1` / `image-v9` on (ComfyUI 0.30.1, where the MiniMax-H3 nodes are
-core). It needs no env of its own: `WORKER_QUEUE` arrives from the scaler. A video pod stages its
-~42 GB of weights into `/dev/shm`, and falls back to reading them off the FUSE mount when the
-host gives it less than ~46 GB there (`COMFY_STAGE_DIR` moves the stage to another disk).
+core). It needs no env of its own: `WORKER_QUEUE` arrives from the scaler. Both templates carry a
+100 GB container disk: the pod stages its weights there (~42 GB video, ~58 GB image), and a stage
+that does not fit is a silent 3.5-minute load off the FUSE mount (`[stage] skipped` in the log).
 An image tag and the volume's weights go live in LOCKSTEP: the entrypoint stages and warms up on
 the checkpoints the workflows name, so a pod predating a model swap dies at boot on a weight that
 is not there. Roll the volume forward first, the template second, and retire the old weight last.
@@ -400,17 +403,20 @@ RAM; below that the server logs `staging skipped` and loads off the volume (~48s
 same cure: the FUSE volume serves bulk reads at ~2GB/s but mmap page-faults at ~200MB/s and keeps
 no page cache, so ComfyUI's lazy checkpoint load put 70.3s of a checkpoint-off-the-volume INSIDE
 the first claimed render — billed to a user's game as exec (measured on a prod batch, 2026-08-02).
-The entrypoint now stages every weight the live workflows name, plus BiRefNet, into `/dev/shm` at
-boot (~35s for 69GB, overlapped with
-ComfyUI's own ~10s torch import), points the models tree at the staged copies (`/opt/comfy-models`,
-per-folder symlinks; untouched folders still resolve to the volume), and runs one warmup render —
-the real sprite graph at 1 step/256px, so the checkpoint load (3.8s from tmpfs), the matte's lazy
-import and the first-use kernels are all paid before the agent starts. Registration is the warm
-gate: container start → registered WARM once staging and the warmup have both landed, first claimed
-render ~2s. The staging copy is now the boot cost rather than a free ride under the torch import —
-four checkpoints at ~2GB/s, against one 17GB flux before. Staging falls back to the volume when
-`/dev/shm` cannot hold it (logged `[stage] skipped`); a 5090 pod comes with ~126GB RAM, so 69GB of
-weights still fits.
+The entrypoint now stages every weight the live workflows name, plus BiRefNet, onto the
+container disk at boot (`/stage`, ~35s for 69GB, overlapped with ComfyUI's own ~10s torch
+import), points the models tree at the staged copies (`/opt/comfy-models`, per-folder symlinks;
+untouched folders still resolve to the volume), and runs one warmup render — the real sprite graph
+at 1 step/256px, so the checkpoint load, the matte's lazy import and the first-use kernels are all
+paid before the agent starts. Registration is the warm gate: container start → registered WARM
+once staging and the warmup have both landed, first claimed render ~2s. The staging copy is now
+the boot cost rather than a free ride under the torch import — four checkpoints at ~2GB/s,
+against one 17GB flux before. Staging falls back to the volume when the disk cannot hold it
+(logged `[stage] skipped`). It staged into `/dev/shm` until 2026-09-04, when a probe pod showed
+RunPod caps `/dev/shm` at ~46 GB regardless of host RAM: neither queue's weights fit, every
+image and video pod had been loading off the mount, and rent→warm was 3-4 min against the llm's
+2. The container disk is a real filesystem whose page cache holds, so its size is the only cap,
+and the templates set it at 100 GB.
 
 **Container restart caveat:** RunPod restarts an exited container and keeps billing — even exit 0.
 A worker deciding to die is therefore not enough to stop the meter. Two layers handle it:
@@ -436,8 +442,8 @@ deregisters and exits 0.
 
 Settings block (`settings.json` → `runpod`, the full key list in `docs/local_dev.md` "Settings"):
 
-- `cp_url` — the control-plane URL pods dial back to; must be reachable from RunPod (funnel URL,
-  not localhost).
+- `cp_url` — the control-plane URL pods dial back to; must be reachable from RunPod
+  (`https://gamesummoner.com`, not localhost).
 - `tick_seconds` (15) — scaling-loop cadence. `stale_worker_seconds` (180) — a worker row silent
   this long is dead.
   A create RunPod refuses on every volume/card combination is recorded durably (`pod_refusals`,
@@ -465,10 +471,9 @@ Settings block (`settings.json` → `runpod`, the full key list in `docs/local_d
   still renders, and a build asks for its characters together, so a video pod that exits on a
   short idle re-pays its ~40 GB stage for the next character.
 
-**One-time manual check (unverified RunPod detail):** whether create-time `env` *merges with* or
-*replaces* the template's env. The scaler passes the full worker env at create either way, but on
-the first autoscaled pod confirm `CP_URL`/`WORKER_TOKEN`/`IDLE_EXIT_SECONDS` actually landed:
-pod console → `printenv`.
+Create-time `env` OVERRIDES the template's (verified 2026-09-04: every fleet pod dialed the
+`cp_url` in settings while the templates still named the retired funnel host). The template env
+is what a pod started by hand gets, so keep it current anyway.
 
 First full cycle to watch (mesh, `max_workers: 1`): enqueue a mesh job → pod appears in the RunPod
 console → worker row registers → job done → queue drains → worker exits + deregisters → pod

@@ -1,8 +1,7 @@
 """Thin RunPod REST client — plain requests, no SDK.
 
-The full worker env (CP_URL, WORKER_TOKEN, …) is passed at create time: correct whether
-create-time env merges with or replaces the template's env (the one unverified RunPod detail —
-see deploy.md for the one-time manual check).
+The full worker env (CP_URL, WORKER_TOKEN, …) is passed at create time, and it overrides the
+template's.
 """
 
 from typing import Dict, List, Optional

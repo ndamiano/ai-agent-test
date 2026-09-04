@@ -8,10 +8,12 @@
 # 2.7GB/s, but safetensors' mmap page-faults re-read at ~200MB/s and the FUSE mount keeps no page
 # cache (measured on the mesh pod, same volume). Left alone, the FIRST claimed render paid the
 # whole flux load that way — 70.3s billed to a user's game for 2s of sampling (measured
-# 2026-08-02). Copying once into tmpfs and loading from RAM is the only version the filesystem
-# cannot undo; the warmup render then pays the model load + first-use kernels at boot, so the
-# worker registers only when a job would run at steady speed. Registration IS the gate: nothing
-# can claim before the agent starts.
+# 2026-08-02). Copying once onto the container disk — a real filesystem, whose page cache holds —
+# is the only version the volume cannot undo; the warmup render then pays the model load +
+# first-use kernels at boot, so the worker registers only when a job would run at steady speed.
+# Registration IS the gate: nothing can claim before the agent starts. The stage is not tmpfs:
+# /dev/shm on a RunPod host is a fixed ~46 GB whatever the RAM, under both queues' weights, and a
+# stage that does not fit is silently a 3.5-minute load off the mount (measured 2026-09-04).
 #
 # ComfyUI binds 127.0.0.1 and no port is exposed: it has no auth of its own, so a reachable
 # instance is an unauthenticated GPU. The worker dials OUT to the control plane.
@@ -26,7 +28,7 @@ boot_t0=$(date +%s)
 mark() { echo "[boot +$(( $(date +%s) - boot_t0 ))s] $*"; }
 
 VOL_MODELS=/workspace/comfy/models
-STAGE_DIR="${COMFY_STAGE_DIR:-/dev/shm/comfy-models}"
+STAGE_DIR="${COMFY_STAGE_DIR:-/stage/comfy-models}"
 TREE=/opt/comfy-models
 
 test -e "$VOL_MODELS/checkpoints" || {

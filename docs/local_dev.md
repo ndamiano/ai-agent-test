@@ -220,8 +220,11 @@ state, deliberately not under `working_directory`.
 
 ### `billing`
 
+`usd_per_5090_hour` — the 5090's secure-cloud hourly price, the dollar the rates below are over.
+The admin fleet view shows each worker's card at `rate × this`; nothing bills in dollars.
+
 `gpu_rates` — 5090-seconds debited per GPU-second, keyed by the `gpu_type` string the worker
-reports (`nvidia-smi`'s name): each card's secure-cloud hourly price over the 5090's $0.99. A
+reports (`nvidia-smi`'s name): each card's secure-cloud hourly price over the 5090's. A
 card missing from the map bills at 1.0 and logs a warning once. The block merges over the
 defaults, so a file that names it carries every card (`docs/compute_billing_plan.md`).
 

@@ -10,7 +10,7 @@ import logging
 import threading
 import time
 import uuid
-from typing import Callable, Dict
+from typing import Callable, Dict, List
 
 from scaler.policy import (
     MarkWorkerTerminated,
@@ -36,6 +36,8 @@ class Autoscaler:
         self._thread = None
         self._last_scale_up: Dict[str, float] = {}
         self._pod_first_seen: Dict[str, float] = {}
+        self._pods: List[Dict] = []
+        self._pods_seen_at: float = 0.0
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._loop, name="autoscaler", daemon=True)
@@ -69,6 +71,7 @@ class Autoscaler:
             self._pod_first_seen[pod_id] = now
         for pod_id in self._pod_first_seen.keys() - listed:
             del self._pod_first_seen[pod_id]
+        self._pods, self._pods_seen_at = pods, now
 
         for queue, qcfg in (rp.get("queues") or {}).items():
             prefix = f"maestro-{queue}-"
@@ -93,6 +96,15 @@ class Autoscaler:
             )
             for action in actions:
                 self._execute(action, queue, qcfg, rp, token, settings["llm"], now)
+
+    def pods(self, queue: str, now: float) -> List[Dict]:
+        """The queue's pods as of the last tick — the admin view's only source for a pod that
+        RunPod is billing but no worker has registered from yet."""
+        prefix = f"maestro-{queue}-"
+        return [{"pod_id": p["id"], "name": p["name"],
+                 "age_seconds": now - self._pod_first_seen.get(p["id"], now),
+                 "seen_at": self._pods_seen_at}
+                for p in self._pods if (p.get("name") or "").startswith(prefix)]
 
     def _execute(self, action, queue: str, qcfg: Dict, rp: Dict, token: str, llm: Dict,
                  now: float) -> None:

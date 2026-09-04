@@ -787,25 +787,22 @@ def backlog_seconds(queue: str) -> float:
     return row["s"]
 
 
-def gpu_seconds(queue: str, since: Optional[float] = None) -> Dict:
-    """Recorded GPU-seconds for FINISHED jobs on a queue, optionally bounded by finished_at.
-
-    paid   = every finished job's exec_seconds (done AND failed) — the GPU time WE pay for, real
-             whether or not the user got anything, mirroring workers.busy_seconds.
-    billed = only delivered, game-attributed work (status done, game_id set), in the
-             5090-seconds that actually debited games.seconds_used.
-    The gap between them is unbilled GPU we ate (failures, and jobs no game owns) — read with the
-    card in mind, since billed is rate-weighted and paid is not."""
-    clause = "AND finished_at >= ?" if since is not None else ""
-    args = [queue] + ([since] if since is not None else [])
+def pending_jobs_head(queue: str, limit: int) -> List[Dict]:
+    """The next jobs a worker on this queue will claim, in claim order."""
     with _db() as conn:
-        row = conn.execute(
-            "SELECT COALESCE(SUM(exec_seconds), 0) AS paid, "
-            "COALESCE(SUM(CASE WHEN status = 'done' AND game_id IS NOT NULL "
-            "THEN billed_seconds ELSE 0 END), 0) AS billed "
-            f"FROM jobs WHERE queue = ? AND finished_at IS NOT NULL {clause}",
-            args).fetchone()
-    return {"paid": row["paid"], "billed": row["billed"]}
+        rows = conn.execute(
+            "SELECT id, game_id, build_id, est_seconds, created_at FROM jobs "
+            "WHERE queue = ? AND status = 'pending' ORDER BY created_at LIMIT ?",
+            (queue, limit)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def claimed_jobs(queue: str) -> List[Dict]:
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT id, game_id, build_id, worker_id, est_seconds, started_at FROM jobs "
+            "WHERE queue = ? AND status = 'claimed'", (queue,)).fetchall()
+    return [dict(r) for r in rows]
 
 
 def jobs_finished_totals(since: Optional[float] = None) -> Dict:

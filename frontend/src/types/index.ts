@@ -133,7 +133,32 @@ export interface AdminViolation {
     created_at: number
 }
 
-// Admin queue snapshot (GET /api/admin/queues). GPU-SECONDS only — no dollar conversion.
+// Admin queue snapshot (GET /api/admin/queues): depth, the next jobs in claim order, and the
+// fleet with what each worker holds. Visualization only — no spend.
+export interface QueuedJob {
+    id: string
+    game_id: string | null
+    build_id: string | null
+    waiting_seconds: number
+    est_seconds: number
+}
+
+// `booting` is a pod the scaler lists that no worker has registered from yet: id is the pod's
+// name, gpu_type and usd_per_hour are unknown, uptime is the pod's age.
+export interface WorkerRow {
+    id: string
+    state: 'busy' | 'idle' | 'booting'
+    gpu_type: string | null
+    usd_per_hour: number | null
+    source: string | null
+    pod_id: string | null
+    uptime_seconds: number
+    last_seen_seconds: number
+    busy_seconds: number
+    job: { id: string; game_id: string | null; build_id: string | null
+           running_seconds: number; est_seconds: number } | null
+}
+
 export interface QueueRow {
     queue: string
     pending: number
@@ -143,10 +168,8 @@ export interface QueueRow {
     workers_max: number
     est_seconds: number
     backlog_seconds: number
-    paid_all: number
-    billed_all: number
-    paid_24h: number
-    billed_24h: number
+    next: QueuedJob[]
+    workers: WorkerRow[]
 }
 
 // Effective cost (GET /api/admin/costs): RunPod's own billing joined against our job/worker
@@ -173,16 +196,7 @@ export interface AdminAnalytics {
 
 export interface AdminQueues {
     queues: QueueRow[]
-    totals: {
-        pending: number
-        claimed: number
-        workers_live: number
-        backlog_seconds: number
-        paid_all: number
-        billed_all: number
-        paid_24h: number
-        billed_24h: number
-    }
+    totals: { pending: number; claimed: number; workers_live: number; backlog_seconds: number }
 }
 
 // Generic envelope — the event bus broadcasts many shapes. The fields the UI actually reads are

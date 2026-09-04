@@ -1,56 +1,41 @@
-"""The admin-view aggregates over the jobs table: GPU-seconds (paid vs billed) and the projected
-backlog. paid counts every finished job we ran; billed counts only delivered, game-attributed work.
-"""
+"""The admin-view queries over the jobs table: the head of a queue in claim order, what each
+worker holds, and the projected backlog."""
+
+import time
 
 from db import store
 
 
-def _finish(queue, exec_seconds, *, game_id, error=None):
-    """Enqueue → claim → complete one job (the claim is FIFO, so complete whatever it hands back)."""
-    store.enqueue_job(queue, {}, game_id=game_id)
-    store.worker_seen("w1", queue)
-    claimed = store.claim_job(queue, "w1", 60)
-    store.complete_job(claimed["id"], "w1", None if error else {"ok": True}, error,
-                       exec_seconds=exec_seconds)
-
-
-def test_gpu_seconds_splits_paid_from_billed():
+def _game():
     store.create_game("g1", "u1")
     store.charge_game("g1", 1, 10_000)
 
-    _finish("llm", 12.0, game_id="g1")               # delivered → paid + billed
-    _finish("llm", 5.0, game_id="g1", error="boom")  # failed    → paid only
-    _finish("llm", 7.0, game_id=None)                # platform job (chat) → paid only
 
-    agg = store.gpu_seconds("llm")
-    assert agg["paid"] == 24.0
-    assert agg["billed"] == 12.0
-
-
-def test_gpu_seconds_is_per_queue():
-    store.create_game("g1", "u1")
-    store.charge_game("g1", 1, 10_000)
-    _finish("llm", 12.0, game_id="g1")
-    _finish("mesh", 100.0, game_id="g1")
-
-    assert store.gpu_seconds("llm")["paid"] == 12.0
-    assert store.gpu_seconds("mesh")["paid"] == 100.0
-    assert store.gpu_seconds("image")["paid"] == 0.0
+def test_pending_head_is_claim_order_capped():
+    _game()
+    ids = [store.enqueue_job("llm", {}, game_id="g1") for _ in range(4)]
+    head = store.pending_jobs_head("llm", 3)
+    assert [j["id"] for j in head] == ids[:3]
+    assert head[0].keys() == {"id", "game_id", "build_id", "est_seconds", "created_at"}
+    assert head[0]["game_id"] == "g1"
 
 
-def test_gpu_seconds_window_bounds_on_finished_at():
-    import time
-    store.create_game("g1", "u1")
-    store.charge_game("g1", 1, 10_000)
-    _finish("llm", 12.0, game_id="g1")
+def test_claimed_jobs_leave_the_head_and_name_their_worker():
+    _game()
+    first = store.enqueue_job("llm", {}, game_id="g1")
+    second = store.enqueue_job("llm", {}, game_id="g1")
+    store.worker_seen("w1", "llm")
+    store.claim_job("llm", "w1", 60)
 
-    assert store.gpu_seconds("llm", since=time.time() + 100)["paid"] == 0.0
-    assert store.gpu_seconds("llm", since=0)["paid"] == 12.0
+    assert [j["id"] for j in store.pending_jobs_head("llm", 10)] == [second]
+    held = store.claimed_jobs("llm")
+    assert [(j["id"], j["worker_id"]) for j in held] == [(first, "w1")]
+    assert held[0]["started_at"] <= time.time()
+    assert store.claimed_jobs("image") == []
 
 
 def test_backlog_seconds_sums_unfinished_estimates():
-    store.create_game("g1", "u1")
-    store.charge_game("g1", 1, 10_000)
+    _game()
     from db.estimates import QUEUE_SECONDS
     store.enqueue_job("llm", {}, game_id="g1")
     store.enqueue_job("llm", {}, game_id="g1")

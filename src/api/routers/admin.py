@@ -1,21 +1,21 @@
 """Operator-only surfaces. Everything here is gated by `require_admin`, so a signed-in ordinary
-user gets a 403: the inference-queue snapshot (depth, fleet, GPU-second spend) the operator
-watches to size the fleet and see what the cards are costing, and the usage rollup (user-action
+user gets a 403: the inference-queue snapshot (depth, next jobs, fleet) the operator watches to
+size the fleet, the effective-cost join against RunPod's ledger, and the usage rollup (user-action
 events by kind by day — see routers/events.py for the intake).
 """
 
 import calendar
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from auth import store as auth_store
 from auth.deps import require_admin
 from auth.store import User
 from config.settings_manager import settings_manager
 from db import store as db_store
-from db.estimates import QUEUE_SECONDS
+from db.estimates import QUEUE_SECONDS, gpu_rate
 from scaler.runpod_client import RunPodClient
 
 logger = logging.getLogger("admin")
@@ -23,6 +23,7 @@ logger = logging.getLogger("admin")
 router = APIRouter()
 
 _DAY_SECONDS = 24 * 3600
+_NEXT_LIMIT = 10
 
 
 def _max_workers(queue: str) -> int:
@@ -40,49 +41,78 @@ def _freshness() -> float:
     return float(rp.get("stale_worker_seconds", 180))
 
 
+def _usd_per_hour(gpu_type) -> Optional[float]:
+    if not gpu_type:
+        return None
+    billing = settings_manager.get_settings()["billing"]
+    return round(gpu_rate(gpu_type) * float(billing["usd_per_5090_hour"]), 2)
+
+
+def _workers(request: Request, queue: str, now: float, freshness: float) -> List[Dict[str, Any]]:
+    """Every worker the queue has, live ones from their rows and booting ones from the scaler's
+    last pod listing: a pod RunPod is billing that no worker has registered from yet is still
+    fleet, and the admin view is the one place that shows it."""
+    held = {j["worker_id"]: j for j in db_store.claimed_jobs(queue)}
+    rows = []
+    for w in db_store.live_workers(queue, freshness):
+        job = held.get(w["id"])
+        rows.append({
+            "id": w["id"],
+            "state": "busy" if job else "idle",
+            "gpu_type": w["gpu_type"],
+            "usd_per_hour": _usd_per_hour(w["gpu_type"]),
+            "source": w["source"],
+            "pod_id": w["pod_id"],
+            "uptime_seconds": now - w["started_at"],
+            "last_seen_seconds": now - (w["last_seen_at"] or w["started_at"]),
+            "busy_seconds": w["busy_seconds"],
+            "job": job and {"id": job["id"], "game_id": job["game_id"], "build_id": job["build_id"],
+                            "running_seconds": now - (job["started_at"] or now),
+                            "est_seconds": job["est_seconds"]},
+        })
+    registered = {w["pod_id"] for w in rows}
+    scaler = getattr(request.app.state, "autoscaler", None)
+    for pod in (scaler.pods(queue, now) if scaler else []):
+        if pod["pod_id"] in registered:
+            continue
+        rows.append({
+            "id": pod["name"], "state": "booting", "gpu_type": None, "usd_per_hour": None,
+            "source": "runpod", "pod_id": pod["pod_id"], "uptime_seconds": pod["age_seconds"],
+            "last_seen_seconds": now - pod["seen_at"], "busy_seconds": 0.0, "job": None,
+        })
+    return rows
+
+
 @router.get("/queues")
-async def get_queues(_: User = Depends(require_admin)) -> Dict[str, Any]:
-    """Per-queue snapshot: live depth + fleet, plus GPU-second spend over all-time and the last
-    24h and the projected cost of the current backlog. GPU-SECONDS ONLY — no dollar conversion;
-    a $/hr price map is deliberately not modelled yet."""
-    since_24h = time.time() - _DAY_SECONDS
+async def get_queues(request: Request, _: User = Depends(require_admin)) -> Dict[str, Any]:
+    """Per-queue snapshot: depth and backlog, the next jobs in claim order, and the fleet with
+    what each worker holds. Pure visualization — no spend here."""
+    now = time.time()
     freshness = _freshness()
 
     queues: List[Dict[str, Any]] = []
-    totals = {"pending": 0, "claimed": 0, "workers_live": 0, "backlog_seconds": 0.0,
-              "paid_all": 0.0, "billed_all": 0.0, "paid_24h": 0.0, "billed_24h": 0.0}
+    totals = {"pending": 0, "claimed": 0, "workers_live": 0, "backlog_seconds": 0.0}
 
     for q in QUEUE_SECONDS:
         stats = db_store.queue_stats(q)
-        all_time = db_store.gpu_seconds(q)
-        day = db_store.gpu_seconds(q, since=since_24h)
-        workers_live = len(db_store.live_workers(q, freshness))
-        backlog = db_store.backlog_seconds(q)
-
+        workers = _workers(request, q, now, freshness)
         row = {
             "queue": q,
             "pending": stats["pending"],
             "claimed": stats["claimed"],
             "oldest_pending_age_seconds": stats["oldest_pending_age_seconds"],
-            "workers_live": workers_live,
+            "workers_live": sum(w["state"] != "booting" for w in workers),
             "workers_max": _max_workers(q),
             "est_seconds": QUEUE_SECONDS[q],
-            "backlog_seconds": backlog,
-            "paid_all": all_time["paid"],
-            "billed_all": all_time["billed"],
-            "paid_24h": day["paid"],
-            "billed_24h": day["billed"],
+            "backlog_seconds": db_store.backlog_seconds(q),
+            "next": [{"id": j["id"], "game_id": j["game_id"], "build_id": j["build_id"],
+                      "waiting_seconds": now - j["created_at"], "est_seconds": j["est_seconds"]}
+                     for j in db_store.pending_jobs_head(q, _NEXT_LIMIT)],
+            "workers": workers,
         }
         queues.append(row)
-
-        totals["pending"] += row["pending"]
-        totals["claimed"] += row["claimed"]
-        totals["workers_live"] += workers_live
-        totals["backlog_seconds"] += backlog
-        totals["paid_all"] += all_time["paid"]
-        totals["billed_all"] += all_time["billed"]
-        totals["paid_24h"] += day["paid"]
-        totals["billed_24h"] += day["billed"]
+        for k in totals:
+            totals[k] += row[k]
 
     return {"queues": queues, "totals": totals}
 

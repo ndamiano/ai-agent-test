@@ -90,8 +90,8 @@ def test_the_builds_debit_is_weighted_like_the_games():
     assert store.builds_for("g1")[0]["seconds_used"] == pytest.approx(19.1)
 
 
-def test_admin_billed_is_the_weighted_debit_and_paid_the_raw_seconds():
+def test_the_job_row_keeps_raw_exec_beside_the_weighted_debit():
     job_id = _job()
     store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=10.0, gpu_type=WK)
-    agg = store.gpu_seconds("llm")
-    assert (agg["paid"], agg["billed"]) == (10.0, pytest.approx(19.1))
+    job = store.get_job(job_id)
+    assert (job["exec_seconds"], job["billed_seconds"]) == (10.0, pytest.approx(19.1))

@@ -1,7 +1,10 @@
 """The admin queue endpoint: role-gated (a signed-in non-admin gets 403, anonymous 401), and its
-snapshot shape covers every queue with per-queue + fleet totals."""
+snapshot covers every queue — the next jobs in claim order and the fleet with what it holds."""
+
+from unittest.mock import MagicMock
 
 from auth import store
+from config.settings_manager import settings_manager
 from db import store as db_store
 from db.estimates import QUEUE_SECONDS
 
@@ -24,24 +27,92 @@ def test_admin_gets_a_snapshot_of_every_queue(app_client):
     body = r.json()
     assert {q["queue"] for q in body["queues"]} == set(QUEUE_SECONDS)
     for q in body["queues"]:
-        assert q.keys() >= {"pending", "claimed", "workers_live", "backlog_seconds",
-                            "paid_all", "billed_all", "paid_24h", "billed_24h"}
-    assert body["totals"].keys() >= {"pending", "workers_live", "paid_all", "billed_all"}
+        assert q.keys() >= {"pending", "claimed", "workers_live", "workers_max",
+                            "backlog_seconds", "next", "workers"}
+    assert body["totals"].keys() == {"pending", "claimed", "workers_live", "backlog_seconds"}
 
 
-def test_totals_sum_the_queue_rows(app_client):
-    db_store.create_game("g1", "u1")
-    db_store.charge_game("g1", 1, 10_000)
-    jid = db_store.enqueue_job("mesh", {}, game_id="g1")
-    db_store.worker_seen("w1", "mesh")
-    db_store.claim_job("mesh", "w1", 60)
-    db_store.complete_job(jid, "w1", {"ok": True}, None, exec_seconds=100.0)
-
+def _queue(app_client, name):
     token = _token("root", "admin")
     body = app_client.get("/api/admin/queues",
                           headers={"Authorization": f"Bearer {token}"}).json()
-    assert body["totals"]["paid_all"] == 100.0
-    assert body["totals"]["billed_all"] == 100.0
+    return next(q for q in body["queues"] if q["queue"] == name), body["totals"]
+
+
+def test_next_lists_pending_jobs_in_claim_order_with_their_wait(app_client):
+    db_store.create_game("g1", "u1")
+    db_store.charge_game("g1", 1, 10_000)
+    build = db_store.create_build("g1")
+    first = db_store.enqueue_job("mesh", {}, game_id="g1", build_id=build)
+    second = db_store.enqueue_job("mesh", {}, game_id="g1")
+
+    mesh, totals = _queue(app_client, "mesh")
+    assert [j["id"] for j in mesh["next"]] == [first, second]
+    assert mesh["next"][0]["game_id"] == "g1"
+    assert mesh["next"][0]["build_id"] == build
+    assert 0 <= mesh["next"][0]["waiting_seconds"] < 5
+    assert mesh["next"][0]["est_seconds"] == QUEUE_SECONDS["mesh"]
+    assert (totals["pending"], totals["claimed"]) == (2, 0)
+
+
+def test_next_is_capped_at_ten(app_client):
+    db_store.create_game("g1", "u1")
+    db_store.charge_game("g1", 1, 100_000)
+    for _ in range(12):
+        db_store.enqueue_job("image", {}, game_id="g1")
+    image, _ = _queue(app_client, "image")
+    assert (image["pending"], len(image["next"])) == (12, 10)
+
+
+def test_workers_report_state_card_price_and_the_job_they_hold(app_client, monkeypatch):
+    monkeypatch.setattr(
+        "config.settings_manager.settings_manager.get_settings",
+        lambda s=settings_manager.get_settings(): {
+            **s, "billing": {"usd_per_5090_hour": 1.0,
+                             "gpu_rates": {"NVIDIA GeForce RTX 5090": 1.0, "BIG": 2.5}}})
+    db_store.create_game("g1", "u1")
+    db_store.charge_game("g1", 1, 10_000)
+    jid = db_store.enqueue_job("mesh", {}, game_id="g1")
+    db_store.worker_seen("busy", "mesh", gpu_type="BIG", source="runpod", pod_id="p1")
+    db_store.worker_seen("idle", "mesh", gpu_type="NVIDIA GeForce RTX 5090", source="local")
+    db_store.claim_job("mesh", "busy", 60)
+
+    mesh, totals = _queue(app_client, "mesh")
+    by_id = {w["id"]: w for w in mesh["workers"]}
+    assert by_id["busy"]["state"] == "busy"
+    assert by_id["busy"]["usd_per_hour"] == 2.5
+    assert by_id["busy"]["pod_id"] == "p1"
+    assert by_id["busy"]["job"]["id"] == jid
+    assert by_id["busy"]["job"]["game_id"] == "g1"
+    assert 0 <= by_id["busy"]["job"]["running_seconds"] < 5
+    assert by_id["idle"]["state"] == "idle"
+    assert by_id["idle"]["usd_per_hour"] == 1.0
+    assert by_id["idle"]["job"] is None
+    assert (mesh["workers_live"], mesh["claimed"], mesh["pending"]) == (2, 1, 0)
+    assert mesh["next"] == []
+    assert totals["workers_live"] == 2
+
+
+def test_a_pod_the_scaler_lists_with_no_worker_yet_is_booting(app_client):
+    scaler = MagicMock()
+    scaler.pods.side_effect = lambda queue, now: (
+        [{"pod_id": "p-new", "name": "maestro-llm-abcd", "age_seconds": 40.0, "seen_at": now - 3},
+         {"pod_id": "p-live", "name": "maestro-llm-ef01", "age_seconds": 900.0, "seen_at": now - 3}]
+        if queue == "llm" else [])
+    app_client.app.state.autoscaler = scaler
+    db_store.worker_seen("w-live", "llm", gpu_type="BIG", source="runpod", pod_id="p-live")
+    try:
+        llm, _ = _queue(app_client, "llm")
+    finally:
+        del app_client.app.state.autoscaler
+
+    states = {w["id"]: w["state"] for w in llm["workers"]}
+    assert states == {"w-live": "idle", "maestro-llm-abcd": "booting"}
+    booting = next(w for w in llm["workers"] if w["state"] == "booting")
+    assert booting["pod_id"] == "p-new"
+    assert booting["uptime_seconds"] == 40.0
+    assert booting["usd_per_hour"] is None
+    assert llm["workers_live"] == 1
 
 
 def _billing(rows_hourly, rows_daily, rows_pods):

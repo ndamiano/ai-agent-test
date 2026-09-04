@@ -119,11 +119,18 @@ def _billing(rows_hourly, rows_daily, rows_pods):
     return {"hourly_24h": rows_hourly, "daily_30d": rows_daily, "pods_30d": rows_pods}
 
 
-def test_costs_joins_runpod_billing_against_our_logs(app_client, monkeypatch):
+def _rates(monkeypatch, rates):
+    base = settings_manager.get_settings()
+    monkeypatch.setattr("config.settings_manager.settings_manager.get_settings",
+                        lambda: {**base, "billing": {"usd_per_5090_hour": 1.0, "gpu_rates": rates}})
+
+
+def test_costs_joins_runpod_billing_against_our_logs_per_card(app_client, monkeypatch):
     import time
 
     from api.routers import admin
 
+    _rates(monkeypatch, {"NVIDIA GeForce RTX 5090": 1.0, "NVIDIA RTX PRO 4500 Blackwell": 0.5})
     now = time.time()
     iso = admin._iso
     # The wire format: space-separated, NOT the ISO "T" the docs imply.
@@ -142,10 +149,29 @@ def test_costs_joins_runpod_billing_against_our_logs(app_client, monkeypatch):
     monkeypatch.setattr(admin, "_billing_rows", lambda _now: _billing(hourly, daily, pods))
     admin._cost_cache.update(at=0.0, data=None)
 
-    db_store.worker_seen("w1", "llm", gpu_type="5090", source="runpod", pod_id="known")
-    job_id = db_store.enqueue_job("llm", {"p": 1})
+    db_store.worker_seen("w1", "llm", gpu_type="NVIDIA GeForce RTX 5090", source="runpod",
+                         pod_id="known")
+    db_store.create_game("g1", "u1")
+    db_store.charge_game("g1", 1, 100_000)
+    build = db_store.create_build("g1")
+    job_id = db_store.enqueue_job("llm", {"p": 1}, game_id="g1", build_id=build)
     db_store.claim_job("llm", "w1", lease_seconds=120)
-    db_store.complete_job(job_id, "w1", {"ok": True}, None, exec_seconds=600)
+    db_store.complete_job(job_id, "w1", {"ok": True}, None, exec_seconds=600,
+                          gpu_type="NVIDIA GeForce RTX 5090")
+    db_store.build_finished(build, "built")
+    # The game's design ran before the window opened, on another card: it still costs the game.
+    design = db_store.enqueue_job("llm", {"p": 0}, game_id="g1")
+    db_store.claim_job("llm", "w1", lease_seconds=120)
+    db_store.complete_job(design, "w1", {"ok": True}, None, exec_seconds=1800,
+                          gpu_type="NVIDIA RTX PRO 4500 Blackwell")
+    with db_store._db() as conn:
+        conn.execute("UPDATE jobs SET finished_at = ? WHERE id = ?", (now - 2 * 24 * 3600, design))
+    db_store.build_finished(db_store.create_build("g1", kind="change"), "built")
+    # A platform job (no game) on a card RunPod has no row for in the 24h bucket.
+    pj = db_store.enqueue_job("llm", {"p": 2})
+    db_store.claim_job("llm", "w1", lease_seconds=120)
+    db_store.complete_job(pj, "w1", {"ok": True}, None, exec_seconds=360,
+                          gpu_type="NVIDIA RTX PRO 4500 Blackwell")
 
     token = _token("root", "admin")
     body = app_client.get("/api/admin/costs",
@@ -153,17 +179,25 @@ def test_costs_joins_runpod_billing_against_our_logs(app_client, monkeypatch):
 
     assert body["runpod_reachable"] is True
     day = next(w for w in body["windows"] if w["label"] == "24h")
-    assert day["runpod"]["amount_usd"] == 0.5
-    assert day["jobs"]["done"] == 1 and day["jobs"]["exec_seconds"] == 600
-    # $0.50 for 1 billed GPU-hour; 600 exec seconds of it used.
-    assert day["derived"]["usd_per_gpu_hour"] == 0.5
-    assert day["derived"]["utilization"] == round(600 / 3600, 4)
-    assert day["derived"]["overhead_seconds"] == 3000
+    by_gpu = {g["gpu"]: g for g in day["gpus"]}
+    # $0.50 for 1 billed GPU-hour; 600 exec seconds of it worked, priced at our $1/h rate.
+    assert by_gpu["NVIDIA GeForce RTX 5090"] == {
+        "gpu": "NVIDIA GeForce RTX 5090", "alive_seconds": 3600.0, "alive_usd": 0.5,
+        "worked_seconds": 600.0, "worked_usd": round(600 / 3600, 4)}
+    # Worked with no ledger row: alive unknown, worked still priced at the card's rate.
+    assert by_gpu["NVIDIA RTX PRO 4500 Blackwell"] == {
+        "gpu": "NVIDIA RTX PRO 4500 Blackwell", "alive_seconds": None, "alive_usd": None,
+        "worked_seconds": 360.0, "worked_usd": 0.05}
+    # One game built in the window; the average is over everything it ever ran — the 600 s
+    # build turn at $1/h plus the 1800 s design from before the window at $0.50/h.
+    assert day["games"] == {"n": 1, "avg_gpu_hours": round(2400 / 3600, 4),
+                            "avg_usd": round(600 / 3600 + 1800 / 3600 * 0.5, 4),
+                            "avg_changes": 1.0}
 
     month = next(w for w in body["windows"] if w["label"] == "30d")
-    assert month["runpod"]["amount_usd"] == 6.0
-    assert {g["gpu"] for g in month["runpod"]["by_gpu"]} == {
-        "NVIDIA GeForce RTX 5090", "NVIDIA RTX PRO 4500 Blackwell"}
+    by_gpu = {g["gpu"]: g for g in month["gpus"]}
+    assert by_gpu["NVIDIA GeForce RTX 5090"]["alive_usd"] == 2.0
+    assert by_gpu["NVIDIA RTX PRO 4500 Blackwell"]["alive_usd"] == 4.0
 
     # The boot-looper pod billed money but never registered a worker: ghost spend.
     ghost = body["ghost_30d"]
@@ -175,13 +209,19 @@ def test_costs_without_a_reachable_ledger_still_reports_our_half(app_client, mon
 
     monkeypatch.setattr(admin, "_billing_rows", lambda _now: None)
     admin._cost_cache.update(at=0.0, data=None)
+    db_store.worker_seen("w1", "llm", gpu_type="NVIDIA GeForce RTX 5090")
+    jid = db_store.enqueue_job("llm", {"p": 1})
+    db_store.claim_job("llm", "w1", lease_seconds=120)
+    db_store.complete_job(jid, "w1", {"ok": True}, None, exec_seconds=60,
+                          gpu_type="NVIDIA GeForce RTX 5090")
+
     token = _token("root2", "admin")
     body = app_client.get("/api/admin/costs",
                           headers={"Authorization": f"Bearer {token}"}).json()
     assert body["runpod_reachable"] is False
     assert body["ghost_30d"] is None
-    assert all(w["runpod"] is None and w["derived"] == {} for w in body["windows"])
-    assert all("jobs" in w for w in body["windows"])
-
-
-
+    for w in body["windows"]:
+        assert [g["alive_usd"] for g in w["gpus"]] == [None]
+        assert w["gpus"][0]["worked_seconds"] == 60.0
+        assert w["games"] == {"n": 0, "avg_gpu_hours": None, "avg_usd": None,
+                              "avg_changes": None}

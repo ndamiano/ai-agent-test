@@ -54,6 +54,9 @@ export const Link: React.FC<React.AnchorHTMLAttributes<HTMLAnchorElement> & { to
     )
 }
 
+export const ADMIN_TABS = ['queues', 'costs', 'usage', 'violations'] as const
+export type AdminTab = typeof ADMIN_TABS[number]
+
 export type Route =
     | { kind: 'library' }
     | { kind: 'create' }
@@ -61,7 +64,7 @@ export type Route =
     | { kind: 'settings' }
     | { kind: 'credits' }
     | { kind: 'demos' }
-    | { kind: 'admin' }
+    | { kind: 'admin'; tab: AdminTab }
     | { kind: 'prompts' }
     | { kind: 'grade'; runId: string }
     | { kind: 'grades' }
@@ -73,7 +76,11 @@ export const parseRoute = (path: string): Route => {
     if (path === '/settings') return { kind: 'settings' }
     if (path === '/credits') return { kind: 'credits' }
     if (path === '/demos') return { kind: 'demos' }
-    if (path === '/admin') return { kind: 'admin' }
+    if (path === '/admin') return { kind: 'admin', tab: 'queues' }
+    const admin = path.match(/^\/admin\/([a-z]+)$/)
+    if (admin && (ADMIN_TABS as readonly string[]).includes(admin[1])) {
+        return { kind: 'admin', tab: admin[1] as AdminTab }
+    }
     if (path === '/prompts') return { kind: 'prompts' }
     if (path === '/grades') return { kind: 'grades' }
     const grade = path.match(/^\/grade\/([A-Za-z0-9_-]+)$/)

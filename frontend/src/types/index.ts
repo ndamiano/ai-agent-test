@@ -172,15 +172,23 @@ export interface QueueRow {
     workers: WorkerRow[]
 }
 
-// Effective cost (GET /api/admin/costs): RunPod's own billing joined against our job/worker
-// logs. `runpod` is null when the ledger is unreachable; derived is {} then too.
+// Effective cost (GET /api/admin/costs), per window and per card. alive_* is RunPod's ledger
+// (pod wall-clock and what it billed), null when the ledger is unreachable or has no row for the
+// card; worked_* is the seconds our jobs ran on it, priced at our rate table. games counts games
+// whose full build finished in the window, averaged over every job they ever ran and every
+// change round they asked for.
+export interface CostGpu {
+    gpu: string
+    alive_seconds: number | null
+    alive_usd: number | null
+    worked_seconds: number
+    worked_usd: number
+}
+
 export interface CostWindow {
     label: string
-    runpod: { amount_usd: number; billed_seconds: number
-              by_gpu: { gpu: string; amount_usd: number; billed_seconds: number }[] } | null
-    jobs: { done: number; failed: number; exec_seconds: number; failed_exec_seconds: number }
-    workers: { count: number; wall_seconds: number }
-    derived: { usd_per_gpu_hour?: number; utilization?: number; overhead_seconds?: number }
+    gpus: CostGpu[]
+    games: { n: number; avg_gpu_hours: number | null; avg_usd: number | null; avg_changes: number | null }
 }
 
 export interface AdminCosts {

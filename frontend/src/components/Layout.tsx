@@ -36,7 +36,8 @@ const Layout: React.FC = () => {
 
     const nav = NAV.filter(n => isAdmin || !n.adminOnly)
     const navActive = (to: string) =>
-        to === '/' ? ['library', 'create', 'game'].includes(route.kind) : path === to
+        to === '/' ? ['library', 'create', 'game'].includes(route.kind)
+            : to === '/admin' ? route.kind === 'admin' : path === to
 
     return (
         <div className="h-screen flex flex-col overflow-hidden bg-ink">
@@ -92,7 +93,7 @@ const Layout: React.FC = () => {
                     </div>
                 )}
                 {route.kind === 'credits' && <CreditsPage />}
-                {route.kind === 'admin' && isAdmin && <AdminPanel />}
+                {route.kind === 'admin' && isAdmin && <AdminPanel tab={route.tab} />}
                 {route.kind === 'prompts' && isAdmin && <PromptsPanel />}
                 {route.kind === 'grade' && isAdmin && <GradePage runId={route.runId} />}
                 {route.kind === 'grades' && isAdmin && <GradesPanel />}

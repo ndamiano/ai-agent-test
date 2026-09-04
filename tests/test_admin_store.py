@@ -45,3 +45,66 @@ def test_backlog_seconds_sums_unfinished_estimates():
     claimed = store.claim_job("llm", "w1", 60)
     store.complete_job(claimed["id"], "w1", {"ok": True}, None, exec_seconds=12.0)
     assert store.backlog_seconds("llm") == QUEUE_SECONDS["llm"]
+
+
+def _finish(queue, exec_seconds, *, game_id, gpu_type=None, build_id=None):
+    store.enqueue_job(queue, {}, game_id=game_id, build_id=build_id)
+    store.worker_seen("w1", queue)
+    claimed = store.claim_job(queue, "w1", 60)
+    store.complete_job(claimed["id"], "w1", {"ok": True}, None,
+                       exec_seconds=exec_seconds, gpu_type=gpu_type)
+
+
+def test_exec_seconds_by_gpu_groups_finished_jobs_by_card():
+    _game()
+    _finish("llm", 10.0, game_id="g1", gpu_type="A")
+    _finish("llm", 5.0, game_id="g1", gpu_type="A")
+    _finish("mesh", 7.0, game_id="g1", gpu_type="B")
+    _finish("llm", 1.0, game_id=None)
+
+    assert store.exec_seconds_by_gpu(0.0) == {"A": 15.0, "B": 7.0, "unknown": 1.0}
+    assert store.exec_seconds_by_gpu(time.time() + 10) == {}
+
+
+def test_games_exec_seconds_is_everything_the_games_ever_ran():
+    _game()
+    store.create_game("g2", "u1")
+    store.charge_game("g2", 1, 10_000)
+    _finish("llm", 10.0, game_id="g1", gpu_type="A")
+    _finish("image", 4.0, game_id="g1", gpu_type="B")
+    _finish("llm", 3.0, game_id="g2", gpu_type="A")
+    _finish("llm", 1.0, game_id=None, gpu_type="A")
+
+    assert store.games_exec_seconds_by_gpu(["g1"]) == {"A": 10.0, "B": 4.0}
+    assert store.games_exec_seconds_by_gpu(["g1", "g2"]) == {"A": 13.0, "B": 4.0}
+    assert store.games_exec_seconds_by_gpu([]) == {}
+
+
+def test_games_built_since_counts_a_game_once_on_its_full_build():
+    _game()
+    store.create_game("g2", "u1")
+    store.create_game("g3", "u1")
+    b1 = store.create_build("g1")
+    b2 = store.create_build("g1")
+    store.create_build("g2")
+    only_change = store.create_build("g3", kind="change")
+    store.build_finished(b1, "built")
+    store.build_finished(b2, "failed")
+    store.build_finished(only_change, "built")
+
+    assert store.games_built_since(0.0) == ["g1"]
+    assert store.games_built_since(time.time() + 10) == []
+
+
+def test_games_change_count_is_the_games_change_rounds_ever():
+    _game()
+    store.create_game("g2", "u1")
+    store.create_build("g1")
+    store.create_build("g1", kind="change")
+    store.create_build("g1", kind="change")
+    store.create_build("g1", kind="fix")
+    store.create_build("g2", kind="change")
+
+    assert store.games_change_count(["g1"]) == 2
+    assert store.games_change_count(["g1", "g2"]) == 3
+    assert store.games_change_count([]) == 0

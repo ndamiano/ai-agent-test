@@ -805,18 +805,49 @@ def claimed_jobs(queue: str) -> List[Dict]:
     return [dict(r) for r in rows]
 
 
-def jobs_finished_totals(since: Optional[float] = None) -> Dict:
-    """Finished-job counts and exec time by outcome, all queues — the cost panel's our-side half."""
-    clause = "AND finished_at >= ?" if since is not None else ""
-    args = [since] if since is not None else []
-    out = {"done": {"n": 0, "exec_seconds": 0.0}, "failed": {"n": 0, "exec_seconds": 0.0}}
+def exec_seconds_by_gpu(since: float) -> Dict[str, float]:
+    """GPU-seconds worked per card over jobs finished since `since` — done AND failed, since the
+    card ran either way. A job with no recorded card lands under 'unknown'."""
     with _db() as conn:
-        for row in conn.execute(
-                "SELECT status, COUNT(*) AS n, COALESCE(SUM(exec_seconds), 0) AS s "
-                f"FROM jobs WHERE finished_at IS NOT NULL {clause} GROUP BY status", args):
-            if row["status"] in out:
-                out[row["status"]] = {"n": row["n"], "exec_seconds": row["s"]}
-    return out
+        rows = conn.execute(
+            "SELECT COALESCE(gpu_type, 'unknown') AS gpu, COALESCE(SUM(exec_seconds), 0) AS s "
+            "FROM jobs WHERE finished_at >= ? GROUP BY gpu", (since,)).fetchall()
+    return {r["gpu"]: r["s"] for r in rows}
+
+
+def games_exec_seconds_by_gpu(game_ids: List[str]) -> Dict[str, float]:
+    """Every finished job the games ever ran, per card — design, builds, art, whenever they
+    happened. What a game cost is the whole of it, not the slice inside a window."""
+    if not game_ids:
+        return {}
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT COALESCE(gpu_type, 'unknown') AS gpu, COALESCE(SUM(exec_seconds), 0) AS s "
+            f"FROM jobs WHERE finished_at IS NOT NULL "
+            f"AND game_id IN ({','.join('?' * len(game_ids))}) GROUP BY gpu",
+            game_ids).fetchall()
+    return {r["gpu"]: r["s"] for r in rows}
+
+
+def games_built_since(since: float) -> List[str]:
+    """Games whose full build finished in the window, whatever its outcome. Fix and change
+    rounds are that game's, not a new game — they never count it again."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT game_id FROM builds WHERE kind = 'build' AND finished_at >= ?",
+            (since,)).fetchall()
+    return [r["game_id"] for r in rows]
+
+
+def games_change_count(game_ids: List[str]) -> int:
+    """Change rounds the games asked for, ever."""
+    if not game_ids:
+        return 0
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM builds WHERE kind = 'change' "
+            f"AND game_id IN ({','.join('?' * len(game_ids))})", game_ids).fetchone()
+    return row["n"]
 
 
 def workers_since(since: float) -> List[Dict]:

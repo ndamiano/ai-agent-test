@@ -147,9 +147,11 @@ async def list_violations(_: User = Depends(require_admin)) -> Dict[str, Any]:
 # ── Costs: RunPod's ledger joined against our job/worker logs ────────────────────────────────
 #
 # Our jobs record EXEC time; RunPod bills pod WALL-CLOCK — cold starts, idle linger, warmup and
-# boot-loop pods that never worked at all. The join is the point: the gap between the two IS the
-# overhead, and a pod RunPod billed that no worker row ever claimed is GHOST spend (measured
-# 2026-08-01: two ninfer boot-loops billed ~15 min each, invisible to every jobs-derived number).
+# boot-loop pods that never worked at all. The join is the point: per card, the gap between the
+# two IS the overhead, and a pod RunPod billed that no worker row ever claimed is GHOST spend
+# (measured 2026-08-01: two ninfer boot-loops billed ~15 min each, invisible to every
+# jobs-derived number). Worked seconds are priced at our own rate table, so a card's worked_usd
+# beside its alive_usd is what the same hours would have cost with zero overhead.
 
 _WINDOWS = [("24h", 24), ("7d", 7 * 24), ("30d", 30 * 24)]
 _COST_CACHE_TTL = 300.0
@@ -188,50 +190,51 @@ def _parse_time(value: str) -> float:
         return 0.0
 
 
-def _sum_rows(rows: List[Dict], since: float) -> Dict[str, Any]:
-    total, seconds, by_gpu = 0.0, 0.0, {}
+def _alive_by_gpu(rows: List[Dict], since: float) -> Dict[str, Dict[str, float]]:
+    out: Dict[str, Dict[str, float]] = {}
     for r in rows:
         if _parse_time(r.get("time", "")) < since:
             continue
-        amount = float(r.get("amount") or 0)
-        secs = float(r.get("timeBilledMs") or 0) / 1000.0
-        total += amount
-        seconds += secs
-        gpu = r.get("gpuTypeId") or "unknown"
-        slot = by_gpu.setdefault(gpu, {"gpu": gpu, "amount_usd": 0.0, "billed_seconds": 0.0})
-        slot["amount_usd"] += amount
-        slot["billed_seconds"] += secs
-    return {"amount_usd": round(total, 4), "billed_seconds": seconds,
-            "by_gpu": sorted(by_gpu.values(), key=lambda g: -g["amount_usd"])}
-
-
-def _worker_wall(rows: List[Dict], since: float, now: float) -> float:
-    wall = 0.0
-    for w in rows:
-        start = max(float(w["started_at"] or since), since)
-        end = float(w["terminated_at"] or w["last_seen_at"] or now)
-        wall += max(0.0, min(end, now) - start)
-    return wall
-
-
-def _window(label: str, hours: int, billing_rows, jobs, workers_wall, worker_count) -> Dict:
-    exec_seconds = jobs["done"]["exec_seconds"] + jobs["failed"]["exec_seconds"]
-    out: Dict[str, Any] = {
-        "label": label,
-        "runpod": billing_rows,
-        "jobs": {"done": jobs["done"]["n"], "failed": jobs["failed"]["n"],
-                 "exec_seconds": exec_seconds,
-                 "failed_exec_seconds": jobs["failed"]["exec_seconds"]},
-        "workers": {"count": worker_count, "wall_seconds": workers_wall},
-    }
-    derived: Dict[str, Any] = {}
-    if billing_rows and billing_rows["billed_seconds"] > 0:
-        hours_billed = billing_rows["billed_seconds"] / 3600.0
-        derived["usd_per_gpu_hour"] = round(billing_rows["amount_usd"] / hours_billed, 4)
-        derived["utilization"] = round(exec_seconds / billing_rows["billed_seconds"], 4)
-        derived["overhead_seconds"] = max(0.0, billing_rows["billed_seconds"] - exec_seconds)
-    out["derived"] = derived
+        slot = out.setdefault(r.get("gpuTypeId") or "unknown", {"seconds": 0.0, "usd": 0.0})
+        slot["seconds"] += float(r.get("timeBilledMs") or 0) / 1000.0
+        slot["usd"] += float(r.get("amount") or 0)
     return out
+
+
+def _worked_usd(gpu: str, seconds: float) -> float:
+    return seconds / 3600.0 * (_usd_per_hour(gpu) or 0.0)
+
+
+def _window(label: str, since: float, billing_rows) -> Dict[str, Any]:
+    """One window: per card, the wall-clock RunPod billed beside the seconds our jobs ran on it —
+    the gap is boot, idle and warmup — and what a game cost on average. A game belongs to the
+    window its full build finished in, and costs everything it ever ran: design, art, changes."""
+    alive = _alive_by_gpu(billing_rows, since) if billing_rows is not None else None
+    worked = db_store.exec_seconds_by_gpu(since)
+    gpus = []
+    for gpu in sorted(set(worked) | set(alive or {})):
+        a = (alive or {}).get(gpu)
+        w = worked.get(gpu, 0.0)
+        gpus.append({
+            "gpu": gpu,
+            "alive_seconds": a["seconds"] if a else None,
+            "alive_usd": round(a["usd"], 4) if a else None,
+            "worked_seconds": w,
+            "worked_usd": round(_worked_usd(gpu, w), 4),
+        })
+    game_ids = db_store.games_built_since(since)
+    per_game = db_store.games_exec_seconds_by_gpu(game_ids)
+    n = len(game_ids)
+    seconds = sum(per_game.values())
+    usd = sum(_worked_usd(g, s) for g, s in per_game.items())
+    return {
+        "label": label,
+        "gpus": gpus,
+        "games": {"n": n,
+                  "avg_gpu_hours": round(seconds / 3600.0 / n, 4) if n else None,
+                  "avg_usd": round(usd / n, 4) if n else None,
+                  "avg_changes": round(db_store.games_change_count(game_ids) / n, 2) if n else None},
+    }
 
 
 @router.get("/costs")
@@ -245,15 +248,10 @@ async def get_costs(_: User = Depends(require_admin)) -> Dict[str, Any]:
     billing = _billing_rows(now)
     windows = []
     for label, hours in _WINDOWS:
-        since = now - hours * 3600
         rows = None
         if billing is not None:
-            source = billing["hourly_24h"] if hours <= 24 else billing["daily_30d"]
-            rows = _sum_rows(source, since)
-        jobs = db_store.jobs_finished_totals(since=since)
-        workers = [w for w in db_store.workers_since(since) if w.get("source") == "runpod"]
-        windows.append(_window(label, hours, rows, jobs,
-                               _worker_wall(workers, since, now), len(workers)))
+            rows = billing["hourly_24h"] if hours <= 24 else billing["daily_30d"]
+        windows.append(_window(label, now - hours * 3600, rows))
 
     ghost = None
     if billing is not None:

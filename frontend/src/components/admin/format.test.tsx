@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { fmtSecs } from './AdminPanel'
+import { fmtSecs } from './format'
 
 describe('fmtSecs', () => {
     it('renders raw seconds below an hour', () => {

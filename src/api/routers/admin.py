@@ -84,6 +84,11 @@ def _workers(request: Request, queue: str, now: float, freshness: float) -> List
     last pod listing: a pod RunPod is billing that no worker has registered from yet is still
     fleet, and the admin view is the one place that shows it."""
     held = {j["worker_id"]: j for j in db_store.claimed_jobs(queue)}
+    scaler = getattr(request.app.state, "autoscaler", None)
+    pods = scaler.pods(queue, now) if scaler else []
+    # A pod's life starts when the provider spawned it, not when its worker registered —
+    # the boot in between is billed time the row's started_at cannot see.
+    spawned = {p["pod_id"]: p["spawned_at"] for p in pods}
     rows = []
     for w in db_store.live_workers(queue, freshness):
         job = held.get(w["id"])
@@ -94,7 +99,7 @@ def _workers(request: Request, queue: str, now: float, freshness: float) -> List
             "usd_per_hour": _usd_per_hour(w["gpu_type"]),
             "source": w["source"],
             "pod_id": w["pod_id"],
-            "uptime_seconds": now - w["started_at"],
+            "spawned_at": spawned.get(w["pod_id"], w["started_at"]),
             "last_seen_seconds": now - (w["last_seen_at"] or w["started_at"]),
             "busy_seconds": w["busy_seconds"],
             "job": job and {"id": job["id"], "game_id": job["game_id"], "build_id": job["build_id"],
@@ -102,13 +107,12 @@ def _workers(request: Request, queue: str, now: float, freshness: float) -> List
                             "est_seconds": job["est_seconds"]},
         })
     registered = {w["pod_id"] for w in rows}
-    scaler = getattr(request.app.state, "autoscaler", None)
-    for pod in (scaler.pods(queue, now) if scaler else []):
+    for pod in pods:
         if pod["pod_id"] in registered:
             continue
         rows.append({
             "id": pod["name"], "state": "booting", "gpu_type": None, "usd_per_hour": None,
-            "source": "runpod", "pod_id": pod["pod_id"], "uptime_seconds": pod["age_seconds"],
+            "source": "runpod", "pod_id": pod["pod_id"], "spawned_at": pod["spawned_at"],
             "last_seen_seconds": now - pod["seen_at"], "busy_seconds": 0.0, "job": None,
         })
     return rows

@@ -120,13 +120,58 @@ def test_idle_exit_zero_sends_no_wait_seconds():
     assert "wait_seconds" not in a.session.post.call_args.kwargs["json"]
 
 
-def test_null_claim_with_idle_exit_deregisters_and_stops():
+def _clock(monkeypatch, start=1000.0):
+    """A monotonic clock the test advances by hand."""
+    t = {"now": start}
+    monkeypatch.setattr(worker_agent.time, "monotonic", lambda: t["now"])
+    return t
+
+
+def test_null_claims_exit_only_once_idle_for_the_whole_window(monkeypatch):
+    """The server caps one long-poll well under a real idle window, so a single null claim is
+    not the verdict: the worker exits when the card has been empty for idle_exit_seconds since
+    its last job ended, however many polls that takes."""
+    clock = _clock(monkeypatch)
     a = Agent("http://server", "http://gpu", "llm", "wsecret", worker_id="w1",
-              idle_exit_seconds=5)
+              idle_exit_seconds=300)
     a.session = MagicMock()
-    a.session.post.return_value = FakeResponse(200, {"job": None})
-    a.run()   # returns instead of looping forever
+    nulls = {"n": 0}
+
+    def post(url, **kw):
+        if url.endswith("/worker/claim"):
+            nulls["n"] += 1
+            clock["now"] += 25
+            return FakeResponse(200, {"job": None})
+        return FakeResponse(200, {"ok": True})
+
+    a.session.post.side_effect = post
+    a.run()
+    assert nulls["n"] == 12
     assert _posts_to(a, "/worker/deregister") == 1
+
+
+def test_the_idle_clock_restarts_when_a_job_ends(monkeypatch):
+    clock = _clock(monkeypatch)
+    a = Agent("http://server", "http://gpu", "llm", "wsecret", worker_id="w1",
+              idle_exit_seconds=60)
+    a.session = MagicMock()
+    claims = {"n": 0}
+
+    def post(url, **kw):
+        if url.startswith("http://gpu"):
+            clock["now"] += 500     # a long job: far past the window, but busy
+            return FakeResponse(200, {"output": ["ok"]})
+        if url.endswith("/worker/claim"):
+            claims["n"] += 1
+            if claims["n"] == 1:
+                return FakeResponse(200, {"job": {"id": "j1", "payload": {"body": {}}}})
+            clock["now"] += 25
+            return FakeResponse(200, {"job": None})
+        return FakeResponse(200, {"ok": True})
+
+    a.session.post.side_effect = post
+    a.run()
+    assert claims["n"] == 1 + 3     # 60 s of empty polls AFTER the job, not the job's 500
 
 
 def test_idle_exit_zero_never_exits_on_a_null_claim():

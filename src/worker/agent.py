@@ -70,6 +70,7 @@ class Agent:
         self.slots = slots
         self._busy = 0
         self._busy_lock = threading.Lock()
+        self._idle_since = time.monotonic()
         self.pod_id = os.environ.get("RUNPOD_POD_ID")
         self.session = requests.Session()
         self.session.headers["Authorization"] = f"Bearer {token}"
@@ -89,8 +90,8 @@ class Agent:
         body = {"queue": self.queue, "worker_id": self.worker_id,
                 "gpu_type": self.gpu_type, "source": self.source, "pod_id": self.pod_id}
         if self.idle_exit_seconds:
-            # The server long-polls for this window, so a null claim IS the idle verdict —
-            # the queue stayed empty for idle_exit_seconds straight. No client-side timer.
+            # The server long-polls up to its own cap (25 s) per claim, so one null claim is
+            # never the whole idle verdict — the clock for that is _idle_since.
             body["wait_seconds"] = self.idle_exit_seconds
         return self._post("/worker/claim", body, timeout=35).get("job")
 
@@ -177,14 +178,15 @@ class Agent:
                 time.sleep(5)
                 continue
             if job is None:
-                # A null claim is one slot's idle verdict; the worker's is every slot's. A
-                # sibling mid-job will claim again when it finishes, so the process stays up
-                # for it, and the pod dies only once the whole card has been idle the window.
+                # The worker's idle verdict is every slot empty since the last job ended, for
+                # the whole window. A sibling mid-job will claim again when it finishes, so
+                # the process stays up for it, and the pod dies only once the whole card has
+                # been idle the window.
                 with self._busy_lock:
-                    all_idle = self._busy == 0
-                if self.idle_exit_seconds and all_idle and not self.stopping:
-                    logger.info("worker %s idle for %.0fs — exiting",
-                                self.worker_id, self.idle_exit_seconds)
+                    idle_for = time.monotonic() - self._idle_since if self._busy == 0 else 0.0
+                if self.idle_exit_seconds and idle_for >= self.idle_exit_seconds \
+                        and not self.stopping:
+                    logger.info("worker %s idle for %.0fs — exiting", self.worker_id, idle_for)
                     self.stopping = True
                     break
                 continue
@@ -195,6 +197,8 @@ class Agent:
             finally:
                 with self._busy_lock:
                     self._busy -= 1
+                    if self._busy == 0:
+                        self._idle_since = time.monotonic()
 
     def run(self) -> None:
         logger.info("worker %s pulling queue=%s from %s → %s (%d slots)",

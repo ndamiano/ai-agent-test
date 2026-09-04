@@ -1,6 +1,9 @@
 """The admin queue endpoint: role-gated (a signed-in non-admin gets 403, anonymous 401), and its
 snapshot covers every queue — the next jobs in claim order and the fleet with what it holds."""
 
+import time
+
+import pytest
 from unittest.mock import MagicMock
 
 from auth import store
@@ -98,10 +101,11 @@ def test_workers_report_state_card_price_and_the_job_they_hold(app_client, monke
 
 
 def test_a_pod_the_scaler_lists_with_no_worker_yet_is_booting(app_client):
+    now = time.time()
     scaler = MagicMock()
-    scaler.pods.side_effect = lambda queue, now: (
-        [{"pod_id": "p-new", "name": "maestro-llm-abcd", "age_seconds": 40.0, "seen_at": now - 3},
-         {"pod_id": "p-live", "name": "maestro-llm-ef01", "age_seconds": 900.0, "seen_at": now - 3}]
+    scaler.pods.side_effect = lambda queue, _now: (
+        [{"pod_id": "p-new", "name": "maestro-llm-abcd", "spawned_at": now - 40, "seen_at": now - 3},
+         {"pod_id": "p-live", "name": "maestro-llm-ef01", "spawned_at": now - 900, "seen_at": now - 3}]
         if queue == "llm" else [])
     app_client.app.state.autoscaler = scaler
     db_store.worker_seen("w-live", "llm", gpu_type="BIG", source="runpod", pod_id="p-live")
@@ -114,7 +118,10 @@ def test_a_pod_the_scaler_lists_with_no_worker_yet_is_booting(app_client):
     assert states == {"w-live": "idle", "maestro-llm-abcd": "booting"}
     booting = next(w for w in llm["workers"] if w["state"] == "booting")
     assert booting["pod_id"] == "p-new"
-    assert booting["uptime_seconds"] == 40.0
+    assert booting["spawned_at"] == pytest.approx(now - 40)
+    # A registered worker's life is its pod's, from the provider's spawn — not from registration.
+    live = next(w for w in llm["workers"] if w["id"] == "w-live")
+    assert live["spawned_at"] == pytest.approx(now - 900)
     assert booting["usd_per_hour"] is None
     assert llm["workers_live"] == 1
 
@@ -130,8 +137,6 @@ def _rates(monkeypatch, rates):
 
 
 def test_costs_joins_runpod_billing_against_our_logs_per_card(app_client, monkeypatch):
-    import time
-
     from api.routers import admin
 
     _rates(monkeypatch, {"NVIDIA GeForce RTX 5090": 1.0, "NVIDIA RTX PRO 4500 Blackwell": 0.5})

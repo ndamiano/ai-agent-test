@@ -152,7 +152,7 @@ export interface WorkerRow {
     usd_per_hour: number | null
     source: string | null
     pod_id: string | null
-    uptime_seconds: number
+    spawned_at: number
     last_seen_seconds: number
     busy_seconds: number
     job: { id: string; game_id: string | null; build_id: string | null

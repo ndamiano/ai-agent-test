@@ -10,7 +10,8 @@ import logging
 import threading
 import time
 import uuid
-from typing import Callable, Dict, List
+from datetime import datetime
+from typing import Callable, Dict, List, Optional
 
 from scaler.policy import (
     MarkWorkerTerminated,
@@ -34,6 +35,20 @@ _STOCK_MARKERS = ("no instances currently available",
 
 def refusal_kind(errors: List[str]) -> str:
     return "stock" if all(any(m in e.lower() for m in _STOCK_MARKERS) for e in errors) else "other"
+
+
+def _created_at(pod: Dict) -> Optional[float]:
+    """RunPod's `createdAt` ("2026-09-04 22:29:58.724 +0000 UTC") as an epoch."""
+    stamp = pod.get("createdAt")
+    if not stamp:
+        return None
+    try:
+        return datetime.strptime(stamp.replace(" UTC", ""), "%Y-%m-%d %H:%M:%S.%f %z").timestamp()
+    except ValueError:
+        try:
+            return datetime.strptime(stamp.replace(" UTC", ""), "%Y-%m-%d %H:%M:%S %z").timestamp()
+        except ValueError:
+            return None
 
 
 class Autoscaler:
@@ -109,10 +124,12 @@ class Autoscaler:
 
     def pods(self, queue: str, now: float) -> List[Dict]:
         """The queue's pods as of the last tick — the admin view's only source for a pod that
-        RunPod is billing but no worker has registered from yet."""
+        RunPod is billing but no worker has registered from yet, and for when any pod was
+        spawned: the provider's create stamp, which survives a control-plane restart where the
+        first-seen tick does not."""
         prefix = f"maestro-{queue}-"
         return [{"pod_id": p["id"], "name": p["name"],
-                 "age_seconds": now - self._pod_first_seen.get(p["id"], now),
+                 "spawned_at": _created_at(p) or self._pod_first_seen.get(p["id"], now),
                  "seen_at": self._pods_seen_at}
                 for p in self._pods if (p.get("name") or "").startswith(prefix)]
 

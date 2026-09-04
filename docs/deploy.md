@@ -436,9 +436,11 @@ For a manual pod test with the autoscaler off, either put `RUNPOD_API_KEY` in th
 
 With `runpod.enabled` + `runpod.api_key` set and the workqueue on, the control plane runs a scaling
 loop (`src/scaler/`): per tick it reaps dead pods and adds at most one pod per queue when the queue
-is backed up. Workers own scale-DOWN: `IDLE_EXIT_SECONDS` (delivered at pod create) becomes the
-claim long-poll window, and a null claim means "queue stayed empty that long" → the worker
-deregisters and exits 0.
+is backed up. Workers own scale-DOWN: `IDLE_EXIT_SECONDS` (delivered at pod create) is the
+worker's idle window — once every slot has been empty that long since its last job ended, the
+worker deregisters and exits 0. The claim long-poll is capped server-side at 25 s, so the window
+is the worker's own clock across polls (until 2026-09-04 a single null claim was taken as the
+verdict, and every queue idled out at 25 s whatever the setting).
 
 Settings block (`settings.json` → `runpod`, the full key list in `docs/local_dev.md` "Settings"):
 

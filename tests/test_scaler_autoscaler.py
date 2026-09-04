@@ -224,17 +224,20 @@ def test_no_cuda_floor_configured_sends_none():
     assert client.create_pod.call_args.kwargs["allowed_cuda_versions"] is None
 
 
-def test_pods_is_the_last_listing_filtered_to_the_queue_with_first_seen_age(monkeypatch):
+def test_pods_is_the_last_listing_filtered_to_the_queue_with_spawn_time(monkeypatch):
+    """Spawned-at is the provider's create stamp; a pod listed without one dates from the tick
+    that first saw it."""
     a, client = _scaler()
-    pods = [{"id": "p0", "name": "maestro-llm-p0"}, {"id": "px", "name": "maestro-image-px"}]
+    pods = [{"id": "p0", "name": "maestro-llm-p0", "createdAt": "2026-09-04 22:29:58.724 +0000 UTC"},
+            {"id": "px", "name": "maestro-image-px"}]
     _busy(a, client, pods)
     assert a.pods("llm", 100.0) == []
     _tick(a, monkeypatch, 100.0)
     pods.append({"id": "p1", "name": "maestro-llm-p1"})
     _tick(a, monkeypatch, 130.0)
     seen = a.pods("llm", 145.0)
-    assert [(p["pod_id"], p["age_seconds"], p["seen_at"]) for p in seen] == [
-        ("p0", 45.0, 130.0), ("p1", 15.0, 130.0)]
+    assert [(p["pod_id"], p["spawned_at"], p["seen_at"]) for p in seen] == [
+        ("p0", 1788560998.724, 130.0), ("p1", 130.0, 130.0)]
     assert a.pods("image", 145.0)[0]["name"] == "maestro-image-px"
 
 

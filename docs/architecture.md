@@ -17,7 +17,8 @@ starts at boot: the queue reaper and the DB snapshotter always, the RunPod autos
 
 **Compute plane** — worker agents (`worker/agent.py`), one process per queue, running wherever a GPU
 is. A worker long-polls `/worker/claim`, executes against its own local inference server, and posts
-the result to `/worker/complete`.
+the result to `/worker/complete`; with `--slots N` it runs N such loops, one job each, against an
+engine that batches.
 
 The only coupling is the queue. The control plane holds no GPU endpoint, dials nothing, and has no
 config naming a compute host. A worker needs three things: the control-plane URL, the shared bearer

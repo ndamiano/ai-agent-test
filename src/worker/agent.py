@@ -4,7 +4,9 @@ Claims jobs from the platform's /worker endpoints, runs each payload against a l
 (worker/handlers.py — verbatim forward for llm, the ComfyUI submit/poll/fetch flow for image,
 one POST for mesh), measures execution time, and lands the result. Runs identically on the home
 GPU box and inside a RunPod container — the worker dials OUT, so NAT/ephemeral pod networking
-never matters. One process per queue, and a queue owns its GPU.
+never matters. One process per queue, and a queue owns its GPU. `--slots N` runs N claim loops
+in that one process, so an engine that batches (the llm pod: two streams decode at 1.2-1.35× the
+throughput of one, measured 2026-09-01) serves N jobs at once and one card carries N builds.
 
   python -m worker.agent --queue llm   --target http://localhost:8080 --token <t>
   python -m worker.agent --queue image --target http://localhost:8188 --token <t>
@@ -55,7 +57,7 @@ def detect_gpu() -> str | None:
 class Agent:
     def __init__(self, server: str, target: str, queue: str, token: str, api: str = "chat",
                  worker_id: str = None, gpu_type: str = None, source: str = "local",
-                 idle_exit_seconds: float = 0.0):
+                 idle_exit_seconds: float = 0.0, slots: int = 1):
         self.server = server.rstrip("/")
         self.target = target.rstrip("/")
         # The dialect this worker's target speaks. Known only here — a queue owns its backend.
@@ -65,6 +67,9 @@ class Agent:
         self.gpu_type = gpu_type
         self.source = source
         self.idle_exit_seconds = idle_exit_seconds
+        self.slots = slots
+        self._busy = 0
+        self._busy_lock = threading.Lock()
         self.pod_id = os.environ.get("RUNPOD_POD_ID")
         self.session = requests.Session()
         self.session.headers["Authorization"] = f"Bearer {token}"
@@ -163,9 +168,7 @@ class Agent:
         finally:
             done.set()
 
-    def run(self) -> None:
-        logger.info("worker %s pulling queue=%s from %s → %s",
-                    self.worker_id, self.queue, self.server, self.target)
+    def _slot_loop(self) -> None:
         while not self.stopping:
             try:
                 job = self.claim()
@@ -174,12 +177,34 @@ class Agent:
                 time.sleep(5)
                 continue
             if job is None:
-                if self.idle_exit_seconds and not self.stopping:
+                # A null claim is one slot's idle verdict; the worker's is every slot's. A
+                # sibling mid-job will claim again when it finishes, so the process stays up
+                # for it, and the pod dies only once the whole card has been idle the window.
+                with self._busy_lock:
+                    all_idle = self._busy == 0
+                if self.idle_exit_seconds and all_idle and not self.stopping:
                     logger.info("worker %s idle for %.0fs — exiting",
                                 self.worker_id, self.idle_exit_seconds)
+                    self.stopping = True
                     break
                 continue
-            self.execute(job)
+            with self._busy_lock:
+                self._busy += 1
+            try:
+                self.execute(job)
+            finally:
+                with self._busy_lock:
+                    self._busy -= 1
+
+    def run(self) -> None:
+        logger.info("worker %s pulling queue=%s from %s → %s (%d slots)",
+                    self.worker_id, self.queue, self.server, self.target, self.slots)
+        threads = [threading.Thread(target=self._slot_loop, daemon=True)
+                   for _ in range(self.slots)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
         self._drain_uploads()
         self.deregister()
         logger.info("worker %s stopped", self.worker_id)
@@ -198,6 +223,8 @@ def main(argv=None) -> int:
                         default=float(os.environ.get("IDLE_EXIT_SECONDS", "0")),
                         help="Exit 0 after the queue stays empty this long (0 = never, the "
                              "home-box default; autoscaled pods set this to die when drained)")
+    parser.add_argument("--slots", type=int, default=int(os.environ.get("WORKER_SLOTS", "1")),
+                        help="Jobs run at once against the target (an engine that batches)")
     args = parser.parse_args(argv)
     if not args.token:
         parser.error("--token (or WORKER_TOKEN) is required")
@@ -207,7 +234,7 @@ def main(argv=None) -> int:
     # box this process woke up on and nothing outside it is entitled to say otherwise.
     agent = Agent(args.server, args.target, args.queue, args.token, api=args.api,
                   gpu_type=detect_gpu(), source=args.source,
-                  idle_exit_seconds=args.idle_exit_seconds)
+                  idle_exit_seconds=args.idle_exit_seconds, slots=args.slots)
 
     def _stop(signum, frame):
         logger.info("signal %s — finishing current job then exiting", signum)

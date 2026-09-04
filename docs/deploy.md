@@ -310,10 +310,10 @@ collects it. The floor rides every ask, including the widened one — there is n
 fall back to. The image queue needs the same floor for the same reason (`image-v8` is torch
 cu130).
 
-An llm pod needs `LLM_MODEL`, `LLM_N_CTX` and `SGLANG_ARGS_EXTRA` in its env, and the autoscaler
-delivers them at create from the control plane's `llm.model`, `llm.n_ctx` and `llm.sglang_args` —
-on prod those are the control plane's own `.env` (`LLM_MODEL`, `LLM_N_CTX`, `SGLANG_ARGS`), which
-is why the settings.json there has no `llm` block. The engine serves under the name
+An llm pod needs `LLM_MODEL`, `LLM_N_CTX`, `SGLANG_ARGS_EXTRA` and `WORKER_SLOTS` in its env, and
+the autoscaler delivers them at create from the control plane's `llm.model`, `llm.n_ctx`,
+`llm.sglang_args` and `llm.slots` — on prod those are the control plane's own `.env` (`LLM_MODEL`,
+`LLM_N_CTX`, `SGLANG_ARGS`, `LLM_SLOTS`), which is why the settings.json there has no `llm` block. The engine serves under the name
 `pennyroyal` at a 524288 window, both baked into its serve script; `LLM_MODEL` must be that name
 and `LLM_N_CTX` — the control plane's input budget — at most that window, and the entrypoint
 refuses to boot otherwise, since a request naming another model fails on the first turn. The

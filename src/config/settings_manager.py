@@ -50,6 +50,9 @@ class SettingsManager:
                 # leg at start (the two boxes run different engines on different cards).
                 "sglang_args": os.getenv("SGLANG_ARGS", ""),
                 "ninfer_args": os.getenv("NINFER_ARGS", ""),
+                # Jobs one llm worker runs at once; the pod's engine batches them. The scaler
+                # counts workers, not slots, so depth_per_worker and max age scale with it.
+                "slots": int(os.getenv("LLM_SLOTS", "1")),
                 "n_ctx": int(os.getenv("LLM_N_CTX", "32768"))
             },
             # 5090-seconds debited per GPU-second, by the card the worker reported: each card's

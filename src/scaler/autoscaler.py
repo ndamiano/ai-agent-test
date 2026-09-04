@@ -125,6 +125,7 @@ class Autoscaler:
                     env["LLM_MODEL"] = llm["model"]
                     env["LLM_N_CTX"] = str(llm["n_ctx"])
                     env["SGLANG_ARGS_EXTRA"] = llm.get("sglang_args") or ""
+                    env["WORKER_SLOTS"] = str(llm.get("slots", 1))
                 self._start_pod(name, queue, qcfg, rp, env)
                 self._last_scale_up[queue] = now
             elif isinstance(action, TerminatePod):

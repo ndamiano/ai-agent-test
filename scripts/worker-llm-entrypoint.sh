@@ -54,11 +54,11 @@ export SGLANG_EXE=/opt/venv/bin/sglang REPO_ROOT=/opt/penny NIXL_CONFIG=/root/ni
 export SGLANG_PREPACKED_DIR="$PENNY_MODEL_DIR/prepacked"
 # $SGLANG_ARGS_EXTRA arrives as the control plane's llm.sglang_args, delivered at create: a
 # tuning flag is a settings edit and the next pod, never a new tag. It goes in the middle so the
-# image's own invariants win — the prepacked load, and --cuda-graph-bs 1 2 last (builds run at
-# most 2 streams; the serve script's baked "1 2 4" loses to the later occurrence). A flag that
+# image's own invariants win — the prepacked load, and the cuda-graph batch sizes last, one per
+# worker slot (the serve script's baked "1 2 4" loses to the later occurrence). A flag that
 # changes the FlashInfer autotune key costs one ~300 s re-tune per pod, so a flag set there
 # should be measured on one pod first.
-export SGLANG_ARGS_EXTRA="--load-format prepacked ${SGLANG_ARGS_EXTRA:-} --cuda-graph-bs 1 2"
+export SGLANG_ARGS_EXTRA="--load-format prepacked ${SGLANG_ARGS_EXTRA:-} --cuda-graph-bs $(seq -s ' ' 1 "${WORKER_SLOTS:-1}")"
 mkdir -p /root/nixl
 target="http://127.0.0.1:$SGLANG_PORT"
 
@@ -87,6 +87,7 @@ mark "pennyroyal up as $LLM_MODEL"
     --queue llm \
     --target "$target" \
     --source runpod \
+    --slots "${WORKER_SLOTS:-1}" \
     ${IDLE_EXIT_SECONDS:+--idle-exit-seconds "$IDLE_EXIT_SECONDS"} &
 agent_pid=$!
 

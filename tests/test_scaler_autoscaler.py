@@ -91,6 +91,14 @@ def test_pod_env_carries_the_engine_flags_so_tuning_is_never_a_new_image():
     assert client.create_pod.call_args.kwargs["env"]["SGLANG_ARGS_EXTRA"] == ""
 
 
+def test_llm_pods_are_told_their_slot_count():
+    a, client = _scaler()
+    _start(a, llm={**LLM, "slots": 2})
+    assert client.create_pod.call_args.kwargs["env"]["WORKER_SLOTS"] == "2"
+    _start(a)
+    assert client.create_pod.call_args.kwargs["env"]["WORKER_SLOTS"] == "1"
+
+
 def test_a_queue_with_its_own_volumes_never_touches_the_shared_one():
     """The volume pins the datacenter, and the llm weights live in another one than the art."""
     a, client = _scaler()

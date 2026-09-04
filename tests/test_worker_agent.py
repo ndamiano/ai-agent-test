@@ -286,3 +286,63 @@ def test_detect_gpu_survives_a_box_without_nvidia_smi(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", boom)
     assert detect_gpu() is None   # a CPU box registers, it just records no card
+
+
+def test_slots_run_jobs_side_by_side():
+    """Two slots, two jobs: the second claim is answered while the first job is still running,
+    and both are in flight at once — the engine batches, so the worker must hand it both."""
+    a = Agent("http://server", "http://gpu", "llm", "wsecret", worker_id="w1", slots=2)
+    a.session = MagicMock()
+    both_in = threading.Barrier(2, timeout=5)
+    handed = ["j1", "j2"]
+
+    def post(url, **kw):
+        if url.startswith("http://gpu"):
+            both_in.wait()          # hangs unless the other slot's job arrives too
+            return FakeResponse(200, {"output": ["ok"]})
+        if url.endswith("/worker/claim"):
+            if handed:
+                return FakeResponse(200, {"job": {"id": handed.pop(0), "payload": {"body": {}}}})
+            a.stopping = True
+            return FakeResponse(200, {"job": None})
+        return FakeResponse(200, {"ok": True})
+
+    a.session.post.side_effect = post
+    a.run()
+    assert both_in.broken is False
+    assert _posts_to(a, "/worker/complete") == 2
+    assert _posts_to(a, "/worker/deregister") == 1
+
+
+def test_an_idle_slot_waits_for_a_busy_sibling():
+    """A null claim on one slot while another is mid-job is not the worker's idle verdict: the
+    pod stays up, and exits only once every slot has come back empty."""
+    a = Agent("http://server", "http://gpu", "llm", "wsecret", worker_id="w1",
+              idle_exit_seconds=5, slots=2)
+    a.session = MagicMock()
+    release = threading.Event()
+    claims = {"n": 0}
+    null_while_busy = {"n": 0}
+
+    def post(url, **kw):
+        if url.startswith("http://gpu"):
+            release.wait(5)
+            return FakeResponse(200, {"output": ["ok"]})
+        if url.endswith("/worker/claim"):
+            claims["n"] += 1
+            if claims["n"] == 1:
+                return FakeResponse(200, {"job": {"id": "j1", "payload": {"body": {}}}})
+            with a._busy_lock:
+                busy = a._busy
+            if busy:
+                null_while_busy["n"] += 1
+                if null_while_busy["n"] == 2:
+                    release.set()   # the sibling saw two empty polls and did not exit
+            return FakeResponse(200, {"job": None})
+        return FakeResponse(200, {"ok": True})
+
+    a.session.post.side_effect = post
+    a.run()
+    assert null_while_busy["n"] >= 2
+    assert _posts_to(a, "/worker/complete") == 1
+    assert _posts_to(a, "/worker/deregister") == 1

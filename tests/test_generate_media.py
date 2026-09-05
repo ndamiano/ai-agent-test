@@ -17,6 +17,7 @@ from maestro.codegen.tools import build_tools
 from maestro.state import RunState
 
 RUN = "r1"
+STYLE = "painted cartoon style, warm palette, soft dark outlines"
 
 
 @pytest.fixture(autouse=True)
@@ -41,14 +42,14 @@ def _image_jobs():
 
 
 def test_the_path_comes_back_before_the_render(run_dir):
-    out = request_media(RUN, run_dir, "goblin", "a snarling goblin")
+    out = request_media(RUN, run_dir, "goblin", "a snarling goblin", STYLE)
     assert (out["ok"], out["path"], out["status"]) == (True, "assets/goblin.webp", "rendering")
     assert "stand-in" in out["note"]
     assert len(_image_jobs()) == 1
 
 
 def test_a_mesh_answers_with_a_glb_path_and_chains_trellis(run_dir):
-    out = request_media(RUN, run_dir, "hut", "a thatched hut", kind="mesh")
+    out = request_media(RUN, run_dir, "hut", "a thatched hut", STYLE, kind="mesh")
     assert out["path"] == "assets/hut.glb"
     # The one fact placement code cannot discover: the mesh arrives normalized to 1 unit.
     assert "1 unit" in out["note"]
@@ -62,7 +63,7 @@ def test_a_mesh_answers_with_a_glb_path_and_chains_trellis(run_dir):
 def test_only_a_sprite_is_matted_and_cropped(run_dir, kind, op):
     """A tile and a scene ARE the background — matting one leaves the ragged fragments of a floor
     that used to be a floor, and cropping to the "subject" finishes the job."""
-    request_media(RUN, run_dir, "art", "some art", kind=kind)
+    request_media(RUN, run_dir, "art", "some art", STYLE, kind=kind)
     md = _image_jobs()[0]["metadata"]
     assert md["kind"] == kind
     assert md["then"]["operations"] == [op]
@@ -71,13 +72,14 @@ def test_only_a_sprite_is_matted_and_cropped(run_dir, kind, op):
 def test_the_request_is_recorded_in_the_manifest(run_dir):
     """The model never writes assets.json — this file is the platform's record of what was asked
     for, and it is what the gallery, the top-up and the regenerate all read."""
-    request_media(RUN, run_dir, "goblin", "a snarling goblin")
-    request_media(RUN, run_dir, "hut", "a thatched hut", kind="mesh")
+    request_media(RUN, run_dir, "goblin", "a snarling goblin", STYLE)
+    request_media(RUN, run_dir, "hut", "a thatched hut", STYLE, kind="mesh")
     assert read_manifest(run_dir) == [
         {"id": "goblin", "file": "assets/goblin.webp", "kind": "sprite",
-         "prompt": "a snarling goblin", "placeholder": True},
-        {"id": "hut", "file": "assets/hut.glb", "kind": "mesh", "prompt": "a thatched hut",
-         "placeholder": True},
+         "subject": "a snarling goblin", "style": STYLE,
+         "prompt": f"{STYLE}. a snarling goblin.", "placeholder": True},
+        {"id": "hut", "file": "assets/hut.glb", "kind": "mesh", "subject": "a thatched hut",
+         "style": STYLE, "prompt": f"{STYLE}. a thatched hut.", "placeholder": True},
     ]
 
 
@@ -87,8 +89,8 @@ def test_a_placeholder_is_at_the_path_from_the_moment_the_tool_answers(run_dir):
     lands. A sprite stand-in is matted, a scene's is opaque, because the game draws one ON its
     background and the other AS it."""
     from PIL import Image
-    request_media(RUN, run_dir, "goblin", "a snarling goblin")
-    request_media(RUN, run_dir, "floor", "a stone floor", kind="scene")
+    request_media(RUN, run_dir, "goblin", "a snarling goblin", STYLE)
+    request_media(RUN, run_dir, "floor", "a stone floor", STYLE, kind="scene")
     goblin = Image.open(assets.asset_path(RUN, "goblin", "webp"))
     floor = Image.open(assets.asset_path(RUN, "floor", "webp"))
     assert goblin.format == "WEBP" and goblin.convert("RGBA").getpixel((0, 0))[3] == 0
@@ -100,8 +102,8 @@ def test_a_placeholder_is_not_a_landed_render(run_dir):
     """Everything that used to read 'file exists' as 'art arrived' — the repeat-ask answer, the
     top-up, the batch finalize — reads the manifest flag instead, or a stand-in would count as
     art and the real render would never be paid for."""
-    request_media(RUN, run_dir, "goblin", "a snarling goblin")
-    again = request_media(RUN, run_dir, "goblin", "a snarling goblin")
+    request_media(RUN, run_dir, "goblin", "a snarling goblin", STYLE)
+    again = request_media(RUN, run_dir, "goblin", "a snarling goblin", STYLE)
     assert again["status"] == "rendering"
     assert assets.landed(RUN, read_manifest(run_dir)[0]) is False
 
@@ -112,7 +114,7 @@ def test_a_placeholder_is_not_a_landed_render(run_dir):
 def test_a_landed_render_replaces_the_placeholder_and_the_flag(run_dir, monkeypatch, tmp_path):
     from PIL import Image
     from maestro.codegen.asset_chain import OPERATIONS
-    request_media(RUN, run_dir, "floor", "a stone floor", kind="scene")
+    request_media(RUN, run_dir, "floor", "a stone floor", STYLE, kind="scene")
     src = tmp_path / "render.png"
     Image.new("RGBA", (64, 64), (0, 255, 0, 255)).save(src)
     monkeypatch.setattr("maestro.codegen.asset_chain._record_defect", lambda md, d: None)
@@ -122,15 +124,15 @@ def test_a_landed_render_replaces_the_placeholder_and_the_flag(run_dir, monkeypa
     entry = read_manifest(run_dir)[0]
     assert "placeholder" not in entry and assets.landed(RUN, entry)
     assert Image.open(assets.asset_path(RUN, "floor", "webp")).size == (64, 64)
-    assert request_media(RUN, run_dir, "floor", "a stone floor")["status"] == "ready"
+    assert request_media(RUN, run_dir, "floor", "a stone floor", STYLE)["status"] == "ready"
 
 
 def test_a_confirmed_replace_keeps_the_landed_art_until_the_new_render(run_dir, monkeypatch):
-    request_media(RUN, run_dir, "goblin", "a goblin")
+    request_media(RUN, run_dir, "goblin", "a goblin", STYLE)
     assets.set_landed(run_dir, "goblin")
     assets.asset_path(RUN, "goblin", "webp").write_bytes(b"REAL")
-    request_media(RUN, run_dir, "goblin", "a bigger goblin")
-    request_media(RUN, run_dir, "goblin", "a bigger goblin")
+    request_media(RUN, run_dir, "goblin", "a bigger goblin", STYLE)
+    request_media(RUN, run_dir, "goblin", "a bigger goblin", STYLE)
     assert assets.asset_path(RUN, "goblin", "webp").read_bytes() == b"REAL"
     assert "placeholder" not in read_manifest(run_dir)[0]
 
@@ -138,51 +140,51 @@ def test_a_confirmed_replace_keeps_the_landed_art_until_the_new_render(run_dir, 
 def test_the_batch_carries_no_build_id(run_dir):
     """Its finalize calls build_finished. Handed the BUILD's id, the first sprite that lands would
     close the build row while the model is still writing the game."""
-    request_media(RUN, run_dir, "goblin", "a snarling goblin")
+    request_media(RUN, run_dir, "goblin", "a snarling goblin", STYLE)
     assert _image_jobs()[0]["build_id"] is None
 
 
 def test_each_request_is_its_own_batch(run_dir):
     """One asset per batch, so each finalize re-stages as it lands instead of waiting on the
     slowest render in a set."""
-    request_media(RUN, run_dir, "goblin", "a goblin")
-    request_media(RUN, run_dir, "hut", "a hut")
+    request_media(RUN, run_dir, "goblin", "a goblin", STYLE)
+    request_media(RUN, run_dir, "hut", "a hut", STYLE)
     batches = {j["batch_id"] for j in _image_jobs()}
     assert len(batches) == 2 and None not in batches
 
 
 def test_the_same_id_asked_twice_is_answered_not_obeyed(run_dir):
     """The first repeat costs nothing — an id asked for twice is usually the model losing track."""
-    request_media(RUN, run_dir, "goblin", "a snarling goblin")
-    again = request_media(RUN, run_dir, "goblin", "a snarling goblin, but bigger")
+    request_media(RUN, run_dir, "goblin", "a snarling goblin", STYLE)
+    again = request_media(RUN, run_dir, "goblin", "a snarling goblin, but bigger", STYLE)
 
     assert "not requeued" in again["note"]
     assert len(_image_jobs()) == 1
     assert len(read_manifest(run_dir)) == 1
-    assert read_manifest(run_dir)[0]["prompt"] == "a snarling goblin"
+    assert read_manifest(run_dir)[0]["subject"] == "a snarling goblin"
 
 
 def test_a_confirmed_repeat_replaces_the_art_and_the_prompt(run_dir):
     """Asking again after the answer is the model meaning it — which is how a playtest note that
     says redraw these reaches the renderer at all."""
-    request_media(RUN, run_dir, "goblin", "a snarling goblin")
-    request_media(RUN, run_dir, "goblin", "a goblin, full body, for a 3d model")
-    out = request_media(RUN, run_dir, "goblin", "a goblin, full body, for a 3d model")
+    request_media(RUN, run_dir, "goblin", "a snarling goblin", STYLE)
+    request_media(RUN, run_dir, "goblin", "a goblin, full body, for a 3d model", STYLE)
+    out = request_media(RUN, run_dir, "goblin", "a goblin, full body, for a 3d model", STYLE)
 
     assert (out["path"], out["status"]) == ("assets/goblin.webp", "rendering")
     assert len(_image_jobs()) == 2
     entries = read_manifest(run_dir)
     assert len(entries) == 1, "a replacement rewrites its record rather than adding one"
-    assert entries[0]["prompt"] == "a goblin, full body, for a 3d model"
+    assert entries[0]["subject"] == "a goblin, full body, for a 3d model"
     assert "replace_asked" not in entries[0]
 
 
 def test_a_replacement_is_answered_again_before_the_next_one(run_dir):
     """The flag clears with the render it authorized, so the turn after does not requeue blind."""
-    request_media(RUN, run_dir, "goblin", "a goblin")
-    request_media(RUN, run_dir, "goblin", "a bigger goblin")
-    request_media(RUN, run_dir, "goblin", "a bigger goblin")
-    again = request_media(RUN, run_dir, "goblin", "a bigger goblin still")
+    request_media(RUN, run_dir, "goblin", "a goblin", STYLE)
+    request_media(RUN, run_dir, "goblin", "a bigger goblin", STYLE)
+    request_media(RUN, run_dir, "goblin", "a bigger goblin", STYLE)
+    again = request_media(RUN, run_dir, "goblin", "a bigger goblin still", STYLE)
 
     assert "not requeued" in again["note"]
     assert len(_image_jobs()) == 2
@@ -192,31 +194,31 @@ def test_an_already_rendered_asset_is_not_paid_for_again(run_dir):
     """A fix or a resumed build re-runs the same code path over a folder that already has its art."""
     (run_dir / "game" / "assets").mkdir(parents=True, exist_ok=True)
     (run_dir / "game" / "assets" / "goblin.webp").write_bytes(b"RIFFwebp")
-    out = request_media(RUN, run_dir, "goblin", "a snarling goblin")
+    out = request_media(RUN, run_dir, "goblin", "a snarling goblin", STYLE)
     assert out == {"ok": True, "path": "assets/goblin.webp", "status": "ready"}
     assert _image_jobs() == []
 
 
 @pytest.mark.parametrize("bad", ["", "../escape", "a b", "x" * 65, "a/b"])
 def test_an_id_that_cannot_name_a_file_is_refused(run_dir, bad):
-    out = request_media(RUN, run_dir, bad, "a goblin")
+    out = request_media(RUN, run_dir, bad, "a goblin", STYLE)
     assert out["ok"] is False and "id" in out["error"]
     assert _image_jobs() == []
 
 
 def test_a_missing_prompt_is_refused(run_dir):
-    out = request_media(RUN, run_dir, "goblin", "   ")
-    assert out["ok"] is False and "prompt" in out["error"]
+    out = request_media(RUN, run_dir, "goblin", "   ", STYLE)
+    assert out["ok"] is False and "subject" in out["error"]
 
 
 def test_an_unknown_kind_is_refused(run_dir):
-    out = request_media(RUN, run_dir, "goblin", "a goblin", kind="video")
+    out = request_media(RUN, run_dir, "goblin", "a goblin", STYLE, kind="video")
     assert out["ok"] is False and "video" in out["error"]
 
 
 def test_a_blocked_prompt_tells_the_model_to_draw_it_instead(run_dir, monkeypatch):
     monkeypatch.setattr(assets, "build_image_payload", lambda *a, **kw: None)
-    out = request_media(RUN, run_dir, "goblin", "something refused")
+    out = request_media(RUN, run_dir, "goblin", "something refused", STYLE)
     assert out["ok"] is False and "draw this one with code" in out["error"]
     assert read_manifest(run_dir) == []
 
@@ -226,7 +228,7 @@ def test_an_exhausted_budget_tells_the_model_to_draw_it_instead(run_dir):
     limit, because a refused enqueue already says so in words the model can act on."""
     with store._db() as conn:
         conn.execute("UPDATE games SET seconds_used = 10000 WHERE id = ?", (RUN,))
-    out = request_media(RUN, run_dir, "goblin", "a goblin")
+    out = request_media(RUN, run_dir, "goblin", "a goblin", STYLE)
     assert out["ok"] is False and "draw this one with code" in out["error"]
     assert _image_jobs() == []
     assert read_manifest(run_dir) == []
@@ -234,15 +236,16 @@ def test_an_exhausted_budget_tells_the_model_to_draw_it_instead(run_dir):
 
 def test_the_tool_reaches_the_queue_and_defaults_to_a_sprite(run_dir):
     tools = build_tools(RunState(RUN))
-    out = tools["generate_media"](id="goblin", prompt="a snarling goblin")
+    out = tools["generate_media"](id="goblin", subject="a snarling goblin", style=STYLE)
     assert (out["ok"], out["path"], out["status"]) == (True, "assets/goblin.webp", "rendering")
     assert _image_jobs()[0]["metadata"]["kind"] == "sprite"
 
 
 def test_the_tool_reports_a_missing_argument_rather_than_guessing(run_dir):
     tools = build_tools(RunState(RUN))
-    assert tools["generate_media"](prompt="a goblin")["ok"] is False
-    assert tools["generate_media"](id="goblin")["ok"] is False
+    assert tools["generate_media"](subject="a goblin", style=STYLE)["ok"] is False
+    assert tools["generate_media"](id="goblin", style=STYLE)["ok"] is False
+    assert tools["generate_media"](id="goblin", subject="a goblin")["ok"] is False
     assert _image_jobs() == []
 
 
@@ -257,7 +260,7 @@ KNIGHT_ANIMS = [{"name": "walk", "action": "walks in place, legs alternating"},
 
 
 def test_an_anim_answers_with_a_png_path_and_chains_the_video_worker(run_dir):
-    out = request_media(RUN, run_dir, "knight", "a knight", kind="anim", anims=KNIGHT_ANIMS, facings=4)
+    out = request_media(RUN, run_dir, "knight", "a knight", STYLE, kind="actor", details={"anims": KNIGHT_ANIMS, "facings": 4})
     assert out["path"] == "assets/knight.png"
     md = _image_jobs()[0]["metadata"]
     assert md["kind"] == "anim"
@@ -265,27 +268,26 @@ def test_an_anim_answers_with_a_png_path_and_chains_the_video_worker(run_dir):
 
 
 def test_an_anim_placeholder_writes_both_the_png_and_the_manifest(run_dir):
-    request_media(RUN, run_dir, "knight", "a knight", kind="anim", anims=KNIGHT_ANIMS, facings=4)
+    request_media(RUN, run_dir, "knight", "a knight", STYLE, kind="actor", details={"anims": KNIGHT_ANIMS, "facings": 4})
     png = run_dir / "game" / "assets" / "knight.png"
     manifest = run_dir / "game" / "assets" / "knight.json"
     assert png.exists() and manifest.exists()
     entry = read_manifest(run_dir)[0]
-    assert entry["kind"] == "anim"
-    assert entry["anims"] == KNIGHT_ANIMS and entry["facings"] == 4
+    assert entry["kind"] == "actor"
+    assert entry["details"] == {"anims": KNIGHT_ANIMS, "facings": 4}
     # the stand-in manifest already answers to the names the game will ask for
     assert set(json.loads(manifest.read_text())["anims"]) == {"walk", "attack"}
 
 
 def test_an_anim_request_carries_its_spec_to_the_video_leg(run_dir):
-    request_media(RUN, run_dir, "car", "a red racing car seen from above", kind="anim",
-                  anims=[{"name": "drive", "action": "the wheels spin"}], facings=1)
+    request_media(RUN, run_dir, "car", "a red racing car seen from above", STYLE, kind="actor",
+                  details={"anims": [{"name": "drive", "action": "the wheels spin"}], "facings": 1})
     md = _image_jobs()[0]["metadata"]
     assert md["anims"] == [{"name": "drive", "action": "the wheels spin"}]
     assert md["facings"] == 1
 
 
 @pytest.mark.parametrize("anims, facings, word", [
-    (None, 4, "anims"),
     ([], 4, "anims"),
     ([{"name": "walk"}], 4, "action"),
     ([{"name": "walk", "action": "walks"}, {"name": "walk", "action": "walks"}], 4, "distinct"),
@@ -293,8 +295,7 @@ def test_an_anim_request_carries_its_spec_to_the_video_leg(run_dir):
     ([{"name": "walk", "action": "walks"}], None, "facings"),
 ])
 def test_an_anim_without_a_full_spec_is_refused_with_the_reason(run_dir, anims, facings, word):
-    out = request_media(RUN, run_dir, "knight", "a knight", kind="anim", anims=anims,
-                        facings=facings)
+    out = request_media(RUN, run_dir, "knight", "a knight", STYLE, kind="actor", details={"anims": anims, "facings": facings})
     assert out["ok"] is False and word in out["error"]
     assert _image_jobs() == []
 
@@ -302,7 +303,7 @@ def test_an_anim_without_a_full_spec_is_refused_with_the_reason(run_dir, anims, 
 def test_a_top_up_resumes_an_anim_from_its_source_render_onto_the_video_queue(run_dir):
     """A mesh needs its source render to skip back to TRELLIS; an anim needs the same to skip
     back to the video worker instead of re-paying for the still."""
-    request_media(RUN, run_dir, "knight", "a knight", kind="anim", anims=KNIGHT_ANIMS, facings=4)
+    request_media(RUN, run_dir, "knight", "a knight", STYLE, kind="actor", details={"anims": KNIGHT_ANIMS, "facings": 4})
     src = assets.asset_path(RUN, "knight", "src.png")
     src.parent.mkdir(parents=True, exist_ok=True)
     src.write_bytes(b"\x89PNG-the-still-we-already-paid-for")
@@ -319,7 +320,7 @@ def test_a_top_up_resumes_an_anim_from_its_source_render_onto_the_video_queue(ru
 
 
 def test_an_anim_with_no_source_render_still_starts_at_the_image(run_dir):
-    request_media(RUN, run_dir, "knight", "a knight", kind="anim", anims=KNIGHT_ANIMS, facings=4)
+    request_media(RUN, run_dir, "knight", "a knight", STYLE, kind="actor", details={"anims": KNIGHT_ANIMS, "facings": 4})
 
     assets.start_from_manifest(RUN, run_dir)
 
@@ -329,14 +330,14 @@ def test_an_anim_with_no_source_render_still_starts_at_the_image(run_dir):
 def test_kind_video_is_still_an_unknown_kind(run_dir):
     """anim is the new kind; video (the queue it lands on, not something a game asks for) must
     stay refused."""
-    out = request_media(RUN, run_dir, "knight", "a knight", kind="video")
+    out = request_media(RUN, run_dir, "knight", "a knight", STYLE, kind="video")
     assert out["ok"] is False and "video" in out["error"]
 
 
 def test_a_top_up_resumes_a_mesh_from_the_source_render_it_already_has(run_dir):
     """A mesh is ComfyUI and then TRELLIS, and one GPU holds one of them, so a top-up that always
     restarted at the image leg could never reach the second half on a single-card box."""
-    request_media(RUN, run_dir, "hut", "a thatched hut", kind="mesh")
+    request_media(RUN, run_dir, "hut", "a thatched hut", STYLE, kind="mesh")
     src = assets.asset_path(RUN, "hut", "src.png")
     src.parent.mkdir(parents=True, exist_ok=True)
     src.write_bytes(b"\x89PNG-the-render-we-already-paid-for")
@@ -351,8 +352,63 @@ def test_a_top_up_resumes_a_mesh_from_the_source_render_it_already_has(run_dir):
 
 
 def test_a_mesh_with_no_source_render_still_starts_at_the_image(run_dir):
-    request_media(RUN, run_dir, "hut", "a thatched hut", kind="mesh")
+    request_media(RUN, run_dir, "hut", "a thatched hut", STYLE, kind="mesh")
 
     assets.start_from_manifest(RUN, run_dir)
 
     assert len(_jobs("image")) == 2 and _jobs("mesh") == []
+
+
+# ── The structured ask: subject + style + details, prose composed here ─────────────────────
+
+
+def test_the_prompt_is_composed_style_first_then_subject_then_view(run_dir):
+    """The samplers see one prose string, and its shape is ours: where the style sits and how the
+    view is phrased are edits here, not whatever the builder typed."""
+    request_media(RUN, run_dir, "ben", "a man in a green t-shirt", STYLE, kind="actor",
+                  details={"body": "biped", "view": "3/4 top-down"})
+    (entry,) = read_manifest(run_dir)
+    assert entry["prompt"] == f"{STYLE}. a man in a green t-shirt, 3/4 top-down view."
+    assert entry["details"] == {"body": "biped", "view": "3/4 top-down"}
+    assert _image_jobs()[0]["payload"]["workflow"]["p"]["inputs"]["text"] == entry["prompt"]
+
+
+def test_an_actor_without_anims_renders_as_a_sprite(run_dir):
+    out = request_media(RUN, run_dir, "ben", "a man", STYLE, kind="actor",
+                        details={"body": "biped"})
+    assert out["path"] == "assets/ben.webp"
+    md = _image_jobs()[0]["metadata"]
+    assert md["kind"] == "sprite" and "anims" not in md
+    assert read_manifest(run_dir)[0]["kind"] == "actor"
+
+
+def test_an_actor_with_anims_renders_as_an_anim(run_dir):
+    out = request_media(RUN, run_dir, "ben", "a man", STYLE, kind="actor",
+                        details={"body": "biped", "anims": KNIGHT_ANIMS, "facings": 4})
+    assert out["path"] == "assets/ben.png"
+    md = _image_jobs()[0]["metadata"]
+    assert md["kind"] == "anim" and md["anims"] == KNIGHT_ANIMS and md["facings"] == 4
+
+
+def test_anims_on_another_kind_are_kept_and_it_renders_still(run_dir):
+    """A scene with a boiling pot is a real ask; today only an actor animates, so the anims are
+    recorded for the day the scene chain can, and the model is told it gets a still."""
+    out = request_media(RUN, run_dir, "kitchen", "a kitchen with a pot on the stove", STYLE,
+                        kind="scene", details={"anims": [{"name": "boil", "action": "the pot bubbles"}],
+                                               "facings": 1})
+    assert out["ok"] and out["path"] == "assets/kitchen.webp"
+    assert "only an actor is animated" in out["note"]
+    assert _image_jobs()[0]["metadata"]["kind"] == "scene"
+    assert read_manifest(run_dir)[0]["details"]["anims"][0]["name"] == "boil"
+
+
+def test_details_must_be_an_object(run_dir):
+    out = request_media(RUN, run_dir, "ben", "a man", STYLE, kind="actor", details="biped")
+    assert out["ok"] is False and "details" in out["error"]
+    assert _image_jobs() == []
+
+
+def test_a_missing_style_is_refused(run_dir):
+    out = request_media(RUN, run_dir, "ben", "a man", "  ")
+    assert out["ok"] is False and "style" in out["error"]
+    assert _image_jobs() == []

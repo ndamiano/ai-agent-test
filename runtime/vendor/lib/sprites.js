@@ -1,4 +1,4 @@
-// lib/sprites.js — plays an animated character made by generate_media(kind: "anim"): one sheet PNG
+// lib/sprites.js — plays an animated actor made by generate_media(kind: "actor") with anims: one sheet PNG
 // with a JSON manifest beside it, holding every facing direction and every animation of ONE
 // character. It draws onto your 2D context; the game owns position, facing and state.
 //

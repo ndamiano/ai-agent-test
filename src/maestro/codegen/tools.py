@@ -149,12 +149,10 @@ def build_tools(state) -> dict:
         p.write_text(body.replace(old, new), encoding="utf-8")
         return {"ok": True, "path": path, "chars": len(new)}
 
-    def generate_media(id=None, prompt=None, kind=DEFAULT_KIND, anims=None, facings=None,
+    def generate_media(id=None, kind=DEFAULT_KIND, subject=None, style=None, details=None,
                        **_) -> dict:
-        # `kind` is the one argument with a default, because the schema offers it as optional;
-        # anims and facings are only read for an anim, which checks them itself.
-        return request_media(state.run_id, state.run_dir, id, prompt, kind or DEFAULT_KIND,
-                             anims=anims, facings=facings)
+        return request_media(state.run_id, state.run_dir, id, subject, style,
+                             kind or DEFAULT_KIND, details)
 
     def compose_scene(id=None, archetype=None, style=None, seed=None,
                       width_cells=None, height_cells=None, **_) -> dict:

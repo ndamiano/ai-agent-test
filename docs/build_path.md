@@ -12,7 +12,7 @@ runtime/
                          arrows aliased, mouse, touch), audio.js (WebAudio synth, no files),
                          canvas.js (the fixed, scaling canvas with a camera), lights.js (sun +
                          sky + exposure for a three.js scene that is not a world), sprites.js
-                         (draws a generate_media anim — one sheet PNG plus its manifest — by
+                         (draws a generate_media actor with anims — one sheet PNG plus its manifest — by
                          facing, animation and time; a missing facing mirrors its opposite side).
                          Each header comment is its API; build.txt tells the model to read the
                          one it uses.
@@ -151,7 +151,15 @@ src/
                          `lib/` and nothing else, since everything placed there steers the
                          first list_files. It runs on EVERY kickoff and never overwrites.
       assets.py          the ASSET stage — `request_media` is what the game's generate_media call
-                         runs: enqueue ONE `image` job, record the ask in assets.json, write a
+                         runs. The ask is STRUCTURED: `kind` (sprite, actor, tile, scene, mesh),
+                         `subject` (prose, no style words), `style` (the game's one phrase) and
+                         `details` — the facts prose cannot carry: body plan, view, anims and
+                         facings, accepted on every kind and animated only for an actor today.
+                         `compose_prompt` renders them to the one prose string the samplers see
+                         (style, subject, view), so where the style sits is a measurable edit
+                         here rather than whatever the builder typed, and `render_kind` maps an
+                         actor to the pipeline's sprite or anim leg. Then: enqueue ONE `image`
+                         job, record the ask in assets.json, write a
                          PLACEHOLDER at the path (a matted disc for a sprite, mesh or anim, an
                          opaque frame for a tile or scene — an anim's placeholder is that disc as
                          a one-frame sheet with its manifest beside it, so `lib/sprites.js` loads

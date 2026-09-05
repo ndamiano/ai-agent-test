@@ -25,7 +25,7 @@ from config.settings_manager import settings_manager
 from db import store as db_store
 from db.estimates import cheapest_seconds
 from maestro.codegen import archive, build_chain
-from maestro.codegen.assets import (AlreadyRendering, add_assets, entry_kind, read_manifest,
+from maestro.codegen.assets import (AlreadyRendering, add_assets, entry_kind, ext_for, read_manifest,
                                     regenerate_asset)
 from maestro.codegen.staging import game_dir, has_authored_files, is_staged, staged_title
 from maestro.codegen.run import create_run, propose_prompt, set_prompt
@@ -215,11 +215,11 @@ def _budget_pct(row: Dict, run_id: str) -> Optional[float]:
 
 
 _ASSET_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
-_MEDIA = {"webp": "image/webp", "glb": "model/gltf-binary"}
+_MEDIA = {"webp": "image/webp", "png": "image/png", "glb": "model/gltf-binary"}
 
 
 def _ext(entry: Dict) -> str:
-    return "glb" if entry.get("kind") == "mesh" else "webp"
+    return ext_for(entry_kind(entry))
 
 
 @router.get("/{run_id}/assets", response_model=List[Dict])

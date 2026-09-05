@@ -145,29 +145,33 @@ EDIT_SCHEMA = {"type": "function", "function": {
                    "required": ["path", "old_text", "new_text"]}}}
 MEDIA_SCHEMA = {"type": "function", "function": {
     "name": "generate_media",
-    "description": ("Have an artist draw an image, an animated character or a 3D model for the "
-                    "game. Returns the path for "
-                    "the art. A game's art shares one visual style: before the first call, write "
-                    "one style phrase naming medium, palette and outline (like \"painted cartoon "
-                    "style, warm forest palette, soft dark outlines\") and repeat it word for word "
-                    "in every prompt. The style is stylized and cartoonish — chunky simplified "
-                    "shapes, bold colour — unless the request names another style."),
+    "description": ("Have an artist draw an image, an animated actor or a 3D model for the game. "
+                    "Returns the path for the art. A game's art shares one visual style: before "
+                    "the first call, write one style phrase naming medium, palette and outline "
+                    "(like \"painted cartoon style, warm forest palette, soft dark outlines\") "
+                    "and pass it as `style` on every call. The style is stylized and cartoonish "
+                    "— chunky simplified shapes, bold colour — unless the request names another "
+                    "style. Example:\n"
+                    "{\"id\": \"knight\", \"kind\": \"actor\", "
+                    "\"subject\": \"a chibi knight in a silver helmet with a red plume, blue "
+                    "tunic, round wooden shield, short sword\", "
+                    "\"style\": \"chunky cartoon chibi style, bold flat colors, soft dark "
+                    "outlines\", "
+                    "\"details\": {\"body\": \"biped\", \"view\": \"side\", "
+                    "\"facings\": 4, \"anims\": [{\"name\": \"walk\", \"action\": "
+                    "\"walks in place, legs alternating, arms swinging\"}]}}"),
     "parameters": {"type": "object",
                    "properties": {"id": {"type": "string",
                                          "description": "Short name: letters, digits, - and _."},
-                                  "prompt": {"type": "string",
-                                             "description":
-                                                 "What to draw, described for an artist. Lead "
-                                                 "with the subject, then mood and lighting, then "
-                                                 "detail — trailing detail is what the artist "
-                                                 "drops. Name colors that stand out against the "
-                                                 "game's background, and light the subject "
-                                                 "clearly."},
                                   "kind": {"type": "string",
-                                           "enum": ["sprite", "tile", "scene", "mesh", "anim"],
+                                           "enum": ["sprite", "actor", "tile", "scene", "mesh"],
                                            "description":
-                                               "sprite: one subject, cut out, drawn on top of the "
-                                               "game. tile: a surface the game repeats, fills its "
+                                               "sprite: one thing, cut out, drawn on top of the "
+                                               "game — a key, a lamp, a coin. actor: a thing with "
+                                               "a body — a character, a creature, a vehicle — "
+                                               "drawn as a sprite, or animated into a sheet of "
+                                               "the anims you name and drawn with lib/sprites.js. "
+                                               "tile: a surface the game repeats, fills its "
                                                "frame — describe real ground or wall seen from "
                                                "directly above (\"mossy forest floor with small "
                                                "stones, seen from directly above\"); the words "
@@ -177,36 +181,51 @@ MEDIA_SCHEMA = {"type": "function", "function": {
                                                "— fine detail turns to noise at game size — and "
                                                "in muted, low-contrast colors: the ground is the "
                                                "backdrop the sprites must stand out against, so a "
-                                               "tile keeps the style phrase's palette but never "
-                                               "its vividness or bold outlines. "
+                                               "tile keeps the style's palette but never its "
+                                               "vividness or bold outlines. "
                                                "scene: a whole picture the game draws behind "
-                                               "everything. mesh: a 3D model. anim: a thing that "
-                                               "moves in a way one picture cannot show — a "
-                                               "character, a car, a card that flips — drawn as a "
-                                               "sprite and animated into a sheet of the anims you "
-                                               "name; draw it with lib/sprites.js."},
-                                  "anims": {"type": "array",
-                                            "description":
-                                                "anim only: the animations, one entry each. "
-                                                "`name` is what the game asks lib/sprites.js "
-                                                "for; `action` is what happens in one sentence, "
-                                                "starting and ending at the pose in the prompt "
-                                                "(\"walks in place, legs alternating\", \"the "
-                                                "wheels spin and the body rocks over bumps\", "
-                                                "\"flips over to show its back\").",
-                                            "items": {"type": "object",
-                                                      "properties": {"name": {"type": "string"},
-                                                                     "action": {"type": "string"}},
-                                                      "required": ["name", "action"]}},
-                                  "facings": {"type": "integer", "enum": [1, 4],
+                                               "everything. mesh: a 3D model."},
+                                  "subject": {"type": "string",
                                               "description":
-                                                  "anim only. 4: the game shows it from the side "
-                                                  "and needs it facing front, right, back and "
-                                                  "left — the sheet holds every anim in all four. "
-                                                  "1: one view is all there is (seen from above, "
-                                                  "or flat like a card) and the game rotates it "
-                                                  "in code."}},
-                   "required": ["id", "prompt"]}}}
+                                                  "WHAT to draw, described for an artist, with no "
+                                                  "style words. Lead with the thing, then mood "
+                                                  "and lighting, then detail — trailing detail is "
+                                                  "what the artist drops. Name colors that stand "
+                                                  "out against the game's background."},
+                                  "style": {"type": "string",
+                                            "description":
+                                                "The game's one style phrase: medium, palette, "
+                                                "outline. The same words on every call."},
+                                  "details": {"type": "object",
+                                              "description":
+                                                  "Facts about the thing that are not prose. "
+                                                  "body: its body plan — biped, quadruped, or "
+                                                  "whatever it is (winged, wheeled, a box, a "
+                                                  "blob). view: how the game shows it — side, "
+                                                  "front, top-down, 3/4 top-down. anims: the "
+                                                  "animations, one entry each; `name` is what "
+                                                  "the game asks lib/sprites.js for, `action` is "
+                                                  "what happens in one sentence, starting and "
+                                                  "ending at the rest pose (\"walks in place, "
+                                                  "legs alternating\", \"the wheels spin and "
+                                                  "the body rocks over bumps\"). facings: with "
+                                                  "anims — 4 when the game shows it from the "
+                                                  "side and needs front, right, back and left; "
+                                                  "1 when one view is all there is (seen from "
+                                                  "above, or flat like a card) and the game "
+                                                  "rotates it in code. Today only an actor is "
+                                                  "animated; anims on any other kind are kept "
+                                                  "and it renders still.",
+                                              "properties": {
+                                                  "body": {"type": "string"},
+                                                  "view": {"type": "string"},
+                                                  "anims": {"type": "array",
+                                                            "items": {"type": "object",
+                                                                      "properties": {"name": {"type": "string"},
+                                                                                     "action": {"type": "string"}},
+                                                                      "required": ["name", "action"]}},
+                                                  "facings": {"type": "integer", "enum": [1, 4]}}}},
+                   "required": ["id", "kind", "subject", "style"]}}}
 COMPOSE_SCHEMA = {"type": "function", "function": {
     "name": "compose_scene",
     "description": ("Have a whole MAP built: the drawn ground image plus its logic data, written "

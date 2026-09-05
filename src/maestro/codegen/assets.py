@@ -5,12 +5,17 @@ answered immediately with the path the file will appear at. `request_media` is w
 it enqueues one `image` job (a mesh chains image → TRELLIS) and RECORDS the request in
 `game/assets.json` —
 
-    {"images": [{"id": "goblin", "file": "assets/goblin.png", "prompt": "a snarling goblin ..."},
-                {"id": "hut", "file": "assets/hut.glb", "kind": "mesh", "prompt": "a thatched hut"}]}
+    {"images": [{"id": "goblin", "file": "assets/goblin.webp", "kind": "actor",
+                 "subject": "a snarling goblin ...", "style": "painted cartoon style ...",
+                 "details": {"body": "biped", "view": "side"},
+                 "prompt": "painted cartoon style .... a snarling goblin ..., side view."},
+                {"id": "hut", "file": "assets/hut.glb", "kind": "mesh", ...}]}
 
 The model never writes that file. It is the durable RECORD of what was asked for: what the gallery
-lists, what a top-up re-renders, what a regenerate re-prompts against. Nothing here plans, rewrites
-or inspects the game's source.
+lists, what a top-up re-renders, what a regenerate re-prompts against. The request is STRUCTURED —
+subject, style and the facts prose cannot carry (`details`: body plan, view, animations) — and
+`prompt` is the one prose rendering of it the samplers see, composed here so its shape is ours to
+change. Nothing here plans, rewrites or inspects the game's source.
 
 One request is one BATCH, so each asset finalizes on its own and reaches `/play` as it lands rather
 than when the slowest render in a set does.
@@ -41,9 +46,26 @@ MANIFEST = "assets.json"
 
 # What the game can ask for. A sprite sits ON the game's background, a tile and a scene ARE one,
 # a mesh renders as a sprite first because TRELLIS turns a matted subject into geometry, and an
-# anim renders as a sprite first because the video model animates a still.
-KINDS = ("sprite", "tile", "scene", "mesh", "anim")
+# actor with anims renders as a sprite first because the video model animates a still.
+KINDS = ("sprite", "actor", "tile", "scene", "mesh")
 DEFAULT_KIND = "sprite"
+
+
+def render_kind(kind: str, details: Optional[Dict]) -> str:
+    """The kind the pipeline renders an ask as. Only an actor animates today."""
+    if kind == "actor":
+        return "anim" if (details or {}).get("anims") else "sprite"
+    return kind
+
+
+def compose_prompt(subject: str, style: str, details: Optional[Dict]) -> str:
+    """The prose the samplers see: style, then subject, then the view when one is given. One
+    place, so where the style sits and how the view is phrased are ours to measure."""
+    parts = [style.strip().rstrip("."), subject.strip().rstrip(".")]
+    view = ((details or {}).get("view") or "").strip().rstrip(".")
+    if view:
+        parts[1] += f", {view} view"
+    return ". ".join(parts) + "."
 
 _active: set = set()
 _active_lock = threading.Lock()
@@ -170,7 +192,7 @@ def landed(run_id: str, entry: Dict) -> bool:
     """Whether an asked-for asset's REAL file is on disk — the placeholder at the same path does
     not count."""
     return (not entry.get("placeholder")
-            and asset_path(run_id, entry["id"], ext_for(entry.get("kind"))).exists())
+            and asset_path(run_id, entry["id"], ext_for(entry_kind(entry))).exists())
 
 
 def _pending(run_id: str, run_dir, entries: List[Dict]) -> List[Dict]:
@@ -255,15 +277,24 @@ def set_refused(run_dir, asset_id: str, reason: str) -> None:
 
 
 def entry_kind(entry: Dict) -> str:
-    return entry.get("kind") or DEFAULT_KIND
+    """The kind the pipeline renders a manifest entry as."""
+    return render_kind(entry.get("kind") or DEFAULT_KIND, entry.get("details"))
 
 
-def _anim_spec_problem(anims, facings) -> Optional[str]:
-    """Why an anim request cannot be animated, as the sentence the model hears; None when it can.
-    The build names what moves and how it faces — there is no default animation set, because a
-    knight's, a car's and a card's have nothing in common."""
+def _details_problem(details) -> Optional[str]:
+    """Why a request's details cannot be honoured, as the sentence the model hears; None when
+    they can. Anims are checked on every kind, because a kind that cannot animate today still
+    records them. The build names what moves and how it faces — there is no default animation
+    set, because a knight's, a car's and a card's have nothing in common."""
+    if details is None:
+        return None
+    if not isinstance(details, dict):
+        return "details must be an object: {body, view, anims, facings}"
+    anims = details.get("anims")
+    if anims is None:
+        return None
     if not isinstance(anims, list) or not anims:
-        return ("an anim needs anims: a list of {name, action}, one per animation — like "
+        return ("anims is a list of {name, action}, one per animation — like "
                 "[{\"name\": \"drive\", \"action\": \"the wheels spin and the body rocks\"}]")
     for a in anims:
         if not isinstance(a, dict) or not _MEDIA_ID.match(str(a.get("name") or "")) \
@@ -271,19 +302,19 @@ def _anim_spec_problem(anims, facings) -> Optional[str]:
             return "every anim entry needs a short name (letters, digits, - or _) and an action"
     if len({a["name"] for a in anims}) != len(anims):
         return "anim names must be distinct"
-    if facings not in (1, 4):
-        return ("an anim needs facings: 4 when the game shows it from the side facing front, "
+    if details.get("facings") not in (1, 4):
+        return ("anims need facings: 4 when the game shows it from the side facing front, "
                 "right, back and left; 1 when one view is enough (top-down, flat) and the game "
                 "rotates it in code")
     return None
 
 
-def _anim_fields(kind: str, anims, facings) -> Dict:
-    """The animation spec as the fields an anim's manifest entry and job metadata carry."""
-    if kind != "anim":
+def _anim_fields(kind: str, details: Optional[Dict]) -> Dict:
+    """The animation spec as the fields an anim's job metadata carries."""
+    if render_kind(kind, details) != "anim":
         return {}
-    return {"anims": [{"name": a["name"], "action": a["action"]} for a in anims],
-            "facings": facings}
+    return {"anims": [{"name": a["name"], "action": a["action"]} for a in details["anims"]],
+            "facings": details["facings"]}
 
 
 def _then_for(kind: str) -> Dict:
@@ -299,30 +330,34 @@ def _then_for(kind: str) -> Dict:
     return {"operations": [op], "finalize": "assets"}
 
 
-def request_media(run_id: str, run_dir, asset_id: str, prompt: str,
-                  kind: str = DEFAULT_KIND, anims: Optional[Sequence[Dict]] = None,
-                  facings: Optional[int] = None) -> Dict:
+def request_media(run_id: str, run_dir, asset_id: str, subject: str, style: str,
+                  kind: str = DEFAULT_KIND, details: Optional[Dict] = None) -> Dict:
     """ONE asset. Enqueues the render and answers with the path the file will appear at, so the
-    model can write code against it on the same turn. An anim also names its animations
-    (`anims`: [{name, action}]) and how many ways it faces (`facings`: 4 or 1); the manifest
-    keeps both, so a top-up or a regenerate re-animates the same way.
+    model can write code against it on the same turn. `subject` and `style` are the prose,
+    `details` the facts prose cannot carry — body plan, view, animations ([{name, action}]) and
+    how many ways it faces (`facings`: 4 or 1); the manifest keeps all of it, so a top-up or a
+    regenerate re-renders the same way.
 
     Every refusal is REPORTED: a build that cannot have art must be told to draw one rather than
     left waiting for a file that is never coming."""
     if not _MEDIA_ID.match(asset_id or ""):
         return {"ok": False, "error": "id must be 1-64 characters of letters, digits, - or _"}
-    if not (prompt or "").strip():
-        return {"ok": False, "error": "prompt is required: describe what to draw"}
+    if not (subject or "").strip():
+        return {"ok": False, "error": "subject is required: describe what to draw"}
+    if not (style or "").strip():
+        return {"ok": False, "error": "style is required: the game's one style phrase"}
     if kind not in KINDS:
         return {"ok": False,
                 "error": f"kind must be one of {', '.join(KINDS)} — not {kind!r}"}
-    if kind == "anim":
-        problem = _anim_spec_problem(anims, facings)
-        if problem:
-            return {"ok": False, "error": problem}
+    problem = _details_problem(details)
+    if problem:
+        return {"ok": False, "error": problem}
+    details = details or None
+    prompt = compose_prompt(subject, style, details)
+    rkind = render_kind(kind, details)
 
     mesh = kind == "mesh"
-    ext = ext_for(kind)
+    ext = ext_for(rkind)
     rel = f"assets/{asset_id}.{ext}"
     existing = next((e for e in read_manifest(run_dir) if e["id"] == asset_id), None)
     if not existing and asset_path(run_id, asset_id, ext).exists():
@@ -337,36 +372,41 @@ def request_media(run_id: str, run_dir, asset_id: str, prompt: str,
                 "note": "not requeued — this id already has art. Call again with the prompt you "
                         "want to replace it with, or use a different id to draw something new."}
 
-    payload = build_image_payload(prompt, kind)
+    payload = build_image_payload(prompt, rkind)
     if payload is None:
         return {"ok": False, "error": "that prompt was refused by the safety filter — "
                                       "draw this one with code instead"}
-    then = _then_for(kind)
+    then = _then_for(rkind)
     try:
         # No build_id: this batch's finalize would otherwise close the BUILD's row the moment the
         # first sprite lands, while the model is still writing the game.
         db_store.enqueue_job("image", payload, game_id=run_id, batch_id=uuid.uuid4().hex[:16],
-                             metadata={"run_id": run_id, "asset_id": asset_id, "kind": kind,
-                                       "then": then, **_anim_fields(kind, anims, facings)})
+                             metadata={"run_id": run_id, "asset_id": asset_id, "kind": rkind,
+                                       "then": then, **_anim_fields(kind, details)})
     except db_store.InsufficientCompute:
         return {"ok": False, "error": "no compute left for art — draw this one with code instead"}
     # A confirmed replace keeps the art it has until the new render lands.
     stand_in = not mesh and not asset_path(run_id, asset_id, ext).exists()
     if stand_in:
-        write_placeholder(asset_path(run_id, asset_id, ext), kind, asset_id, anims)
+        write_placeholder(asset_path(run_id, asset_id, ext), rkind, asset_id,
+                          (details or {}).get("anims"))
+    fields = {"kind": kind, "subject": subject, "style": style, "prompt": prompt,
+              **({"details": details} if details else {})}
     if existing:
-        # The manifest holds the prompt a regenerate re-prompts against, so a confirmed replace
+        # The manifest holds the request a regenerate re-prompts against, so a confirmed replace
         # rewrites it rather than leaving the record describing art that no longer exists.
-        _update(run_dir, asset_id, prompt=prompt, replace_asked=None, defect=None, refused=None,
-                placeholder=True if stand_in else None, **_anim_fields(kind, anims, facings))
+        _update(run_dir, asset_id, replace_asked=None, defect=None, refused=None,
+                placeholder=True if stand_in else None, **fields)
     else:
-        _record(run_dir, {"id": asset_id, "file": rel, "kind": kind, "prompt": prompt,
-                          "placeholder": True, **_anim_fields(kind, anims, facings)})
-    logger.info("assets %s: %s requested (%s)", run_id, asset_id, kind)
+        _record(run_dir, {"id": asset_id, "file": rel, **fields, "placeholder": True})
+    logger.info("assets %s: %s requested (%s)", run_id, asset_id, rkind)
     out = {"ok": True, "path": rel, "status": "rendering"}
     if mesh:
         out["note"] = ("the model will span exactly 1 unit at its longest side — scale it in the "
                        "scene to its real-world size (person ≈ 1.7 units, building ≈ 6+).")
+    elif kind != "actor" and details and details.get("anims"):
+        out["note"] = ("anims recorded, but only an actor is animated today — this renders as "
+                       "one still image at that path.")
     elif stand_in:
         out["note"] = "a stand-in image is at that path now; the render replaces it when it lands."
     return out
@@ -416,7 +456,7 @@ def _enqueue_batch(run_id: str, entries: List[Dict], build_id: Optional[str]) ->
         elif kind == "anim" and src.exists():
             queue, then = "video", {"operations": ["save_anim"], "finalize": "assets"}
             payload = build_anim_payload(base64.b64encode(src.read_bytes()).decode("ascii"),
-                                         e["anims"], e["facings"])
+                                         e["details"]["anims"], e["details"]["facings"])
         if payload is None:
             logger.warning("assets %s: %s blocked by the safety filter — not sent", run_id, e["id"])
             continue
@@ -425,7 +465,8 @@ def _enqueue_batch(run_id: str, entries: List[Dict], build_id: Optional[str]) ->
                                  batch_id=batch_id,
                                  metadata={"run_id": run_id, "asset_id": e["id"],
                                            "kind": kind, "then": then,
-                                           **_anim_fields(kind, e.get("anims"), e.get("facings"))})
+                                           **_anim_fields(e.get("kind") or DEFAULT_KIND,
+                                                          e.get("details"))})
         except db_store.InsufficientCompute as err:
             logger.error("assets %s: budget refused after %d job(s): %s", run_id, enqueued, err)
             break
@@ -473,7 +514,8 @@ def regenerate_asset(run_id: str, asset_id: str, note: str, mode: str = "full") 
     db_store.enqueue_job("image", payload, game_id=run_id, batch_id=batch_id,
                          metadata={"run_id": run_id, "asset_id": asset_id,
                                    "kind": kind, "then": _then_for(kind),
-                                   **_anim_fields(kind, entry.get("anims"), entry.get("facings"))})
+                                   **_anim_fields(entry.get("kind") or DEFAULT_KIND,
+                                                  entry.get("details"))})
     _update(state.run_dir, asset_id, defect=None, refused=None)
     return {"ok": True, "batch_id": batch_id, "prompt": prompt}
 

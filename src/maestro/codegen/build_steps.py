@@ -226,34 +226,6 @@ MEDIA_SCHEMA = {"type": "function", "function": {
                                                                       "required": ["name", "action"]}},
                                                   "facings": {"type": "integer", "enum": [1, 4]}}}},
                    "required": ["id", "kind", "subject", "style"]}}}
-COMPOSE_SCHEMA = {"type": "function", "function": {
-    "name": "compose_scene",
-    "description": ("Have a whole MAP built: the drawn ground image plus its logic data, written "
-                    "into the project immediately. Returns the two files: assets/<id>_ground.png "
-                    "to draw as the map background, and assets/<id>_scene.json to READ — it "
-                    "carries the walkable grid, door cells and points of interest the game code "
-                    "must use. Sprites, portraits and single objects still come from "
-                    "generate_media."),
-    "parameters": {"type": "object",
-                   "properties": {"id": {"type": "string",
-                                         "description": "Short name: letters, digits, - and _."},
-                                  "archetype": {"type": "string",
-                                                "enum": ["town", "glade", "interior", "dungeon"],
-                                                "description":
-                                                    "town: streets, a plaza, buildings whose "
-                                                    "doors are listed in the scene data. glade: "
-                                                    "an organic clearing with a pond. interior: "
-                                                    "lit rooms and corridors. dungeon: dark "
-                                                    "rooms and corridors."},
-                                  "style": {"type": "string",
-                                            "description": "The game's style phrase plus setting "
-                                                           "words."},
-                                  "seed": {"type": "integer",
-                                           "description": "Layout seed — a different seed is a "
-                                                          "different map."},
-                                  "width_cells": {"type": "integer"},
-                                  "height_cells": {"type": "integer"}},
-                   "required": ["id", "archetype", "style"]}}}
 WORLD_SCHEMA = {"type": "function", "function": {
     "name": "compose_world",
     "description": ("Have a whole 3D WORLD built into the project: ground with hills and valleys, "
@@ -261,7 +233,7 @@ WORLD_SCHEMA = {"type": "function", "function": {
                     "standing on them. Answers with the world's size and its regions in metres, "
                     "and the ground loads from that moment; the scenery keeps rendering into the "
                     "same files while you write the game. Load it with world.js. One world per "
-                    "game, and only for a 3D game — a flat 2D map is compose_scene."),
+                    "game, and only for a 3D game."),
     "parameters": {"type": "object",
                    "properties": {"description": {"type": "string",
                                                   "description":
@@ -283,7 +255,7 @@ DONE_SCHEMA = {"type": "function", "function": {
                    "required": ["summary"]}}}
 
 SCHEMAS = [LIST_SCHEMA, READ_SCHEMA, WRITE_SCHEMA, EDIT_SCHEMA, MEDIA_SCHEMA,
-           COMPOSE_SCHEMA, WORLD_SCHEMA, DONE_SCHEMA]
+           WORLD_SCHEMA, DONE_SCHEMA]
 
 
 def _n_ctx() -> int:
@@ -405,7 +377,7 @@ def _action_of(tc, res) -> str:
     args = parse_args(tc["function"].get("arguments"))
     target = args.get("path") or args.get("id") or ""
     verb = {"write_file": "wrote", "edit_file": "edited", "read_file": "read",
-            "generate_media": "asked for art", "compose_scene": "built a scene",
+            "generate_media": "asked for art",
             "compose_world": "built a world",
             "list_files": "listed files"}.get(name, name)
     line = f"{verb} {target}".strip()

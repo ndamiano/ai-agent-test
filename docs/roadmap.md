@@ -36,19 +36,18 @@ between us and the bar:
   survive the next change, and it is what happens — one grid per change, the owner playing every
   cell. Putting it on a schedule buys nothing while every run costs GPU dollars nobody is earning
   back; it becomes worth a few dollars a day once there is revenue to spend them from.
-- **The helper library shipped and the games it produced played worse.** `runtime/vendor/lib/`
-  closed the standing defect ledger (near-black 3D, silent games, arrow-keys-only input) 6/6
-  against a control arm, and on the same six requests the games that actually PLAYED went from
-  4/6 to 1/6 (`docs/experiments.md`, 2026-08-22). Two of the four deaths were one lib defect,
-  since fixed; the open item is the play rate on a rebuilt battery.
-- **Art is on trial and unsettled.** What settles `generate_media` is coverage — how much of what
-  the player sees got art — not whether the tool is called (`CLAUDE.md` "Adding a capability").
+- **Running and taking input is met on prod, and art is settled.** Six one-shot games on the
+  rented card, four by the owner and two by a stranger, all six loading, playing and holding up
+  — one of them for twenty-five minutes — with the model choosing generated art or code on its
+  own and the owner content with the call every time (`docs/experiments.md`, 2026-09-06). The
+  play rate the helper library had dented is back, and `generate_media` stays.
 - **A generated 3D world is something a build can now ask for, and unproven at scale.**
   `compose_world` puts a whole worldgen pipeline behind one tool call — ground, regions and the
   scenery standing on them — and a game written on its loader is a game nobody has built at
-  volume yet. Same bar as the tool below it: coverage across a battery, not one world.
-- **Scene composition is new and unproven at scale.** `compose_scene` and the asset store landed
-  against a validated recipe and one real build. One build is an existence proof, not a measurement.
+  volume yet. The open fact is upstream of the tool: none of the six prod games went 3D, an
+  open-world island included, so the question is why the designer keeps a game flat when the
+  ask does not say. `compose_scene`, its 2D sibling, went uncalled across the same games and
+  every battery since it landed, and came out.
 
 ### Stage 2 — Any game asked for comes back good — **NOT STARTED**
 

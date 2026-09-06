@@ -117,17 +117,10 @@ src/
                          BOUNDARY — a snapshot that cannot be taken is logged and the build carries
                          on, since losing history is not a reason to lose a game.
       tools.py           list_files / read_file / write_file / edit_file / generate_media /
-                         compose_scene / compose_world — the smallest surface that works, and kept
-                         that way. compose_world is worldgen's build face: one 3D world per game,
-                         refused a second time because the game is already written against the
-                         first one's metres and regions.
-                         compose_scene is the scene chain's build face: it lays out a whole MAP —
-                         assets/<id>_ground.png plus <id>_scene.json (walkable grid and
-                         POIs) — and the model reads the json and wires it (verified in a real
-                         build 2026-08-06: three scenes asked for, fetched at runtime, walkable
-                         grid driving collision). scene.json and a code-painted ground land at
-                         tool time; the diffusion picture upgrades the same path as it renders
-                         (scene_chain.py). A path is resolved and must land inside the
+                         compose_world — the smallest surface that works, and kept that way.
+                         compose_world is worldgen's build face: one 3D world per game, refused
+                         a second time because the game is already written against the first
+                         one's metres and regions. A path is resolved and must land inside the
                          game folder. Every failure is REPORTED to the model as text (a missing
                          argument names itself) and never guessed at: substituting a default for a
                          missing `path` sent every write in a run to one file.
@@ -204,40 +197,6 @@ src/
                          A top-up RESUMES a mesh from its `<id>.src.png` if one is there: the chain
                          needs ComfyUI and then TRELLIS, and a one-GPU box holds one at a time, so
                          always restarting at the image leg never reached the second half.
-      scene_chain.py     compose_scene's GPU path. Synchronous half at tool time: the scenegen
-                         layout calls plus the paint spec (blocking llm jobs — the calling turn
-                         has already completed, so the queue is free), scene.json (walkable
-                         TRUTH, never diffused), and the spec-colored jittered guide saved as
-                         the ground.
-                         Async half as jobs: store-miss subjects (Qwen-2512, image queue) each
-                         chaining TRELLIS (mesh queue) whose completion deposits
-                         subject+GLB+sprite to the asset store, plus the two-stage ground
-                         (DreamShaper: per-region masked conditioning at 0.55 over the guide,
-                         then a chained global blend at 0.35) — the BATCH FINALIZE is the
-                         fan-in barrier
-                         (claim_batch_finalize already guarantees exactly-one against the
-                         reaper): composite store sprites over the terrain, then one Qwen-Edit
-                         embedding job whose finalize drift-checks each box against the
-                         composite (detection only — broken, never bad), lands the final ground
-                         AT THE SAME PATH and re-stages. Every enqueue carries game_id, so
-                         admission and debit ride the queue like all GPU work; a refused budget
-                         at any seam leaves the best ground already on disk (guide →
-                         regional → blend → composite → embed, each overwriting the last). Its names
-                         ride asset_chain's registries, so the completion dispatch stays one
-                         branch.
-      asset_store.py     the ASSET STORE: rendered object TYPES shared across games, so a mesh
-                         that cost ~30s of GPU is never paid for twice. Entry =
-                         <data_dir>/asset_store/<key>/ holding subject.png + mesh.glb +
-                         sprite.png + meta.json; every intermediate kept (dropping one forces
-                         re-paying the stage upstream), meta stamps which model made each piece
-                         so an upgrade invalidates exactly its own leg. Claim-then-fill
-                         (O_EXCL + TTL) so two builds missing one type render it once. Type
-                         RESOLUTION is one small llm call for the whole plan (flavor name →
-                         generic type + subject phrase), the style riding the KEY — a desert
-                         inn and a snow inn are different entries, which is what retires the
-                         battery's cottage-in-the-desert; fallback is the name itself, which
-                         renders right and merely reuses less. Games copy sprites out at
-                         composite time and never own entries; /play never reads the store.
       design.py          the DESIGNER — the one inference between the user's words and the build.
                          One llm call (prompts/design.txt) turns spec.json's `ask` (the words,
                          verbatim, kept for the human to see) into `request` (a 900–1400-word
@@ -407,25 +366,6 @@ src/
                          that fails is logged and left, because the pipeline resumes by stage.
                          Locally the three queues are drained by `scripts/local_gpu.py auto`
                          (`docs/local_dev.md`).
-
-  scenegen/              the map maker behind the scene chain, deliberately maestro-free: pure
-                         functions with an injected llm callable, so the folder copies into a
-                         lab and iterates against any OpenAI-style endpoint. bake.py is the
-                         synchronous face (interiors/dungeons, pure CPU). layout.py is the
-                         LLM-layered layout — tileset, items, coarse zone grid, deterministic
-                         upscale+smooth, fine paint ops, placement with terrain snap — each a
-                         small validated call with a JSON skeleton and one-error-at-a-time
-                         reask (measured 2026-08-23: 12/12 maps, fully connected, where the
-                         relations→solver blockout it replaced made one road-spine tunnel per
-                         archetype; asked for a full-resolution grid the model emits uniform
-                         fill, so every stage edits through its own small representation).
-                         paintspec.py: the llm art-directs each region's guide color and
-                         material phrase — the guide color ANCHORS the final hue, no prompt
-                         wording overrides it. paint.py: jittered guide → per-region masked
-                         conditioning at 0.55 (feather scaled to region thickness) → global
-                         blend at 0.35, as pure ComfyUI graph builders. prompts/ holds one
-                         .txt per llm call. Code owns walkable truth; diffusion paints
-                         materials.
 ```
 
 The rest of the platform is build-path-agnostic: `auth/` (identity, bearer sessions, credits,

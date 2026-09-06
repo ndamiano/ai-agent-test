@@ -199,7 +199,7 @@ genuinely absent, it is genuinely felt.
 **visual coherence** — Does it look like one thing made on purpose? Belonging matters more than
 fidelity — a consistent flat palette beats beautiful renders sitting on programmer-art rectangles.
 Expect low for a while.
-*Levers:* the style anchor, per-kind image routing, `compose_scene`.
+*Levers:* the style anchor, per-kind image routing.
 
 **art integration** — Is generated art load-bearing in the game, or decoration bolted beside code
 primitives? This is the human half of the coverage question the static audit can only count: the

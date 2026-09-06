@@ -87,7 +87,7 @@ def test_the_first_turn_sends_the_request_and_nothing_else(tmp_path, tools):
     assert isinstance(out, build_steps.Infer)
     assert out.messages[-1]["content"] == "a card game"
     assert {t["function"]["name"] for t in out.schemas} == {
-        "list_files", "read_file", "write_file", "edit_file", "generate_media", "compose_scene",
+        "list_files", "read_file", "write_file", "edit_file", "generate_media",
         "compose_world", "done"}
 
 

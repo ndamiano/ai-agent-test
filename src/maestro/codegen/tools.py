@@ -1,5 +1,5 @@
 """The tools the build dispatches: list_files, read_file, write_file, edit_file, generate_media,
-compose_scene, compose_world.
+compose_world.
 
 Two invariants. A path is resolved and must land inside the game folder, so no write can escape it.
 And every failure is REPORTED to the model rather than guessed at — see `_reported`.
@@ -154,22 +154,6 @@ def build_tools(state) -> dict:
         return request_media(state.run_id, state.run_dir, id, subject, style,
                              kind or DEFAULT_KIND, details)
 
-    def compose_scene(id=None, archetype=None, style=None, seed=None,
-                      width_cells=None, height_cells=None, **_) -> dict:
-        # Outdoor scenes render through the GPU pipeline (scene.json now, painted ground
-        # upgraded in place as the art lands); interiors stay the synchronous code bake.
-        if not id:
-            raise KeyError("id")
-        if archetype not in ("town", "glade", "interior", "dungeon"):
-            return {"ok": False,
-                    "error": "archetype must be one of town, glade, interior, dungeon"}
-        if archetype in ("town", "glade"):
-            from maestro.codegen.scene_chain import compose
-            return compose(root, state.run_id, id, archetype, style, seed,
-                           width_cells, height_cells)
-        from scenegen.bake import bake_scene
-        return bake_scene(root, id, archetype, style, seed, width_cells, height_cells)
-
     def compose_world(description=None, seed=None, **_) -> dict:
         # One world per game: a second one would replace the ground under a game already
         # written against the first one's metres and regions.
@@ -200,5 +184,5 @@ def build_tools(state) -> dict:
     return {name: _reported(fn) for name, fn in
             {"list_files": list_files, "read_file": read_file,
              "write_file": write_file, "edit_file": edit_file,
-             "generate_media": generate_media, "compose_scene": compose_scene,
+             "generate_media": generate_media,
              "compose_world": compose_world}.items()}

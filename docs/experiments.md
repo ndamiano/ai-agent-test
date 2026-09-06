@@ -1823,3 +1823,59 @@ critique, not a "what and how", and no arm here asked for the latter. That arm i
 (`fish`, local 27B): the same review, once as the change note and once first turned into an
 improvement prompt by the model, against control. Separately, the verdict prompt never asks
 about the art — the one thing the critic can see and the owner ranked first.
+
+**The proposer arm (same day, `fish`, local 27B via ninfer).** The review was first handed to
+the model as a designer with the game's systems design beside it, asked for a CHANGE NOTE with
+numbers; it wrote two: guppy `flee_distance` 60 → 35 and `base_speed` 90 → 75. That note as
+`--change` on the same fish: 10 steps, 46 s, one line of `species.js` changed, exactly the two
+numbers, and `done`. Played against control: not enough to warrant it. The review-as-note arm
+on the local card was stopped before its first turn — the prod row above already covers it.
+
+Ruling: the ceiling is the CRITIC, not the fixer and not the proposer. A player that has a few
+seconds of a game — ten key presses, no reaction time, no second screen — has nothing to say
+that a build should spend a turn on, and a proposer given only that review can only sharpen its
+one tuning symptom. Feeding the play gate's judgment back into a build is closed until the
+player can play. The gate stays what it is: it detects broken.
+
+## 2026-09-06 — Stage 1 on prod: six one-shot games, two players (Flash-Next via Pennyroyal)
+
+### The question
+
+Whether a game asked for on the rented card comes back running — loads, takes input, holds
+up under play — with the loop as it stands (records-and-rules design, thinking on, the helper
+library after its fix, `generate_media` with kinds). The last play-rate number was the library
+arm's 1/6 (2026-08-22), before the fix and on the local 27B.
+
+### The arm
+
+Six games, each one request and no change note, through the public front door. The owner made
+four: a racing game with a career mode, upgrades and races unlocked by winnings; a game of quests
+to slay monsters; a fish eating fish to grow; an open world island with treasure to find. A
+friend, unprompted and unhelped, made two overnight and this morning — a Zelda-like and a visual
+novel; the requests are theirs and are not copied here.
+
+### What came out
+
+Six of six ran, took input and did not crash. The racing game came back a full game of its
+design — career, upgrades, unlock ladder — with bugs that were fun rather than fatal, and not
+the game the owner had pictured from two sentences, which two sentences do not earn. The
+monster-quest game was not what was asked for and was the one the owner enjoyed most; the fish
+game was solid with cosmetic faults and held the owner for twenty-five minutes. Both are now
+demos on the front page as what a one-shot gives. The island functioned and was not good: it
+came back flat, as did all six — no build called `compose_world`, and none called
+`compose_scene`. The friend's two both played; their word on it: "Gorgeous graphics though. And
+TONS of improvements in the UI of the visual novel so far."
+
+Art: the model chose generated art where a picture was worth it and code where it was not, and
+the owner was content with the call on every game.
+
+### Verdict
+
+Stage 1's running bar is met on prod, and `generate_media` is settled — the tool stays, on the
+owner's judgement of what the games looked like, which is the only judgement the roadmap ever
+named for it. `compose_scene` came out the same day: uncalled in six prod games and in every
+battery since it landed, it was schema paid on every turn for nothing; the asset store went
+with it, the scene chain having been its only caller. `compose_world` stays,
+because the open question is not the tool but the designer: an open-world island, asked for
+without the word 3D, came back 2D, and why the 2D/3D call lands flat when the ask does not
+decide it is the next thing to measure.

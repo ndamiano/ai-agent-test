@@ -23,7 +23,7 @@ An AI platform that makes things. The user says "make me a game" — a while lat
 
 Press **Make a new game** and describe the game you want. A designer turns your words into a systems design, and the build starts on it the moment it lands. Nothing is stored server-side until you press Make.
 
-A non-LLM **driver** then hands the model eight tools — `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `compose_scene`, `compose_world`, `done` — plus a running transcript, and lets it write the game. The model decides the file layout, the systems, and what art gets drawn; it calls `done` when the game is playable. Output is **plain browser HTML/CSS/JavaScript**, served as written. Every game folder is seeded with the vendored three.js, GLTFLoader, BufferGeometryUtils and `world.js` (the loader for a `compose_world` world), plus `lib/` — a helper library for input, audio, a scaling canvas and lights, each file's header comment its API.
+A non-LLM **driver** then hands the model seven tools — `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `compose_world`, `done` — plus a running transcript, and lets it write the game. The model decides the file layout, the systems, and what art gets drawn; it calls `done` when the game is playable. Output is **plain browser HTML/CSS/JavaScript**, served as written. Every game folder is seeded with the vendored three.js, GLTFLoader, BufferGeometryUtils and `world.js` (the loader for a `compose_world` world), plus `lib/` — a helper library for input, audio, a scaling canvas and lights, each file's header comment its API.
 
 A build reaches `built` when `index.html` exists and the error gate — the staged game opened headless — finds no uncaught exception. A gate may only detect BROKEN, never "bad", so whether a game is any *good* stays a human judgement. Play it, then say what to change: `python -m maestro.codegen.run --change <run_id> "<note>"`.
 
@@ -118,13 +118,12 @@ src/
   llm_clients/  connector, message builder, wire translation
   maestro/
     codegen/    the build path — build_chain (driver), build_steps (turn machine),
-                build_state (cursor), tools, staging, assets, asset_chain, asset_store,
-                asset_use, scene_chain, error_gate, artifact_screen, snapshots,
+                build_state (cursor), tools, staging, assets, asset_chain,
+                asset_use, error_gate, artifact_screen, snapshots,
                 archive, turn_log, prompts/, run (CLI)
     worldgen/   the 3D world behind compose_world: planning, terrain, objects, backends
     services.py, state.py, tool_calls.py
   scaler/       the RunPod autoscaler
-  scenegen/     the solver behind compose_scene
   tools/        ComfyUI, quilting, S3, DB backup, mailer, safety, execution context
   worker/       the pull-side GPU worker agent
 frontend/       React + Vite UI
@@ -153,7 +152,6 @@ src/
   scaler/       the RunPod autoscaler
   tools/        tool manager, ComfyUI, TRELLIS, system tools, execution context
   worker/       the pull-side GPU worker agent
-  scenegen/     scene composition behind the compose_scene build tool
 frontend/       React + Vite UI
 tests/          pytest suite
 docs/           vision, roadmap, deploy

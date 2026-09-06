@@ -1814,10 +1814,12 @@ control, played blind side by side.
 | racer `1ef4497514ab` | 2 | 62 steps | better, barely |
 | brawler `f3569203412c` | 4 | 44 steps | worse: the complaint was the harness's ("landing damage felt uncertain") — hitting was trivially easy for a person — and the build tuned a game that was not broken |
 
-The ruling stands, on the second instrument. The impressions are a correct list of symptoms
-where they see mechanics, and the fix a symptom buys is marginal; where the critic's difficulty
-is the gate's (ten key-presses, one screenshot a turn, no reaction time) the note is a
-demand, and the build meets it by changing a game that was fine. The paragraph stays a report
-for a human. What would earn a second look is aggregate use across a battery — the recurring
-complaint as a prompt-time change — and a verdict prompt that asks about the art, which is the
-one thing the critic can see and is never asked.
+What this measured is narrower than the 2026-08-08 ruling: a REVIEW — positives and negatives,
+no proposal, from a player that presses ten keys with no reaction time — handed straight to the
+fixer. Where the review named a real tuning symptom the fix bought a little; where its
+difficulty was the gate's own, the build tuned a game that was fine. It says nothing about
+whether the model can PROPOSE an improvement when asked for one: the paragraph above is a
+critique, not a "what and how", and no arm here asked for the latter. That arm is next
+(`fish`, local 27B): the same review, once as the change note and once first turned into an
+improvement prompt by the model, against control. Separately, the verdict prompt never asks
+about the art — the one thing the critic can see and the owner ranked first.

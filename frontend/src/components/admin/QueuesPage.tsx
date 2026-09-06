@@ -82,7 +82,7 @@ const Workers: React.FC<{ row: QueueRow }> = ({ row }) => {
                 </tbody>
             </table>}
     </div>
-)
+}
 
 // Shows nothing at all when the provider has never refused for stock: the line exists to make a
 // stock-out visible, not to reassure.

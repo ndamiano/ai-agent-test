@@ -15,9 +15,7 @@ from fastapi.responses import FileResponse
 
 from auth import playgrants
 from config.settings_manager import settings_manager
-from db import store as db_store
-from maestro.codegen.staging import RUNTIME_DIR, is_staged, staged_title
-from maestro.state import RunState
+from maestro import demos
 
 router = APIRouter()
 
@@ -52,24 +50,19 @@ def _thumb_of(run_id: str) -> Optional[str]:
 @router.get("", response_model=List[Dict])
 async def list_demos():
     """Each demo with the prompt that made it and the tier it was listed under — the product
-    story is the pairing, not the game alone. A listed id that is not staged is skipped, not an
-    error: the list lives in settings and the games live on disk, and a redeploy may see one
+    story is the pairing, not the game alone. A listed id with no snapshot is skipped, not an
+    error: the list lives in settings and the snapshots on disk, and a redeploy may see one
     before the other."""
     out = []
     tiers = _demo_tiers()
     for tier in TIERS:
         for entry in tiers[tier]:
             run_id = entry["id"]
-            if not is_staged(run_id):
+            if not demos.exists(run_id):
                 continue
-            row = db_store.game(run_id) or {}
-            state = RunState(run_id)
-            spec = state.read_spec() or {}
-            # spec.request is the machine's design; the card's whole claim is "these words made
-            # this game", so it carries the person's own ask.
             out.append({"run_id": run_id,
-                        "title": staged_title(run_id) or row.get("title") or run_id,
-                        "prompt": spec.get("ask") or spec.get("request", ""),
+                        "title": demos.title(run_id) or run_id,
+                        "prompt": demos.meta(run_id).get("prompt", ""),
                         "tier": tier,
                         "thumb_url": f"/api/demos/{run_id}/thumb" if entry.get("thumb") else None})
     return out
@@ -77,12 +70,12 @@ async def list_demos():
 
 @router.get("/{run_id}/thumb")
 async def demo_thumb(run_id: str):
-    """The one image the owner picked from the game's own staged files. Public like the list —
-    it is the card's face — but only for listed games, and never a path outside the game."""
+    """The one image the owner picked from the snapshot's own files. Public like the list — it
+    is the card's face — but only for listed games, and never a path outside the game."""
     thumb = _thumb_of(run_id)
     if not thumb:
         raise HTTPException(status_code=404, detail="no thumb")
-    base = (RUNTIME_DIR / "games" / run_id).resolve()
+    base = demos.demo_dir(run_id).resolve()
     path = (base / thumb).resolve()
     if not path.is_relative_to(base) or not path.is_file():
         raise HTTPException(status_code=404, detail="no thumb")
@@ -93,16 +86,11 @@ async def demo_thumb(run_id: str):
 
 @router.post("/{run_id}/play-session", response_model=Dict)
 async def demo_play_session(run_id: str):
-    """A play session anyone may mint, for listed games only. The grant is issued under the
-    game's owner, which grants nothing beyond this one game's static files."""
-    if run_id not in _demo_ids():
+    """A play session anyone may mint, for listed games only. The grant opens this one
+    snapshot's static files and nothing else."""
+    if run_id not in _demo_ids() or not demos.exists(run_id):
         raise HTTPException(status_code=404, detail="not a demo")
-    if not is_staged(run_id):
-        raise HTTPException(status_code=409, detail="not built")
-    owner = db_store.owner_of(run_id)
-    if owner is None:
-        raise HTTPException(status_code=404, detail="not a demo")
-    token = playgrants.issue_handoff(owner, run_id)
+    token = playgrants.issue_handoff(playgrants.target("demos", run_id))
     if token is None:
         raise HTTPException(status_code=429, detail="too many open sessions — try again shortly")
     origin = (settings_manager.get_settings().get("play") or {}).get("origin", "").rstrip("/")

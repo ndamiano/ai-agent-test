@@ -172,7 +172,7 @@ async def _host_split(request, call_next):
     return await call_next(request)
 
 
-_GRANT_COOKIE_TMPL = (PLAY_COOKIE + "={token}; Max-Age={max_age}; Path=/play/games/{run_id}/; "
+_GRANT_COOKIE_TMPL = (PLAY_COOKIE + "={token}; Max-Age={max_age}; Path=/play/{target}/; "
                       "HttpOnly; {context}")
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 
@@ -195,16 +195,15 @@ async def handoff(request: Request, t: str = ""):
     game A never sends game B's grant. SameSite=None + Partitioned because the game runs in an
     iframe on the app origin: a cross-site subresource context, where Lax/Strict cookies are
     never sent and unpartitioned third-party cookies are blocked outright."""
-    redeemed = playgrants.redeem_handoff(t)
-    if redeemed is None:
+    target = playgrants.redeem_handoff(t)
+    if target is None:
         raise HTTPException(status_code=403, detail="expired or invalid play token")
-    user_id, run_id = redeemed
-    grant = playgrants.issue_grant(user_id, run_id)
+    grant = playgrants.issue_grant(target)
     if grant is None:
         raise HTTPException(status_code=429, detail="too many open sessions — try again shortly")
-    response = RedirectResponse(f"/play/games/{run_id}/index.html", status_code=302)
+    response = RedirectResponse(f"/play/{target}/index.html", status_code=302)
     response.headers.append("set-cookie", _GRANT_COOKIE_TMPL.format(
-        token=grant, max_age=playgrants.GRANT_TTL_SECONDS, run_id=run_id,
+        token=grant, max_age=playgrants.GRANT_TTL_SECONDS, target=target,
         context=_grant_cookie_context(request.headers.get("host", ""))))
     return response
 
@@ -215,15 +214,15 @@ _HEAD_TAG = re.compile(r"<head[^>]*>", re.IGNORECASE)
 _reporter_js = (Path(__file__).parent / "static" / "report.js").read_text(encoding="utf-8")
 
 
-@app.get("/play/games/{run_id}/index.html", include_in_schema=False)
-async def play_index(run_id: str):
+@app.get("/play/{surface}/{run_id}/index.html", include_in_schema=False)
+async def play_index(surface: str, run_id: str):
     """Serve a game's index.html with the console reporter injected on the way out. The model
     cannot be relied on to include the tag, and staging stays "no bundle, no transform" — the
     game folder on disk is exactly what the model wrote. Registered before the /play static
     mount, so this route wins for index.html and the mount serves everything else."""
-    if not _RUN_ID.match(run_id):
+    if surface not in playgrants.SURFACES or not _RUN_ID.match(run_id):
         raise HTTPException(status_code=404, detail="not found")
-    index = _runtime / "games" / run_id / "index.html"
+    index = _runtime / surface / run_id / "index.html"
     if not index.is_file():
         raise HTTPException(status_code=404, detail="not found")
     html = index.read_text(encoding="utf-8", errors="replace")

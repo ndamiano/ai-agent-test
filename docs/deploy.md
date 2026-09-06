@@ -29,15 +29,18 @@ editable without a rebuild — but the file must exist before the first `up`.
 
 ## The data invariant (critical)
 
-Durable state lives on **two named Docker volumes**, both outside the rsync'd source tree:
+Durable state lives on **three named Docker volumes**, all outside the rsync'd source tree:
 
 - `maestro-data` → `/data`: `runs/` (via `WORKING_DIRECTORY=/data`) + `auth.db` (accounts, credit
   ledger) + `platform.db` (games, builds, jobs, events) (via `MAESTRO_DATA_DIR=/data`, set in
   docker-compose.yml).
-- `maestro-games` → `/app/runtime/games`: staged playable bundles served at `/play`.
+- `maestro-games` → `/app/runtime/games`: staged playable bundles served at `/play/games`.
+- `maestro-demos` → `/app/runtime/demos`: the landing page's demo snapshots, served at
+  `/play/demos`. A snapshot is a copy taken once; a rebuild, fix or change of the same run
+  restages `runtime/games` and leaves the demo as it was.
 
 Both survive image rebuilds and `deploy.sh` runs. Never point `WORKING_DIRECTORY` or
-`MAESTRO_DATA_DIR` off `/data`, and never `docker volume rm` either volume — that wipes accounts and
+`MAESTRO_DATA_DIR` off `/data`, and never `docker volume rm` any of them — that wipes accounts and
 games.
 
 Surviving the BOX is `docs/backups.md`: a control-plane thread snapshots both DBs to the bucket
@@ -106,6 +109,14 @@ provisioning still works; the CLI lives at
 ```bash
 docker compose exec -w /app/src app python -m auth.cli create <handle> <email> [--role admin]   # prompts for a password
 docker compose exec -w /app/src app python -m auth.cli grant  <handle> <n>
+```
+
+Demos are snapshots (`maestro/demos.py`): copy a staged game into the demos volume, then list its
+id under `demo_games` in settings.json. `--replace` is the only way an existing snapshot changes.
+
+```bash
+docker compose exec -w /app/src app python -m maestro.demos snapshot <run_id> [--replace]
+docker compose exec -w /app/src app python -m maestro.demos list
 ```
 
 The other subcommands: `passwd <handle>` (reset a password), `email <handle> <email>` (change the
@@ -314,8 +325,8 @@ copies serving on warm hosts.
 **The llm image is one engine on one card.** Pennyroyal — jpezzulli's SGLang fork for the RTX
 PRO 6000 — serves Qwen3.8 Flash-Next on the 96 GB SM120 card with vision, tool calls and a clean
 reasoning split; it is the only stack measured to (2026-09-02, `docs/experiments.md`). So
-`queues.llm.gpu_type_ids` names that card's two editions, Workstation first (cheaper at $1.89
-and faster), Server second, and `allowed_cuda_versions` is the driver floor
+`queues.llm.gpu_type_ids` names that card's two editions, Workstation first (faster; $2.19
+against the Server Edition's $2.09 since 2026-09-06), Server second, and `allowed_cuda_versions` is the driver floor
 its CUDA 13 wheels need (`["13.0"]`, RunPod's name for an r580+ host): a pod on an older driver
 is dead on any card and bills until the boot-deadline reaper (`boot_deadline_seconds`, 900)
 collects it. The floor rides every ask, including the widened one — there is no second engine to

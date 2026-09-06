@@ -1,10 +1,10 @@
 """Play auth: how a browser earns the right to load a staged game's files.
 
-The SPA (holding the bearer token) asks for a play session; the server checks ownership and
-answers with a single-use HANDOFF token (~60s). The game origin redeems it at /handoff and 302s
-into the game, setting a GRANT cookie scoped to that one game's path — HttpOnly, host-only, so
-the game origin never holds a credential its JS can read, and game A can never fetch game B's
-files. One flow whether games share the app origin or live on their own domain; the only thing
+The SPA (holding the bearer token) asks for a play session; the server checks ownership — or,
+for a listed demo, nothing — and answers with a single-use HANDOFF token (~60s). The game origin
+redeems it at /handoff and 302s into the game, setting a GRANT cookie scoped to that one folder's
+path — HttpOnly, host-only, so the game origin never holds a credential its JS can read, and game
+A can never fetch game B's files. One flow whether games share the app origin or live on their own domain; the only thing
 `play.origin` changes is which host the handoff URL points at.
 
 In-memory on purpose: the control plane is one process (docs/architecture.md), and a restart
@@ -23,16 +23,26 @@ GRANT_TTL_SECONDS = 4 * 3600
 MAX_LIVE = 10_000
 
 _lock = threading.Lock()
-_handoffs: Dict[str, Tuple[str, str, float]] = {}  # token -> (user_id, run_id, expires_at)
-_grants: Dict[str, Tuple[str, str, float]] = {}
+SURFACES = ("games", "demos")
+
+_handoffs: Dict[str, Tuple[str, float]] = {}  # token -> (target, expires_at)
+_grants: Dict[str, Tuple[str, float]] = {}
 
 
-def _prune(table: Dict[str, Tuple[str, str, float]], now: float) -> None:
-    for k in [k for k, (_, _, exp) in table.items() if exp <= now]:
+def target(surface: str, slug: str) -> str:
+    """What a token opens: one folder under /play — `games/<run_id>` (an owner's staged build)
+    or `demos/<run_id>` (a public snapshot). The two never share a grant."""
+    if surface not in SURFACES:
+        raise ValueError(surface)
+    return f"{surface}/{slug}"
+
+
+def _prune(table: Dict[str, Tuple[str, float]], now: float) -> None:
+    for k in [k for k, (_, exp) in table.items() if exp <= now]:
         table.pop(k, None)
 
 
-def issue_handoff(user_id: str, run_id: str) -> Optional[str]:
+def issue_handoff(target: str) -> Optional[str]:
     """A short-lived, single-use token the SPA passes to the game origin. It rides in a URL and
     lands in access logs, which the TTL and single use make acceptable. None ⇒ at the cap."""
     token = secrets.token_urlsafe(32)
@@ -41,44 +51,44 @@ def issue_handoff(user_id: str, run_id: str) -> Optional[str]:
         _prune(_handoffs, now)
         if len(_handoffs) >= MAX_LIVE:
             return None
-        _handoffs[token] = (user_id, run_id, now + HANDOFF_TTL_SECONDS)
+        _handoffs[token] = (target, now + HANDOFF_TTL_SECONDS)
     return token
 
 
-def redeem_handoff(token: Optional[str]) -> Optional[Tuple[str, str]]:
-    """(user_id, run_id) for a live handoff token, consuming it — a replayed URL gets nothing."""
+def redeem_handoff(token: Optional[str]) -> Optional[str]:
+    """The target of a live handoff token, consuming it — a replayed URL gets nothing."""
     if not token:
         return None
     now = time.time()
     with _lock:
         entry = _handoffs.pop(token, None)
-    if entry is None or entry[2] <= now:
+    if entry is None or entry[1] <= now:
         return None
-    return entry[0], entry[1]
+    return entry[0]
 
 
-def issue_grant(user_id: str, run_id: str) -> Optional[str]:
+def issue_grant(target: str) -> Optional[str]:
     token = secrets.token_urlsafe(32)
     now = time.time()
     with _lock:
         _prune(_grants, now)
         if len(_grants) >= MAX_LIVE:
             return None
-        _grants[token] = (user_id, run_id, now + GRANT_TTL_SECONDS)
+        _grants[token] = (target, now + GRANT_TTL_SECONDS)
     return token
 
 
-def resolve_grant(token: Optional[str]) -> Optional[Tuple[str, str]]:
-    """(user_id, run_id) for a live grant — reusable until it expires; every sub-resource load of
-    a play session presents it."""
+def resolve_grant(token: Optional[str]) -> Optional[str]:
+    """The target of a live grant — reusable until it expires; every sub-resource load of a play
+    session presents it."""
     if not token:
         return None
     now = time.time()
     with _lock:
         entry = _grants.get(token)
-    if entry is None or entry[2] <= now:
+    if entry is None or entry[1] <= now:
         return None
-    return entry[0], entry[1]
+    return entry[0]
 
 
 def clear() -> None:

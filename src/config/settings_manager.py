@@ -62,7 +62,7 @@ class SettingsManager:
                 "gpu_rates": {
                     "NVIDIA GeForce RTX 5090": 1.0,
                     "NVIDIA RTX PRO 4500 Blackwell": 0.73,
-                    "NVIDIA RTX PRO 6000 Blackwell Workstation Edition": 1.91,
+                    "NVIDIA RTX PRO 6000 Blackwell Workstation Edition": 2.21,
                     "NVIDIA RTX PRO 6000 Blackwell Server Edition": 2.11,
                 },
             },

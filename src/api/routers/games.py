@@ -201,7 +201,7 @@ async def play_session(run_id: str, user: User = Depends(get_current_user)):
     # An evicted game is a download away from playable — pull it back before minting a session.
     await asyncio.to_thread(archive.ensure_local, run_id)
     origin = (settings_manager.get_settings().get("play") or {}).get("origin", "").rstrip("/")
-    token = playgrants.issue_handoff(user.id, run_id)
+    token = playgrants.issue_handoff(playgrants.target("games", run_id))
     if token is None:
         raise HTTPException(status_code=429, detail="too many open sessions — try again shortly")
     return {"url": f"{origin}/handoff?t={token}", "origin": origin}

@@ -116,6 +116,10 @@ def test_handoff_grants_access_to_that_game_only(client, game_bundle):
     # The browser's Path scoping would never send it; the server refuses a hand-crafted try too.
     assert client.get(f"/play/games/{other_run}/main.js",
                       cookies={"maestro_play": grant}).status_code == 403
+    assert client.get(f"/play/demos/{run_id}/main.js",
+                      cookies={"maestro_play": grant}).status_code == 403
+    assert client.get(f"/play/other/{run_id}/main.js",
+                      cookies={"maestro_play": grant}).status_code == 404
 
 
 def test_handoff_token_is_single_use_and_validated(client, game_bundle):

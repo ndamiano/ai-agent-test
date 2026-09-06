@@ -53,11 +53,12 @@ COPY runtime/ ./runtime/
 COPY --from=mesh-toolchain /toolchain/node_modules ./runtime/node_modules
 COPY --from=frontend /build/frontend/dist ./frontend/dist
 
-# Durable state lives OUTSIDE the source tree on named volumes: /data (runs/ + private/ dbs) and
-# /app/runtime/games (staged playable bundles — served at /play, must survive image rebuilds).
+# Durable state lives OUTSIDE the source tree on named volumes: /data (runs/ + private/ dbs),
+# /app/runtime/games (staged playable bundles — served at /play, must survive image rebuilds)
+# and /app/runtime/demos (the landing page's snapshots).
 # Creating + chowning the mountpoints means the empty named volumes inherit maestro's ownership
 # on first mount, so the non-root process can write without an entrypoint chown.
-RUN mkdir -p /data /app/runtime/games && chown -R maestro:maestro /data /app
+RUN mkdir -p /data /app/runtime/games /app/runtime/demos && chown -R maestro:maestro /data /app
 ENV WORKING_DIRECTORY=/data
 
 USER maestro

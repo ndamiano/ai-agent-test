@@ -99,11 +99,12 @@ transport that never learns what an asset is.
 | accounts, sessions, credit ledger | `auth.db` (SQLite) | `MAESTRO_DATA_DIR` |
 | games, builds, jobs, events, workers, compute budget | `platform.db` (SQLite, WAL) | `MAESTRO_DATA_DIR` |
 | run dirs — spec, build cursor, turn log, game source + its git history | `<WORKING_DIRECTORY>/runs/<run_id>/` | local filesystem |
-| staged playable games | `runtime/games/<run_id>/` | local filesystem, served at `/play` |
+| staged playable games | `runtime/games/<run_id>/` | local filesystem, served at `/play/games` |
+| demo snapshots | `runtime/demos/<run_id>/` | local filesystem, served at `/play/demos`; copied once, never restaged |
 | structured config the env can't express | `src/config/settings.json` | host bind mount |
 
-Two named Docker volumes back the first four rows (`maestro-data` → `/data`, `maestro-games` →
-`/app/runtime/games`). See `deploy.md` for the invariant.
+Three named Docker volumes back the first five rows (`maestro-data` → `/data`, `maestro-games` →
+`/app/runtime/games`, `maestro-demos` → `/app/runtime/demos`). See `deploy.md` for the invariant.
 
 The box is one box, but the state is not: a control-plane thread snapshots both DBs to the S3
 bucket (`tools/db_backup.py` — every 15 minutes, sooner on account/credit writes), and every

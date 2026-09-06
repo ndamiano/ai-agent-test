@@ -97,12 +97,12 @@ def install_auth(app) -> None:
         ownership check, names ONE game, and the browser's own Path scoping means game A's
         requests never even carry game B's grant; the run-id check here is the server-side half
         of that same rule, so a hand-crafted request can't stretch a grant either."""
-        parts = request.url.path.split("/")  # ["", "play", "games", "<id>", ...]
-        if len(parts) < 4 or parts[2] != "games":
+        parts = request.url.path.split("/")  # ["", "play", "games"|"demos", "<id>", ...]
+        if len(parts) < 4 or parts[2] not in playgrants.SURFACES:
             return JSONResponse(status_code=404, content={"detail": "not found"})
         grant = playgrants.resolve_grant(request.cookies.get(PLAY_COOKIE))
         if grant is None:
             return JSONResponse(status_code=401, content={"detail": "authentication required"})
-        if grant[1] != parts[3]:
+        if grant != f"{parts[2]}/{parts[3]}":
             return JSONResponse(status_code=403, content={"detail": "not this game's grant"})
         return await call_next(request)

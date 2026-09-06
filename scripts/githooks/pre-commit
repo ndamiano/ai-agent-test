@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Runs what CI runs, on the parts a commit touches — CI only sees a push, and pushes lag commits
+# by days here. Skip once with `git commit --no-verify`.
+set -euo pipefail
+root=$(git rev-parse --show-toplevel)
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+# git exports GIT_DIR / GIT_INDEX_FILE to a hook, and the suite's own git repos
+# (maestro/codegen/snapshots.py) would commit into THIS index instead of theirs.
+for v in $(compgen -e GIT_); do unset "$v"; done
+
+if grep -qE '^frontend/' <<<"$staged"; then
+    echo "pre-commit: frontend typecheck"
+    (cd "$root/frontend" && npx tsc -b --noEmit)
+fi
+
+if grep -qE '^(src/|tests/|scripts/|run\.py$|requirements\.txt$)' <<<"$staged"; then
+    py="$root/venv/bin/python"
+    [ -x "$py" ] || py=python
+    echo "pre-commit: ruff F401/F811/F841"
+    (cd "$root" && "$py" -m ruff check src scripts run.py --select F401,F811,F841)
+    echo "pre-commit: pytest"
+    (cd "$root/src" && "$py" -m pytest ../tests/ -q -x -p no:cacheprovider 2>&1 | tail -3)
+    [ "${PIPESTATUS[0]}" -eq 0 ]
+fi

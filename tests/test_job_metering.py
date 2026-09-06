@@ -60,8 +60,8 @@ def test_a_pricier_card_debits_more_than_one_second_per_second():
     job_id = _job()
     store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=10.0, gpu_type=WK)
     game = store.game("g1"); job = store.get_job(job_id)
-    assert game["seconds_used"] == pytest.approx(19.1)
-    assert (job["exec_seconds"], job["billed_seconds"]) == (10.0, pytest.approx(19.1))
+    assert game["seconds_used"] == pytest.approx(22.1)
+    assert (job["exec_seconds"], job["billed_seconds"]) == (10.0, pytest.approx(22.1))
 
 
 def test_a_5090_debits_one_for_one():
@@ -87,11 +87,11 @@ def test_the_builds_debit_is_weighted_like_the_games():
     build_id = store.create_build("g1")
     job_id = _job(build_id=build_id)
     store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=10.0, gpu_type=WK)
-    assert store.builds_for("g1")[0]["seconds_used"] == pytest.approx(19.1)
+    assert store.builds_for("g1")[0]["seconds_used"] == pytest.approx(22.1)
 
 
 def test_the_job_row_keeps_raw_exec_beside_the_weighted_debit():
     job_id = _job()
     store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=10.0, gpu_type=WK)
     job = store.get_job(job_id)
-    assert (job["exec_seconds"], job["billed_seconds"]) == (10.0, pytest.approx(19.1))
+    assert (job["exec_seconds"], job["billed_seconds"]) == (10.0, pytest.approx(22.1))

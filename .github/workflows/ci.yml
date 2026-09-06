@@ -39,7 +39,7 @@ jobs:
       - name: Lint
         run: cd frontend && npx eslint .
       - name: Typecheck
-        run: cd frontend && npx tsc --noEmit
+        run: cd frontend && npx tsc -b --noEmit
       - name: Test
         run: cd frontend && npm test -- --run
       - name: Build

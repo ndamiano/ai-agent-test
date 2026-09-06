@@ -47,6 +47,10 @@ A build that calls `compose_world` needs `auto` for the same reason: the world's
 build's own turns share the llm queue, and its art rides the other two while the build keeps
 writing code.
 
+**Pre-commit** — `git config core.hooksPath scripts/githooks`, once per clone. The hook runs the
+frontend typecheck when `frontend/` is staged and ruff + the backend suite when Python is staged —
+the same checks as CI, which only runs on push. `--no-verify` skips it.
+
 **Tests** — `cd src && python -m pytest ../tests/ -q`, frontend
 `cd frontend && npm test` (vitest).
 

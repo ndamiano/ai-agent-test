@@ -1790,3 +1790,34 @@ lab's frame negative. The demo build's own knight and troll prompts, re-rendered
 armour and a readable face where NetaYume's knight was a helmet on a smear; 20 s a still
 with the model resident. The anime item workflows are deleted.
 
+
+## 2026-09-06 — The play critic's impressions as a change note (prod, Flash-Next via Pennyroyal)
+
+The play gate ends with a `judgment.impressions` paragraph — depth, clarity, pacing, "for a
+human, changes nothing" — that lands in `play_report.json` and nobody reads. Read against the
+owner's own verdicts on six prod games, it named every mechanics-and-tuning complaint the owner
+had (guppies flee the size-8 player, the racer stalls at 0 m/s off-track, the brawler's swing
+lands only with the monster in front) and was blind to the two things the owner ranked first:
+art that does not fit (foreground kelp, clashing tiles — the verdict prompt never asks) and the
+game's meta-structure (systems that work but mean nothing; the non-playing parts of a card
+game — out of reach of ten turns). Its tone is positive on every game, a 1 included, so it
+ranks nothing.
+
+The arm re-tests the 2026-08-08 ruling ("a grade says what is wrong, not what to do") with a
+critic that played the game from screenshots instead of reading the source: the paragraph,
+verbatim, as `--change` on three built games the owner had rated, against the untouched
+control, played blind side by side.
+
+| game | owner | change | verdict |
+|---|---|---|---|
+| fish `d008f1b32bef` | 3 | 12 steps | better, barely |
+| racer `1ef4497514ab` | 2 | 62 steps | better, barely |
+| brawler `f3569203412c` | 4 | 44 steps | worse: the complaint was the harness's ("landing damage felt uncertain") — hitting was trivially easy for a person — and the build tuned a game that was not broken |
+
+The ruling stands, on the second instrument. The impressions are a correct list of symptoms
+where they see mechanics, and the fix a symptom buys is marginal; where the critic's difficulty
+is the gate's (ten key-presses, one screenshot a turn, no reaction time) the note is a
+demand, and the build meets it by changing a game that was fine. The paragraph stays a report
+for a human. What would earn a second look is aggregate use across a battery — the recurring
+complaint as a prompt-time change — and a verdict prompt that asks about the art, which is the
+one thing the critic can see and is never asked.

@@ -37,10 +37,17 @@ src/
                          Without it a second attempt opens on the dead build's half-written files:
                          the model reads them, believes them, and re-asks for art it already has
                          under new ids (measured 2026-08-01: three naming schemes for one cast, 40
-                         renders, no finished game). `stop` ends a build where it stands and KEEPS
-                         what it wrote: playability is judged as it is at the step cap (an
-                         index.html), while the builds row records `stopped` — a run ended by hand
-                         over a game that runs is not a run that failed. `pause` DEQUEUES: a
+                         renders, no finished game). `stop` ends EVERYTHING the run has in
+                         flight, at whatever stage it is in, and KEEPS what it wrote: every job the
+                         run owns on every queue fails and releases its reservation — the design's
+                         llm turn, the build's, the art behind it, a world's legs — claimed ones
+                         included, since the worker holding one may be the thing that hung. Every
+                         open builds row records `stopped`, which is what REFUSES a job a lingering
+                         thread enqueues afterwards. A build with a cursor is finalized where it
+                         stands, playability judged as it is at the step cap (an index.html) — a
+                         run ended by hand over a game that runs is not a run that failed — and a
+                         run still being DESIGNED ends `failed` with its ask left as the prompt,
+                         so the page has something to rebuild from. `pause` DEQUEUES: a
                          still-queued turn is cancelled and its step refunded, a claimed one is left
                          to its worker and applied when it lands, and the build parks at the ENQUEUE
                          boundary rather than the top of advance. That boundary is what makes pause

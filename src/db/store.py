@@ -39,6 +39,11 @@ class InsufficientCompute(Exception):
         self.needed = needed
 
 
+class BuildEnded(Exception):
+    """The job's build was stopped by hand. A thread still working for it (a world's later legs,
+    a batch's retry) learns here that nothing it enqueues will be wanted."""
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS games (
     id              TEXT PRIMARY KEY,
@@ -302,6 +307,17 @@ def build_finished(build_id: str, status: str, steps: Optional[int] = None) -> N
         )
 
 
+def finish_open_builds(game_id: str, status: str) -> List[Dict]:
+    """End every build of the game still queued or running, returning the rows ended."""
+    now = time.time()
+    with _db() as conn:
+        rows = conn.execute(
+            "UPDATE builds SET status = ?, finished_at = ? "
+            "WHERE game_id = ? AND status IN ('queued', 'running') RETURNING id, kind",
+            (status, now, game_id)).fetchall()
+    return [dict(r) for r in rows]
+
+
 def builds_for(game_id: str) -> List[Dict]:
     with _db() as conn:
         rows = conn.execute(
@@ -329,6 +345,9 @@ def _insert_job_locked(conn, queue: str, payload: Dict, game_id: Optional[str],
         if build_id is None:
             # A job that belongs to a game belongs to a build: cost and history join on the build.
             raise ValueError(f"job on game {game_id!r} has no build_id")
+        build = conn.execute("SELECT status FROM builds WHERE id = ?", (build_id,)).fetchone()
+        if build is not None and build["status"] == "stopped":
+            raise BuildEnded(f"build {build_id} of game {game_id} was stopped")
     conn.execute(
         "INSERT INTO jobs (id, queue, game_id, build_id, status, payload, model, "
         "est_seconds, batch_id, metadata, created_at) "
@@ -380,6 +399,15 @@ def abandon_job(job_id: str, error: str) -> bool:
     with _db() as conn:
         n = _fail_locked(conn, "id = ? AND status IN ('pending', 'claimed')", (job_id,), error)
     return n == 1
+
+
+def abandon_game_jobs(game_id: str, error: str) -> int:
+    """Fail everything the game has in flight on every queue, releasing the reservations. A
+    CLAIMED job goes too: its worker may be the thing that hung, and a result it reports later
+    is dropped exactly like a lapsed lease, so nothing the row chained to ever fires."""
+    with _db() as conn:
+        return _fail_locked(conn, "game_id = ? AND status IN ('pending', 'claimed')",
+                            (game_id,), error)
 
 
 def abandon_build_jobs(build_id: str, error: str) -> int:

@@ -355,11 +355,13 @@ async def pause_game(run_id: str, user: User = Depends(get_current_user)):
 
 @router.post("/{run_id}/stop", response_model=Dict)
 async def stop_game(run_id: str, user: User = Depends(get_current_user)):
-    """Stop a build for good, keeping whatever it has written. A run that never wrote an index.html
-    ends `failed`; one that did is playable and ends `built`, exactly as a step-capped build does."""
+    """Stop the run for good at whatever stage it is in, keeping whatever it has written. Every
+    job it owns on every queue is cancelled, a design included. A run that never wrote an
+    index.html ends `failed`; one that did is playable and ends `built`, exactly as a step-capped
+    build does. 409 only when the run has nothing in flight at all."""
     _require_state(run_id, user)
     if not await asyncio.to_thread(build_chain.stop, run_id):
-        raise HTTPException(status_code=409, detail="no build in progress for this run")
+        raise HTTPException(status_code=409, detail="nothing in flight for this run")
     return {"run_id": run_id, "status": "stopped"}
 
 

@@ -37,6 +37,9 @@ def run_job(queue: str, payload: Dict, model: Optional[str] = None,
     except db_store.InsufficientCompute as e:
         logger.error("queue job (%s) refused: %s", queue, e)
         return {"status": "failed", "error": f"compute budget exhausted: {e}"}
+    except db_store.BuildEnded as e:
+        logger.info("queue job (%s) refused: %s", queue, e)
+        return {"status": "failed", "error": str(e)}
     deadline = time.time() + timeout
     while time.time() < deadline:
         job = db_store.get_job(job_id)

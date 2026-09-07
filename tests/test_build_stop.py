@@ -1,12 +1,16 @@
-"""Stopping a build by hand.
+"""Stopping a run by hand.
 
-A run with no way to end it is a run that stays `building` forever — the frontend shows it as live
-and the reaper keeps re-driving it. Stop ends the cursor and keeps whatever the model wrote.
+A run with no way to end it is a run that stays live forever — the frontend shows it as building
+and the reaper keeps re-driving it — and a job it left pending keeps the autoscaler renting pods
+for it. Stop ends everything the run has in flight at whatever stage it is in, and keeps whatever
+the model wrote.
 """
 import pytest
 
+from db import store
 from maestro.codegen import build_chain, build_state
 from maestro.codegen.build_state import BuildCursor
+from maestro.state import RunState
 
 
 @pytest.fixture
@@ -17,8 +21,9 @@ def calls(monkeypatch):
                         lambda run_id, s: seen.__setitem__("status", s))
     monkeypatch.setattr(build_chain.db_store, "build_finished",
                         lambda bid, s, steps=None: seen.__setitem__("attempt", s))
-    monkeypatch.setattr(build_chain.db_store, "abandon_build_jobs",
-                        lambda bid, err: seen["jobs"].append(bid) or 1)
+    monkeypatch.setattr(build_chain.db_store, "abandon_game_jobs",
+                        lambda rid, err: seen["jobs"].append(rid) or 1)
+    monkeypatch.setattr(build_chain.db_store, "finish_open_builds", lambda rid, s: [])
     monkeypatch.setattr(build_chain, "stage_for_play",
                         lambda *a, **k: seen.__setitem__("staged", True))
     return seen
@@ -62,9 +67,9 @@ def test_the_attempt_is_recorded_as_stopped_not_succeeded(run, tmp_path, calls):
     assert calls["attempt"] == "stopped"
 
 
-def test_stop_fails_the_builds_queued_turns(run, tmp_path, calls):
+def test_stop_fails_every_job_the_run_owns(run, tmp_path, calls):
     build_chain.stop(run)
-    assert calls["jobs"] == ["b1"]
+    assert calls["jobs"] == [run]
 
 
 def test_a_late_completion_cannot_restart_a_stopped_build(run, tmp_path, calls, monkeypatch):
@@ -77,8 +82,140 @@ def test_a_late_completion_cannot_restart_a_stopped_build(run, tmp_path, calls, 
     assert build_state.load(tmp_path).step == 36
 
 
-def test_stop_reports_when_there_is_nothing_in_flight(tmp_path, calls):
+def test_stop_reports_when_there_is_nothing_in_flight(tmp_path, calls, monkeypatch):
     """The API answers 409 off this."""
+    monkeypatch.setattr(build_chain.db_store, "abandon_game_jobs", lambda rid, err: 0)
     assert build_chain.stop(str(tmp_path)) is False
     build_state.save(tmp_path, BuildCursor(build_id="b1", phase="done"))
     assert build_chain.stop(str(tmp_path)) is False
+
+
+# Against the real store: what stop does to the queue and the run's rows at each stage.
+
+@pytest.fixture
+def quiet(monkeypatch):
+    monkeypatch.setattr(build_chain, "_emit", lambda *a, **k: None)
+    monkeypatch.setattr("maestro.codegen.run._emit", lambda *a, **k: None)
+
+
+def _game(tmp_runs, run_id="g1", ask="a game about frogs"):
+    store.create_game(run_id, "u1")
+    store.charge_game(run_id, 1, 100000)
+    RunState(run_id).write_spec({"ask": ask, "title": "frogs"})
+    return run_id
+
+
+def _designing(tmp_runs):
+    run_id = _game(tmp_runs)
+    bid = store.create_build(run_id, kind="design")
+    store.build_started(bid)
+    job = store.enqueue_job("llm", {"messages": []}, game_id=run_id, build_id=bid,
+                            metadata={"stage": "design", "run_id": run_id})
+    return run_id, bid, job
+
+
+def test_stop_during_design_cancels_the_design_and_the_run_ends_failed(tmp_runs, quiet):
+    run_id, bid, job = _designing(tmp_runs)
+    assert build_chain.stop(run_id) is True
+    assert store.get_job(job)["status"] == "failed"
+    assert store.get_job(job)["error"] == "the run was stopped by hand"
+    (build,) = store.builds_for(run_id)
+    assert build["status"] == "stopped"
+    assert store.game(run_id)["status"] == "failed"
+    assert build_chain.stop(run_id) is False
+
+
+def test_a_stopped_design_leaves_the_ask_as_the_prompt(tmp_runs, quiet):
+    """The page reads a missing `request` as "still designing"; a stopped design is not."""
+    run_id, _, _ = _designing(tmp_runs)
+    build_chain.stop(run_id)
+    assert RunState(run_id).read_spec()["request"] == "a game about frogs"
+
+
+def test_stop_cancels_a_claimed_design_job_and_its_late_result_is_dropped(tmp_runs, quiet):
+    """The worker holding the job may be the pod that hung; when it reports in after all, the
+    result must not land the design and start a build."""
+    run_id, bid, job = _designing(tmp_runs)
+    store.claim_job("llm", "w1", 600)
+    assert build_chain.stop(run_id) is True
+    assert store.get_job(job)["status"] == "failed"
+    assert store.complete_job(job, "w1", {"choices": []}, None, 12.0) is None
+    assert store.game(run_id)["seconds_used"] == 0
+
+
+def test_stop_releases_the_reservation(tmp_runs, quiet):
+    run_id, _, _ = _designing(tmp_runs)
+    before = store.compute_remaining(run_id)
+    build_chain.stop(run_id)
+    assert store.compute_remaining(run_id) > before
+
+
+def _art_jobs(run_id, bid):
+    return [store.enqueue_job(q, {}, game_id=run_id, build_id=bid, batch_id="batch1",
+                              metadata={"run_id": run_id, "asset_id": f"a{i}",
+                                        "then": {"enqueue": "mesh", "finalize": "assets"}})
+            for i, q in enumerate(("image", "video", "mesh"))]
+
+
+def test_stop_cancels_pending_and_claimed_art_on_every_queue(tmp_runs, quiet, monkeypatch):
+    run_id = _game(tmp_runs)
+    bid = store.create_build(run_id, kind="art_build")
+    store.build_started(bid)
+    jobs = _art_jobs(run_id, bid)
+    store.claim_job("image", "w1", 600)
+    assert build_chain.stop(run_id) is True
+    assert [store.get_job(j)["status"] for j in jobs] == ["failed"] * 3
+    assert store.builds_for(run_id)[0]["status"] == "stopped"
+
+
+def test_a_cancelled_art_jobs_late_completion_enqueues_nothing(tmp_runs, quiet):
+    """An image landing normally chains a mesh; a cancelled one must not."""
+    run_id = _game(tmp_runs)
+    bid = store.create_build(run_id, kind="art_build")
+    store.build_started(bid)
+    image = _art_jobs(run_id, bid)[0]
+    store.claim_job("image", "w1", 600)
+    build_chain.stop(run_id)
+    outcome = store.complete_job(image, "w1", {"images": [{"file": "x.png"}]}, None, 5.0,
+                                 continuation={"queue": "mesh", "payload": {}})
+    assert outcome is None
+    assert all(j["status"] == "failed" for j in store.batch_jobs("batch1"))
+
+
+def test_a_thread_still_working_for_a_stopped_build_cannot_enqueue(tmp_runs, quiet):
+    """A world's later legs run on their own thread with the build's id; after stop their jobs
+    are refused at the enqueue, so nothing new appears on a queue for the run."""
+    run_id = _game(tmp_runs)
+    bid = store.create_build(run_id, kind="build")
+    store.build_started(bid)
+    store.enqueue_job("mesh", {}, game_id=run_id, build_id=bid)
+    build_chain.stop(run_id)
+    with pytest.raises(store.BuildEnded):
+        store.enqueue_job("image", {}, game_id=run_id, build_id=bid)
+    from db.queue_client import run_job
+    from tools.execution_context import run_scope
+    with run_scope(run_id, bid):
+        assert run_job("image", {})["status"] == "failed"
+
+
+def test_stop_with_a_cursor_ends_the_other_open_builds_too(tmp_runs, quiet, monkeypatch):
+    run_id = _game(tmp_runs)
+    bid = store.create_build(run_id, kind="build")
+    store.build_started(bid)
+    art = store.create_build(run_id, kind="art_build")
+    store.build_started(art)
+    build_state.save(RunState(run_id).run_dir, BuildCursor(build_id=bid, step=3))
+    build_chain.stop(run_id)
+    assert {b["id"]: b["status"] for b in store.builds_for(run_id)} == {
+        bid: "stopped", art: "stopped"}
+    assert store.game(run_id)["status"] == "failed"
+
+
+def test_the_api_answers_409_with_nothing_in_flight(tmp_runs, app_client):
+    from auth import store as auth_store
+    user = auth_store.create_user("alice", "pw-pass1234", email="alice@example.com")
+    hdr = {"Authorization": f"Bearer {auth_store.issue_token(user.id)}"}
+    store.create_game("g1", user.id)
+    RunState("g1").write_spec({"ask": "x", "title": "x", "request": "x"})
+    r = app_client.post("/api/games/g1/stop", headers=hdr)
+    assert r.status_code == 409

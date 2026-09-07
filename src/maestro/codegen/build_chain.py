@@ -84,23 +84,41 @@ def pause(run_id: str) -> bool:
 
 
 def stop(run_id: str) -> bool:
-    """End a build where it stands and keep what it wrote. False when there is nothing in flight.
+    """End everything the run has in flight, at whatever stage it is in, and keep what it wrote.
+    Every job the run owns on every queue is failed — the design's llm turn, the build's, the art
+    behind it, a world's legs — claimed ones included, since the worker holding one may be the
+    thing that hung; every build row still open records `stopped`, which is what refuses a job a
+    lingering thread enqueues afterwards. False when there was nothing in flight at all.
 
-    Playability is judged the same way a build that hits its step cap is judged — an index.html is
-    still the whole contract, and a run stopped by hand is not a run that failed."""
+    A build with a cursor is finalized where it stands: playability is judged the same way a build
+    that hits its step cap is judged — an index.html is still the whole contract, and a run
+    stopped by hand is not a run that failed. A run still being DESIGNED has nothing to judge: its
+    ask lands as its prompt, the fallback every design that never lands takes, and the run ends
+    `failed` so the page has a prompt to rebuild from rather than a design that never comes."""
     lock = _lock_for(run_id)
     lock.acquire()
     try:
         rs = RunState(run_id)
         cursor = build_state.load(rs.run_dir)
-        if cursor is None or cursor.phase == "done":
-            return False
-        if cursor.build_id:
-            db_store.abandon_build_jobs(cursor.build_id, "the build was stopped by hand")
-        _finalize(run_id, rs, cursor, ok=_playable(rs.run_dir), attempt="stopped")
-        return True
+        cancelled = db_store.abandon_game_jobs(run_id, "the run was stopped by hand")
+        live = cursor is not None and cursor.phase != "done"
+        if live:
+            _finalize(run_id, rs, cursor, ok=_playable(rs.run_dir), attempt="stopped")
+        ended = db_store.finish_open_builds(run_id, "stopped")
+        if any(b["kind"] == "design" for b in ended):
+            _end_design(run_id, rs, next(b["id"] for b in ended if b["kind"] == "design"))
+        return live or bool(cancelled) or bool(ended)
     finally:
         lock.release()
+
+
+def _end_design(run_id: str, rs: RunState, build_id: str) -> None:
+    from maestro.codegen.run import set_prompt
+    spec = rs.read_spec() or {}
+    if not spec.get("request") and spec.get("ask"):
+        set_prompt(run_id, spec["ask"], event="prompt_proposed")
+    db_store.set_status(run_id, "failed")
+    _emit("build_done", run_id, build_id=build_id, ok=False, steps=0)
 
 
 def resume(run_id: str) -> None:

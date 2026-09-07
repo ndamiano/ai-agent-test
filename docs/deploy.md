@@ -366,12 +366,15 @@ plane refuse every render.
 **A schema change is an `ALTER TABLE` on the box before the deploy.** The store creates tables
 with `IF NOT EXISTS` and never migrates, so a column added to a `CREATE TABLE` reaches a fresh
 database only; on prod it is one statement through the container's python, run BEFORE
-`deploy.sh` ships the code that writes it (2026-09-03, `jobs.billed_seconds`):
+`deploy.sh` ships the code that writes it (2026-09-06, `workers.usd_per_hour` and
+`workers.registered_at` — the backfill keeps every existing row live, not booting):
 
 ```bash
 ssh maestro 'cd /opt/maestro && docker compose exec -T app python3 -c "
 import sqlite3; c = sqlite3.connect(\"/data/platform.db\")
-c.execute(\"ALTER TABLE jobs ADD COLUMN billed_seconds REAL\"); c.commit()"'
+c.execute(\"ALTER TABLE workers ADD COLUMN usd_per_hour REAL\")
+c.execute(\"ALTER TABLE workers ADD COLUMN registered_at REAL\")
+c.execute(\"UPDATE workers SET registered_at = started_at\"); c.commit()"'
 ```
 
 **`LLM_MODEL` has no default and the entrypoint refuses to start without one.** An llm pod that
@@ -475,7 +478,7 @@ Settings block (`settings.json` → `runpod`, the full key list in `docs/local_d
   `max_workers`, `scale_up_depth_per_worker` (add when pending ÷ effective workers hits this),
   `scale_up_max_age_seconds` (starvation trigger), `cooldown_seconds`, `idle_exit_seconds`
   (linger tuning: raise for chatty queues, 0 = never exit), `boot_deadline_seconds` (a pod this
-  old with no worker row is reaped as wedged). The `queues` dict in `settings.json` replaces the
+  old that no worker has registered from is reaped as wedged). The `queues` dict in `settings.json` replaces the
   default wholesale — carry complete blocks.
 - Scale-from-zero fires on ANY pending job with no cooldown; a booting pod counts as capacity, so
   a 5-minute boot can't trigger add-forever.
@@ -489,7 +492,7 @@ Create-time `env` OVERRIDES the template's (verified 2026-09-04: every fleet pod
 is what a pod started by hand gets, so keep it current anyway.
 
 First full cycle to watch (mesh, `max_workers: 1`): enqueue a mesh job → pod appears in the RunPod
-console → worker row registers → job done → queue drains → worker exits + deregisters → pod
+console with its worker row already `booting` → the worker registers under the pod id → job done → queue drains → worker exits + deregisters → pod
 disappears (self-terminate or reaper within `stale_worker_seconds`).
 
 ---

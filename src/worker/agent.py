@@ -63,7 +63,9 @@ class Agent:
         # The dialect this worker's target speaks. Known only here — a queue owns its backend.
         self.api = api
         self.queue = queue
-        self.worker_id = worker_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
+        # On a pod the worker IS the pod: its row was written at create, keyed on the pod id.
+        self.pod_id = os.environ.get("RUNPOD_POD_ID")
+        self.worker_id = worker_id or self.pod_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
         self.gpu_type = gpu_type
         self.source = source
         self.idle_exit_seconds = idle_exit_seconds
@@ -71,7 +73,6 @@ class Agent:
         self._busy = 0
         self._busy_lock = threading.Lock()
         self._idle_since = time.monotonic()
-        self.pod_id = os.environ.get("RUNPOD_POD_ID")
         self.session = requests.Session()
         self.session.headers["Authorization"] = f"Bearer {token}"
         self.stopping = False

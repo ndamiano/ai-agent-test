@@ -9,7 +9,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from auth import store as auth_store
 from auth.deps import require_admin
 from auth.store import User
@@ -79,47 +79,33 @@ def _usd_per_hour(gpu_type) -> Optional[float]:
     return round(gpu_rate(gpu_type) * float(billing["usd_per_5090_hour"]), 2)
 
 
-def _workers(request: Request, queue: str, now: float, freshness: float) -> List[Dict[str, Any]]:
-    """Every worker the queue has, live ones from their rows and booting ones from the scaler's
-    last pod listing: a pod RunPod is billing that no worker has registered from yet is still
-    fleet, and the admin view is the one place that shows it."""
+def _workers(queue: str, now: float, freshness: float) -> List[Dict[str, Any]]:
+    """Every worker the queue has: the live ones and the pods created for it that no worker has
+    registered from yet — billed, and fleet, from the create."""
     held = {j["worker_id"]: j for j in db_store.claimed_jobs(queue)}
-    scaler = getattr(request.app.state, "autoscaler", None)
-    pods = scaler.pods(queue, now) if scaler else []
-    # A pod's life starts when the provider spawned it, not when its worker registered —
-    # the boot in between is billed time the row's started_at cannot see.
-    spawned = {p["pod_id"]: p["spawned_at"] for p in pods}
     rows = []
-    for w in db_store.live_workers(queue, freshness):
+    for w in db_store.booting_workers(queue) + db_store.live_workers(queue, freshness):
         job = held.get(w["id"])
         rows.append({
             "id": w["id"],
-            "state": "busy" if job else "idle",
+            "state": "booting" if w["registered_at"] is None else "busy" if job else "idle",
             "gpu_type": w["gpu_type"],
-            "usd_per_hour": _usd_per_hour(w["gpu_type"]),
+            "usd_per_hour": w["usd_per_hour"] if w["usd_per_hour"] is not None
+                            else _usd_per_hour(w["gpu_type"]),
             "source": w["source"],
             "pod_id": w["pod_id"],
-            "spawned_at": spawned.get(w["pod_id"], w["started_at"]),
+            "spawned_at": w["started_at"],
             "last_seen_seconds": now - (w["last_seen_at"] or w["started_at"]),
             "busy_seconds": w["busy_seconds"],
             "job": job and {"id": job["id"], "game_id": job["game_id"], "build_id": job["build_id"],
                             "running_seconds": now - (job["started_at"] or now),
                             "est_seconds": job["est_seconds"]},
         })
-    registered = {w["pod_id"] for w in rows}
-    for pod in pods:
-        if pod["pod_id"] in registered:
-            continue
-        rows.append({
-            "id": pod["name"], "state": "booting", "gpu_type": None, "usd_per_hour": None,
-            "source": "runpod", "pod_id": pod["pod_id"], "spawned_at": pod["spawned_at"],
-            "last_seen_seconds": now - pod["seen_at"], "busy_seconds": 0.0, "job": None,
-        })
     return rows
 
 
 @router.get("/queues")
-async def get_queues(request: Request, _: User = Depends(require_admin)) -> Dict[str, Any]:
+async def get_queues(_: User = Depends(require_admin)) -> Dict[str, Any]:
     """Per-queue snapshot: depth and backlog, the next jobs in claim order, the fleet with
     what each worker holds, and the provider's stock refusals. Pure visualization — no spend
     here."""
@@ -131,7 +117,7 @@ async def get_queues(request: Request, _: User = Depends(require_admin)) -> Dict
 
     for q in QUEUE_SECONDS:
         stats = db_store.queue_stats(q)
-        workers = _workers(request, q, now, freshness)
+        workers = _workers(q, now, freshness)
         row = {
             "queue": q,
             "pending": stats["pending"],

@@ -39,7 +39,8 @@ Consequences worth stating:
 - **A queue with no worker is a timeout, not an error.** Nothing tells the control plane that a
   queue is unserved.
 - **Workers are anonymous and interchangeable.** A worker row exists for heartbeat and scaling
-  bookkeeping, never for routing.
+  bookkeeping, never for routing. A pod's row is written by the create that bought it — keyed on
+  the pod id, carrying the pod's hourly price — and its worker registers into that row.
 - **The wire format is the worker's problem.** The control plane enqueues a canonical chat request;
   the worker translates it for whatever its target serves (`llm_clients/wire.py`,
   `worker/handlers.llm`). Supporting a new engine is a branch in the worker.

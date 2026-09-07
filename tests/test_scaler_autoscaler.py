@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 from scaler.autoscaler import Autoscaler
 from scaler.policy import StartPod
+from scaler.stats import WorkerInfo
 from scaler.runpod_client import RunPodError
 
 QCFG = {"template_id": "tpl1",
@@ -14,6 +15,8 @@ RP = {"cp_url": "https://cp", "network_volume_id": "vol1"}
 
 def _scaler():
     a = Autoscaler(MagicMock(), MagicMock(), lambda: {})
+    a._stats.booting_workers.return_value = []
+    a._stats.unpriced_pod_workers.return_value = []
     return a, a._client
 
 
@@ -224,21 +227,46 @@ def test_no_cuda_floor_configured_sends_none():
     assert client.create_pod.call_args.kwargs["allowed_cuda_versions"] is None
 
 
-def test_pods_is_the_last_listing_filtered_to_the_queue_with_spawn_time(monkeypatch):
-    """Spawned-at is the provider's create stamp; a pod listed without one dates from the tick
-    that first saw it."""
+def test_a_successful_create_writes_the_worker_row_with_the_pods_price():
     a, client = _scaler()
-    pods = [{"id": "p0", "name": "maestro-llm-p0", "createdAt": "2026-09-04 22:29:58.724 +0000 UTC"},
-            {"id": "px", "name": "maestro-image-px"}]
-    _busy(a, client, pods)
-    assert a.pods("llm", 100.0) == []
-    _tick(a, monkeypatch, 100.0)
-    pods.append({"id": "p1", "name": "maestro-llm-p1"})
-    _tick(a, monkeypatch, 130.0)
-    seen = a.pods("llm", 145.0)
-    assert [(p["pod_id"], p["spawned_at"], p["seen_at"]) for p in seen] == [
-        ("p0", 1788560998.724, 130.0), ("p1", 130.0, 130.0)]
-    assert a.pods("image", 145.0)[0]["name"] == "maestro-image-px"
+    client.create_pod.return_value = {"id": "pod1", "costPerHr": 1.89,
+                                      "machine": {"gpuTypeId": "NVIDIA RTX PRO 6000 Blackwell"}}
+    _start(a)
+    a._stats.record_worker_created.assert_called_once_with(
+        "pod1", "llm", "NVIDIA RTX PRO 6000 Blackwell", 1.89)
+
+
+def test_a_create_that_states_no_price_leaves_the_row_unpriced():
+    a, client = _scaler()
+    client.create_pod.return_value = {"id": "pod1"}
+    _start(a)
+    a._stats.record_worker_created.assert_called_once_with("pod1", "llm", None, None)
+
+
+def test_a_refused_create_writes_no_row():
+    a, client = _scaler()
+    client.create_pod.side_effect = RunPodError("no capacity")
+    _start(a)
+    a._stats.record_worker_created.assert_not_called()
+
+
+def test_a_booting_pod_is_aged_from_its_create_not_the_tick_that_first_saw_it(monkeypatch):
+    """A control-plane restart forgets first-seen; the row's started_at does not."""
+    from scaler.stats import BootingInfo
+    a, client = _scaler()
+    _busy(a, client, [{"id": "p1", "name": "maestro-llm-p1"}])
+    a._stats.booting_workers.return_value = [BootingInfo("p1", started_at=100.0)]
+    _tick(a, monkeypatch, 1100.0)
+    client.terminate_pod.assert_called_once_with("p1")
+    a._stats.mark_pod_terminated.assert_called_once_with("p1")
+
+
+def test_a_reaped_pod_is_marked_terminated_by_pod_id():
+    from scaler.policy import TerminatePod
+    a, client = _scaler()
+    a._execute(TerminatePod("p1", "worker stale", worker_id="w1"), "llm", QCFG, RP, "t", LLM, 0.0)
+    client.terminate_pod.assert_called_once_with("p1")
+    a._stats.mark_pod_terminated.assert_called_once_with("p1")
 
 
 STOCK_CARD = RunPodError("POST /v1/pods -> 500: create pod: There are no instances currently available")
@@ -283,3 +311,15 @@ def test_a_refused_create_is_not_also_counted_as_created():
     client.create_pod.side_effect = [STOCK_CARD, STOCK_DC]
     _start(a)
     a._stats.record_pod_created.assert_not_called()
+
+
+def test_tick_stamps_the_pods_actual_hourly_price_on_its_worker():
+    """The rate the provider quotes for the pod it handed us — not the rate table's guess."""
+    stats = MagicMock()
+    stats.booting_workers.return_value = []
+    stats.unpriced_pod_workers.return_value = [WorkerInfo("w1", "p1"), WorkerInfo("w2", "p-gone")]
+    a = Autoscaler(stats, MagicMock(), lambda: {"runpod": {}, "workqueue": {}, "llm": {}})
+    a._client.list_pods.return_value = [{"id": "p1", "name": "maestro-llm-1", "costPerHr": 1.89},
+                                        {"id": "p2", "name": "maestro-llm-2"}]
+    a.tick()
+    stats.record_worker_rate.assert_called_once_with("w1", 1.89)

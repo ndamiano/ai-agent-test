@@ -83,8 +83,8 @@ export interface QueuedJob {
     est_seconds: number
 }
 
-// `booting` is a pod the scaler lists that no worker has registered from yet: id is the pod's
-// name, gpu_type and usd_per_hour are unknown, uptime is the pod's age.
+// `booting` is a pod the scaler created that no worker has registered from yet: id is the pod
+// id, usd_per_hour is the pod's price from the create, gpu_type is what the create stated.
 export interface WorkerRow {
     id: string
     state: 'busy' | 'idle' | 'booting'

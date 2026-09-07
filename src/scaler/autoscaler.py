@@ -1,17 +1,17 @@
 """The control-plane scaling loop: per tick, one list_pods(), then per queue gather stats →
 decide → execute. Errors are logged, never fatal — a bad tick is skipped, not a crash.
 
-Pod age comes from first-seen tracking, not RunPod timestamps: when a pod first appears in
-list_pods() we stamp it, and age = now - stamp. A control-plane restart resets ages to zero,
-which only delays wedged-pod reaping by one boot_deadline — safe, and no API field to trust.
+A pod's age is its worker row's started_at — the create — and survives a control-plane restart.
+A listed pod with our prefix and no row (created before the row existed, or by hand) is aged
+from the tick that first saw it; a restart resets that to zero, which only delays reaping such
+a pod by one boot_deadline.
 """
 
 import logging
 import threading
 import time
 import uuid
-from datetime import datetime
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List
 
 from scaler.policy import (
     MarkWorkerTerminated,
@@ -37,20 +37,6 @@ def refusal_kind(errors: List[str]) -> str:
     return "stock" if all(any(m in e.lower() for m in _STOCK_MARKERS) for e in errors) else "other"
 
 
-def _created_at(pod: Dict) -> Optional[float]:
-    """RunPod's `createdAt` ("2026-09-04 22:29:58.724 +0000 UTC") as an epoch."""
-    stamp = pod.get("createdAt")
-    if not stamp:
-        return None
-    try:
-        return datetime.strptime(stamp.replace(" UTC", ""), "%Y-%m-%d %H:%M:%S.%f %z").timestamp()
-    except ValueError:
-        try:
-            return datetime.strptime(stamp.replace(" UTC", ""), "%Y-%m-%d %H:%M:%S %z").timestamp()
-        except ValueError:
-            return None
-
-
 class Autoscaler:
     def __init__(self, stats: StatsSource, client: RunPodClient,
                  settings_getter: Callable[[], Dict]):
@@ -61,8 +47,6 @@ class Autoscaler:
         self._thread = None
         self._last_scale_up: Dict[str, float] = {}
         self._pod_first_seen: Dict[str, float] = {}
-        self._pods: List[Dict] = []
-        self._pods_seen_at: float = 0.0
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._loop, name="autoscaler", daemon=True)
@@ -96,11 +80,18 @@ class Autoscaler:
             self._pod_first_seen[pod_id] = now
         for pod_id in self._pod_first_seen.keys() - listed:
             del self._pod_first_seen[pod_id]
-        self._pods, self._pods_seen_at = pods, now
+
+        # A create that did not state the price leaves the row unpriced; the listing states it.
+        rate_by_pod = {p["id"]: p["costPerHr"] for p in pods if p.get("costPerHr") is not None}
+        for w in self._stats.unpriced_pod_workers():
+            if w.pod_id in rate_by_pod:
+                self._stats.record_worker_rate(w.id, float(rate_by_pod[w.pod_id]))
 
         for queue, qcfg in (rp.get("queues") or {}).items():
             prefix = f"maestro-{queue}-"
-            qpods = [PodInfo(p["id"], p["name"], now - self._pod_first_seen[p["id"]])
+            created = {b.pod_id: b.started_at for b in self._stats.booting_workers(queue)}
+            qpods = [PodInfo(p["id"], p["name"],
+                             now - created.get(p["id"], self._pod_first_seen[p["id"]]))
                      for p in pods if (p.get("name") or "").startswith(prefix)]
             staleness = rp.get("stale_worker_seconds", 180)
             policy = ScalingPolicy(
@@ -114,24 +105,13 @@ class Autoscaler:
                 queue, policy,
                 self._stats.queue_stats(queue),
                 self._stats.live_workers(queue, staleness),
-                self._stats.stale_workers(queue, staleness),
+                self._stats.stale_workers(queue, staleness, policy.boot_deadline_seconds),
                 self._stats.terminated_workers_with_pods(queue),
                 qpods,
                 now - self._last_scale_up.get(queue, 0.0),
             )
             for action in actions:
                 self._execute(action, queue, qcfg, rp, token, settings["llm"], now)
-
-    def pods(self, queue: str, now: float) -> List[Dict]:
-        """The queue's pods as of the last tick — the admin view's only source for a pod that
-        RunPod is billing but no worker has registered from yet, and for when any pod was
-        spawned: the provider's create stamp, which survives a control-plane restart where the
-        first-seen tick does not."""
-        prefix = f"maestro-{queue}-"
-        return [{"pod_id": p["id"], "name": p["name"],
-                 "spawned_at": _created_at(p) or self._pod_first_seen.get(p["id"], now),
-                 "seen_at": self._pods_seen_at}
-                for p in self._pods if (p.get("name") or "").startswith(prefix)]
 
     def _execute(self, action, queue: str, qcfg: Dict, rp: Dict, token: str, llm: Dict,
                  now: float) -> None:
@@ -158,8 +138,7 @@ class Autoscaler:
                 self._last_scale_up[queue] = now
             elif isinstance(action, TerminatePod):
                 self._client.terminate_pod(action.pod_id)
-                if action.worker_id:
-                    self._stats.mark_worker_terminated(action.worker_id)
+                self._stats.mark_pod_terminated(action.pod_id)
                 logger.info("reaped pod %s (%s)", action.pod_id, action.reason)
             elif isinstance(action, MarkWorkerTerminated):
                 self._stats.mark_worker_terminated(action.worker_id)
@@ -190,7 +169,7 @@ class Autoscaler:
         refused: List[Dict] = []
         for i, (volume, attempt) in enumerate(attempts):
             try:
-                self._client.create_pod(
+                pod = self._client.create_pod(
                     name=name,
                     template_id=qcfg["template_id"],
                     gpu_type_ids=attempt,
@@ -209,7 +188,11 @@ class Autoscaler:
                                "— next ask %s on %s", queue, volume, attempt, cuda, e,
                                attempts[i + 1][1], attempts[i + 1][0])
                 continue
-            logger.info("scale-up %s: created pod %s on %s, volume %s (cuda %s)",
-                        queue, name, attempt, volume, cuda)
+            logger.info("scale-up %s: created pod %s (%s) on %s, volume %s (cuda %s)",
+                        queue, name, pod.get("id"), attempt, volume, cuda)
             self._stats.record_pod_created(queue)
+            rate = pod.get("costPerHr")
+            self._stats.record_worker_created(
+                pod["id"], queue, (pod.get("machine") or {}).get("gpuTypeId"),
+                float(rate) if rate is not None else None)
             return

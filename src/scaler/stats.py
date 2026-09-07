@@ -19,12 +19,24 @@ class WorkerInfo(NamedTuple):
     pod_id: Optional[str]
 
 
+class BootingInfo(NamedTuple):
+    pod_id: str
+    started_at: float
+
+
 class StatsSource(Protocol):
     def queue_stats(self, queue: str) -> QueueStats: ...
     def live_workers(self, queue: str, freshness_seconds: float) -> List[WorkerInfo]: ...
-    def stale_workers(self, queue: str, staleness_seconds: float) -> List[WorkerInfo]: ...
+    def stale_workers(self, queue: str, staleness_seconds: float,
+                      boot_deadline_seconds: float) -> List[WorkerInfo]: ...
+    def booting_workers(self, queue: str) -> List[BootingInfo]: ...
     def terminated_workers_with_pods(self, queue: str) -> List[WorkerInfo]: ...
     def mark_worker_terminated(self, worker_id: str) -> None: ...
+    def mark_pod_terminated(self, pod_id: str) -> None: ...
+    def record_worker_created(self, pod_id: str, queue: str, gpu_type: Optional[str],
+                              usd_per_hour: Optional[float]) -> None: ...
+    def unpriced_pod_workers(self) -> List[WorkerInfo]: ...
+    def record_worker_rate(self, worker_id: str, usd_per_hour: float) -> None: ...
     def record_pod_refusal(self, queue: str, kind: str, attempts: List[Dict],
                            error: str) -> None: ...
     def record_pod_created(self, queue: str) -> None: ...
@@ -39,9 +51,13 @@ class SqliteStatsSource:
         return [WorkerInfo(w["id"], w["pod_id"])
                 for w in store.live_workers(queue, freshness_seconds)]
 
-    def stale_workers(self, queue: str, staleness_seconds: float) -> List[WorkerInfo]:
+    def stale_workers(self, queue: str, staleness_seconds: float,
+                      boot_deadline_seconds: float) -> List[WorkerInfo]:
         return [WorkerInfo(w["id"], w["pod_id"])
-                for w in store.stale_workers(queue, staleness_seconds)]
+                for w in store.stale_workers(queue, staleness_seconds, boot_deadline_seconds)]
+
+    def booting_workers(self, queue: str) -> List[BootingInfo]:
+        return [BootingInfo(w["pod_id"], w["started_at"]) for w in store.booting_workers(queue)]
 
     def terminated_workers_with_pods(self, queue: str) -> List[WorkerInfo]:
         return [WorkerInfo(w["id"], w["pod_id"])
@@ -49,6 +65,19 @@ class SqliteStatsSource:
 
     def mark_worker_terminated(self, worker_id: str) -> None:
         store.set_worker_terminated(worker_id)
+
+    def mark_pod_terminated(self, pod_id: str) -> None:
+        store.set_pod_terminated(pod_id)
+
+    def record_worker_created(self, pod_id: str, queue: str, gpu_type: Optional[str],
+                              usd_per_hour: Optional[float]) -> None:
+        store.worker_created(pod_id, queue, gpu_type, usd_per_hour)
+
+    def unpriced_pod_workers(self) -> List[WorkerInfo]:
+        return [WorkerInfo(w["id"], w["pod_id"]) for w in store.unpriced_pod_workers()]
+
+    def record_worker_rate(self, worker_id: str, usd_per_hour: float) -> None:
+        store.set_worker_rate(worker_id, usd_per_hour)
 
     def record_pod_refusal(self, queue: str, kind: str, attempts: List[Dict],
                            error: str) -> None:

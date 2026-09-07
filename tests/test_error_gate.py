@@ -165,6 +165,7 @@ def no_model(monkeypatch, fast_probe):
     ("<html><body><script>\nundefinedFunction();\n</script></body></html>", 1),
     ("<html><body><script>\ndocument.title = 'fine';\n</script></body></html>", 0),
 ])
+@pytest.mark.browser
 def test_headless_probe_hears_boot_errors(tmp_path, body, expect, no_model):
     pytest.importorskip("playwright.sync_api")
     gdir = _game(tmp_path, body)
@@ -174,6 +175,7 @@ def test_headless_probe_hears_boot_errors(tmp_path, body, expect, no_model):
         assert "undefinedFunction" in errors[0]["message"]
 
 
+@pytest.mark.browser
 def test_probe_hears_a_module_the_page_asked_for_and_did_not_get(tmp_path, no_model):
     """A module import that 404s stops the whole graph without throwing — a game that never ran
     a line read clean until the probe listened for the failed fetch."""
@@ -186,6 +188,7 @@ def test_probe_hears_a_module_the_page_asked_for_and_did_not_get(tmp_path, no_mo
     assert "js/lib/input.js" in errors[0]["message"] and "does not exist" in errors[0]["message"]
 
 
+@pytest.mark.browser
 def test_probe_clicks_the_viewport_centre_without_a_model(tmp_path, no_model):
     """The fixed poke, when the model cannot be asked: a canvas-drawn PLAY at the centre."""
     pytest.importorskip("playwright.sync_api")
@@ -197,6 +200,7 @@ def test_probe_clicks_the_viewport_centre_without_a_model(tmp_path, no_model):
     assert len(errors) == 1 and "startTurn" in errors[0]["message"]
 
 
+@pytest.mark.browser
 def test_probe_blocks_external_egress_and_logs_it(tmp_path, caplog, monkeypatch, no_model):
     """The probe runs the game's own JS on the control-plane box — a request to anything but the
     game's ephemeral server must die inside the browser."""
@@ -213,6 +217,7 @@ def test_probe_blocks_external_egress_and_logs_it(tmp_path, caplog, monkeypatch,
                for r in caplog.records)
 
 
+@pytest.mark.browser
 def test_probe_still_serves_the_games_own_files(tmp_path, caplog, monkeypatch, no_model):
     import logging
     pytest.importorskip("playwright.sync_api")
@@ -268,6 +273,7 @@ def test_parse_targets_answers_none_off_shape(text):
     assert error_gate._parse_targets(text) is None
 
 
+@pytest.mark.browser
 def test_probe_presses_what_the_model_names(tmp_path, monkeypatch, fast_probe):
     """Two builds died on a PLAY button that was not at the viewport centre; the fixed poke never
     reached it. The model reads the screenshot and names the button, and the probe presses THAT."""
@@ -287,6 +293,7 @@ def test_probe_presses_what_the_model_names(tmp_path, monkeypatch, fast_probe):
         ["startCase is not defined", "openHelp is not defined"]
 
 
+@pytest.mark.browser
 def test_probe_presses_each_on_a_fresh_page(tmp_path, monkeypatch, fast_probe):
     """A title that leaves on the first press would hide what the later ones do."""
     pytest.importorskip("playwright.sync_api")

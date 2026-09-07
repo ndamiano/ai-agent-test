@@ -363,7 +363,7 @@ def test_an_idle_slot_waits_for_a_busy_sibling():
     """A null claim on one slot while another is mid-job is not the worker's idle verdict: the
     pod stays up, and exits only once every slot has come back empty."""
     a = Agent("http://server", "http://gpu", "llm", "wsecret", worker_id="w1",
-              idle_exit_seconds=5, slots=2)
+              idle_exit_seconds=0.5, slots=2)
     a.session = MagicMock()
     release = threading.Event()
     claims = {"n": 0}

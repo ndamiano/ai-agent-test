@@ -105,7 +105,6 @@ def test_workers_report_state_card_price_and_the_job_they_hold(app_client, monke
 
 
 def test_a_created_pod_is_booting_until_its_worker_registers(app_client):
-    now = time.time()
     db_store.worker_created("p-new", "llm", None, 1.89)
     db_store.worker_created("p-live", "llm", None, 1.89)
     db_store.worker_seen("p-live", "llm", gpu_type="BIG", source="runpod", pod_id="p-live")
@@ -115,7 +114,7 @@ def test_a_created_pod_is_booting_until_its_worker_registers(app_client):
     assert states == {"p-live": "idle", "p-new": "booting"}
     booting = next(w for w in llm["workers"] if w["state"] == "booting")
     assert booting["pod_id"] == "p-new"
-    assert booting["spawned_at"] == pytest.approx(now, abs=5)
+    assert booting["uptime_seconds"] == pytest.approx(0, abs=5)
     # The price is the pod's from the create, before any worker has said what card it is on.
     assert booting["usd_per_hour"] == 1.89
     assert booting["gpu_type"] is None

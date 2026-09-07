@@ -44,7 +44,6 @@ const NextJobs: React.FC<{ row: QueueRow }> = ({ row }) => (
 )
 
 const Workers: React.FC<{ row: QueueRow }> = ({ row }) => {
-    const now = Date.now() / 1000
     return <div>
         <div className="text-slate text-xs font-semibold mb-1">Workers</div>
         {row.workers.length === 0
@@ -71,7 +70,7 @@ const Workers: React.FC<{ row: QueueRow }> = ({ row }) => {
                             </td>
                             <td className="pr-3" title={w.gpu_type ?? ''}>{w.gpu_type ? shortGpu(w.gpu_type) : '—'}</td>
                             <td className="pr-3 text-right">{w.usd_per_hour == null ? '—' : fmtUsd(w.usd_per_hour)}</td>
-                            <td className="pr-3 text-right">{fmtAge(now - w.spawned_at)}</td>
+                            <td className="pr-3 text-right">{fmtAge(w.uptime_seconds)}</td>
                             <td className="pr-3 text-right">{fmtAge(w.last_seen_seconds)}</td>
                             <td className="pr-3" title={w.job ? `job ${w.job.id}${w.job.build_id ? ` · build ${w.job.build_id}` : ''}` : ''}>
                                 {w.job ? short(w.job.game_id) : '—'}

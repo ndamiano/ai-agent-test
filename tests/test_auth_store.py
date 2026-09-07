@@ -85,3 +85,15 @@ def test_token_stored_only_as_hash(tmp_path):
     rows = [r[0] for r in conn.execute("SELECT token_hash FROM sessions").fetchall()]
     conn.close()
     assert token not in rows
+
+
+def test_password_hashing_stays_expensive_in_production():
+    """The suite runs on 1_000 rounds (conftest `cheap_password_hashing`); the shipped number is
+    what makes a stolen hash costly, and nothing else asserts it."""
+    import ast
+
+    with open(s.__file__) as fh:
+        src = ast.parse(fh.read())
+    rounds = next(n.value.value for n in ast.walk(src)
+                  if isinstance(n, ast.Assign) and n.targets[0].id == "_PBKDF2_ROUNDS")
+    assert rounds >= 600_000

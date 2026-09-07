@@ -9,8 +9,8 @@ staged=$(git diff --cached --name-only --diff-filter=ACMR)
 for v in $(compgen -e GIT_); do unset "$v"; done
 
 if grep -qE '^frontend/' <<<"$staged"; then
-    echo "pre-commit: frontend typecheck"
-    (cd "$root/frontend" && npx tsc -b --noEmit)
+    echo "pre-commit: frontend eslint, typecheck, tests"
+    (cd "$root/frontend" && npx eslint . && npx tsc -b --noEmit && npm test -- --run >/dev/null)
 fi
 
 if grep -qE '^(src/|tests/|scripts/|run\.py$|requirements\.txt$)' <<<"$staged"; then
@@ -18,7 +18,7 @@ if grep -qE '^(src/|tests/|scripts/|run\.py$|requirements\.txt$)' <<<"$staged"; 
     [ -x "$py" ] || py=python
     echo "pre-commit: ruff F401/F811/F841"
     (cd "$root" && "$py" -m ruff check src scripts run.py --select F401,F811,F841)
-    echo "pre-commit: pytest"
-    (cd "$root/src" && "$py" -m pytest ../tests/ -q -x -p no:cacheprovider 2>&1 | tail -3)
+    echo "pre-commit: pytest (browser tests deselected — CI runs those)"
+    (cd "$root/src" && "$py" -m pytest ../tests/ -q -x -p no:cacheprovider -m "not browser" 2>&1 | tail -3)
     [ "${PIPESTATUS[0]}" -eq 0 ]
 fi

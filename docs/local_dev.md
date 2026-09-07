@@ -47,9 +47,13 @@ A build that calls `compose_world` needs `auto` for the same reason: the world's
 build's own turns share the llm queue, and its art rides the other two while the build keeps
 writing code.
 
-**Pre-commit** — `git config core.hooksPath scripts/githooks`, once per clone. The hook runs the
-frontend typecheck when `frontend/` is staged and ruff + the backend suite when Python is staged —
-the same checks as CI, which only runs on push. `--no-verify` skips it.
+**CI locally** — `scripts/ci.sh` runs every job in `.github/workflows/ci.yml` (pytest, ruff,
+eslint, tsc, vitest, vite build) and prints one verdict per step. Run it before a push.
+
+**Pre-commit** — `git config core.hooksPath scripts/githooks`, once per clone. The hook is
+`ci.sh` scoped to what a commit stages: eslint + typecheck + vitest for `frontend/`, ruff + the
+backend suite for Python. It deselects `-m browser` — the dozen tests that launch a real headless
+chromium, 17 s of the suite — and CI runs those. `--no-verify` skips it.
 
 **Tests** — `cd src && python -m pytest ../tests/ -q`, frontend
 `cd frontend && npm test` (vitest).
@@ -333,12 +337,3 @@ bind, `WORKING_DIRECTORY`, `WORKQUEUE_TOKEN` + its timeouts, the `LLM_*` default
 `scripts/db.py` — stdlib only, runs anywhere the file is: named queries (`cost`, `builds`,
 `models`, `failures`, `turns`) and `sql "<text>"` for the rest; `--db` points it at another file, `--since`
 at a date. Read it from a snapshot, never the live file (`docs/backups.md` "Query hygiene").
-
----
-
-## The pre-commit hook
-
-`git config core.hooksPath .githooks` once per clone. `.githooks/pre-commit` lists every comment
-line the commit adds and asks whether each belongs (the standard is `CLAUDE.md` "Comments"). On a
-terminal it prompts y/N; with no terminal it blocks and prints the list, and the same commit goes
-through with `COMMENTS_REVIEWED=1` after the list has been read.

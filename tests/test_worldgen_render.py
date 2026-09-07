@@ -121,6 +121,7 @@ def test_heightmap_is_the_float_buffer_the_loader_reads(world):
     assert struct.unpack("<f", raw[:4])[0] == pytest.approx(0.0)
 
 
+@pytest.mark.browser
 def test_render_draws_the_world_in_a_browser(world):
     out_dir, plan = world
     pytest.importorskip("playwright.sync_api")
@@ -222,6 +223,7 @@ def _browser_or_skip():
         pytest.skip(f"no chromium: {e}")
 
 
+@pytest.mark.browser
 def test_a_steep_face_is_not_the_colour_of_the_flat_ground(ridge_world):
     """The slope rule, from above so that shading cannot be what is measured.
 
@@ -247,6 +249,7 @@ def test_a_steep_face_is_not_the_colour_of_the_flat_ground(ridge_world):
     assert spread(steep) < spread(flat) * 0.8, (spread(steep), spread(flat))
 
 
+@pytest.mark.browser
 def test_a_tall_thing_casts_a_shadow_on_the_ground(ridge_world, monkeypatch):
     """The sun the loader hangs over a world reaches the terrain material.
 
@@ -280,6 +283,7 @@ def test_a_tall_thing_casts_a_shadow_on_the_ground(ridge_world, monkeypatch):
     assert shaded.mean() < lit.mean() * 0.75, (shaded.mean(), lit.mean())
 
 
+@pytest.mark.browser
 def test_the_ground_wears_through_to_its_variant_on_a_slope(ridge_world):
     """The pair, in the one place the recipe is not a matter of taste.
 

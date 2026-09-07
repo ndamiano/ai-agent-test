@@ -98,7 +98,7 @@ def _workers(queue: str, now: float, freshness: float) -> List[Dict[str, Any]]:
                             else _usd_per_hour(w["gpu_type"]),
             "source": w["source"],
             "pod_id": w["pod_id"],
-            "spawned_at": w["started_at"],
+            "uptime_seconds": now - w["started_at"],
             "last_seen_seconds": now - (w["last_seen_at"] or w["started_at"]),
             "busy_seconds": w["busy_seconds"],
             "job": job and {"id": job["id"], "game_id": job["game_id"], "build_id": job["build_id"],

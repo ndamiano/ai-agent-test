@@ -48,6 +48,16 @@ def tmp_runs(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def cheap_password_hashing(monkeypatch):
+    """600K pbkdf2 rounds is 83 ms a hash and the suite hashes ~265 times — 22 seconds of it. The
+    round count is a production cost parameter, and `test_password_hashing_stays_expensive_in_production`
+    reads it from the source, so lowering it here cannot hide a weakened one."""
+    from auth import store as auth_store
+
+    monkeypatch.setattr(auth_store, "_PBKDF2_ROUNDS", 1_000)
+
+
+@pytest.fixture(autouse=True)
 def isolated_dbs(tmp_path, monkeypatch):
     """Both datastores under this test's tmp dir. Autouse, so a test that never thought about the
     db cannot reach the real one."""

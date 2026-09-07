@@ -219,3 +219,55 @@ def test_the_api_answers_409_with_nothing_in_flight(tmp_runs, app_client):
     RunState("g1").write_spec({"ask": "x", "title": "x", "request": "x"})
     r = app_client.post("/api/games/g1/stop", headers=hdr)
     assert r.status_code == 409
+
+
+def _user(handle, role="user"):
+    from auth import store as auth_store
+    u = auth_store.create_user(handle, "pw-pass1234", role=role, email=f"{handle}@example.com")
+    return u, {"Authorization": f"Bearer {auth_store.issue_token(u.id)}"}
+
+
+def test_an_owner_cannot_stop_someone_elses_run(tmp_runs, app_client, quiet):
+    owner, _ = _user("alice")
+    _, stranger_hdr = _user("bob")
+    store.create_game("g1", owner.id)
+    RunState("g1").write_spec({"ask": "x", "title": "x", "request": "x"})
+    assert app_client.post("/api/games/g1/stop", headers=stranger_hdr).status_code == 403
+
+
+def test_an_admin_stops_a_run_owned_by_someone_else(tmp_runs, app_client, quiet):
+    owner, _ = _user("alice")
+    _, admin_hdr = _user("root", role="admin")
+    store.create_game("g1", owner.id)
+    store.charge_game("g1", 1, 100000)
+    RunState("g1").write_spec({"ask": "x", "title": "x"})
+    bid = store.create_build("g1", kind="design")
+    store.build_started(bid)
+    job = store.enqueue_job("llm", {"messages": []}, game_id="g1", build_id=bid,
+                            metadata={"stage": "design", "run_id": "g1"})
+
+    r = app_client.post("/api/admin/games/g1/stop", headers=admin_hdr)
+    assert r.status_code == 200 and r.json()["owner"] == owner.id
+    assert store.get_job(job)["status"] == "failed"
+    assert store.game("g1")["status"] == "failed"
+
+
+def test_the_admin_stop_is_admin_only(tmp_runs, app_client, quiet):
+    owner, owner_hdr = _user("alice")
+    store.create_game("g1", owner.id)
+    RunState("g1").write_spec({"ask": "x", "title": "x", "request": "x"})
+    # Even over their OWN run: this surface is the operator's, and the owner has their own.
+    assert app_client.post("/api/admin/games/g1/stop", headers=owner_hdr).status_code == 403
+
+
+def test_the_admin_stop_404s_on_a_run_that_never_existed(tmp_runs, app_client, quiet):
+    _, admin_hdr = _user("root", role="admin")
+    assert app_client.post("/api/admin/games/nope/stop", headers=admin_hdr).status_code == 404
+
+
+def test_the_admin_stop_409s_with_nothing_in_flight(tmp_runs, app_client, quiet):
+    owner, _ = _user("alice")
+    _, admin_hdr = _user("root", role="admin")
+    store.create_game("g1", owner.id)
+    RunState("g1").write_spec({"ask": "x", "title": "x", "request": "x"})
+    assert app_client.post("/api/admin/games/g1/stop", headers=admin_hdr).status_code == 409

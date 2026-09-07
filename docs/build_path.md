@@ -38,7 +38,10 @@ src/
                          the model reads them, believes them, and re-asks for art it already has
                          under new ids (measured 2026-08-01: three naming schemes for one cast, 40
                          renders, no finished game). `stop` ends EVERYTHING the run has in
-                         flight, at whatever stage it is in, and KEEPS what it wrote: every job the
+                         flight, at whatever stage it is in, and KEEPS what it wrote (the owner
+                         reaches it over their own runs, an operator over ANY —
+                         `routers/admin.py`, which is the hand on a run renting cards for
+                         somebody else): every job the
                          run owns on every queue fails and releases its reservation — the design's
                          llm turn, the build's, the art behind it, a world's legs — claimed ones
                          included, since the worker holding one may be the thing that hung. Every

@@ -1,7 +1,8 @@
 """Operator-only surfaces. Everything here is gated by `require_admin`, so a signed-in ordinary
 user gets a 403: the inference-queue snapshot (depth, next jobs, fleet) the operator watches to
-size the fleet, the effective-cost join against RunPod's ledger, and the usage rollup (user-action
-events by kind by day — see routers/events.py for the intake).
+size the fleet, the effective-cost join against RunPod's ledger, the usage rollup (user-action
+events by kind by day — see routers/events.py for the intake), and the stop that reaches ANY
+run, which is the operator's hand on a run burning cards for somebody else.
 """
 
 import calendar
@@ -9,13 +10,16 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+import asyncio
+
+from fastapi import APIRouter, Depends, HTTPException
 from auth import store as auth_store
 from auth.deps import require_admin
 from auth.store import User
 from config.settings_manager import settings_manager
 from db import store as db_store
 from db.estimates import QUEUE_SECONDS, gpu_rate
+from maestro.codegen import build_chain
 from scaler.runpod_client import RunPodClient
 
 logger = logging.getLogger("admin")
@@ -295,3 +299,17 @@ async def get_costs(_: User = Depends(require_admin)) -> Dict[str, Any]:
             "runpod_reachable": billing is not None, "windows": windows, "ghost_30d": ghost}
     _cost_cache.update(at=now, data=data)
     return data
+
+
+@router.post("/games/{run_id}/stop")
+async def stop_any_game(run_id: str, admin: User = Depends(require_admin)) -> Dict[str, Any]:
+    """Stop any run, whoever owns it — the owner's own `/api/games/{id}/stop` reaches only their
+    games, and a run renting cards for a stranger is the operator's to end. Same machinery, so
+    what it keeps and what it cancels are the same; 409 when the run has nothing in flight."""
+    owner = db_store.owner_of(run_id)
+    if owner is None:
+        raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
+    logger.warning("admin %s stopping run %s owned by %s", admin.id, run_id, owner)
+    if not await asyncio.to_thread(build_chain.stop, run_id):
+        raise HTTPException(status_code=409, detail="nothing in flight for this run")
+    return {"run_id": run_id, "status": "stopped", "owner": owner}

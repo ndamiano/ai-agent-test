@@ -500,6 +500,12 @@ First full cycle to watch (mesh, `max_workers: 1`): enqueue a mesh job → pod a
 console with its worker row already `booting` → the worker registers under the pod id → job done → queue drains → worker exits + deregisters → pod
 disappears (self-terminate or reaper within `stale_worker_seconds`).
 
+A run renting cards nobody wants is ended at its source, not in the console: a pending job is what
+the scaler is answering, so terminating pods only buys the next tick. `POST /api/admin/games/<run
+id>/stop` (admin token) ends any run whoever owns it — every job it holds on every queue fails and
+the fleet drains itself. The owner's own `POST /api/games/<run id>/stop` does the same over their
+own runs.
+
 ---
 
 ## Known deferred risks (accepted for private alpha — trusted testers)

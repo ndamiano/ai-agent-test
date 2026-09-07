@@ -17,7 +17,7 @@ step() {
     fail=1
 }
 
-step "pytest" bash -c "cd '$root/src' && '$py' -m pytest ../tests/ -q -p no:cacheprovider"
+step "pytest" bash -c "cd '$root/src' && '$py' -m pytest ../tests/ -q -n auto -p no:cacheprovider"
 step "ruff F401/F811/F841" bash -c "cd '$root' && '$py' -m ruff check src scripts run.py --select F401,F811,F841"
 step "eslint" bash -c "cd '$root/frontend' && npx eslint ."
 step "tsc" bash -c "cd '$root/frontend' && npx tsc -b --noEmit"

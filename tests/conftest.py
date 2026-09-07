@@ -67,3 +67,13 @@ def isolated_dbs(tmp_path, monkeypatch):
     monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
     monkeypatch.setattr(auth_store, "_db_path", lambda: tmp_path / "auth.db")
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def no_real_bucket(monkeypatch):
+    """Autouse, so a test that never thought about s3 cannot reach the real bucket: the settings
+    file on a dev box has live credentials, and `ensure_local` on any absent run dir goes to the
+    network — which under a parallel run answers 503 SlowDown. The bucket tests patch this back on."""
+    from tools import s3
+
+    monkeypatch.setattr(s3, "configured", lambda: False)

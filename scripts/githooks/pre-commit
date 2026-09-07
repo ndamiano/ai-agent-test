@@ -19,6 +19,6 @@ if grep -qE '^(src/|tests/|scripts/|run\.py$|requirements\.txt$)' <<<"$staged"; 
     echo "pre-commit: ruff F401/F811/F841"
     (cd "$root" && "$py" -m ruff check src scripts run.py --select F401,F811,F841)
     echo "pre-commit: pytest (browser tests deselected — CI runs those)"
-    (cd "$root/src" && "$py" -m pytest ../tests/ -q -x -p no:cacheprovider -m "not browser" 2>&1 | tail -3)
+    (cd "$root/src" && "$py" -m pytest ../tests/ -q -x -n auto -p no:cacheprovider -m "not browser" 2>&1 | tail -3)
     [ "${PIPESTATUS[0]}" -eq 0 ]
 fi

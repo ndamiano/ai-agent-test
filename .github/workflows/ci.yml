@@ -15,13 +15,13 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest httpx
+        run: pip install -r requirements.txt pytest pytest-xdist httpx
       - name: Install playwright browser
         run: python -m playwright install --with-deps chromium
       - name: Bootstrap settings
         run: cp src/config/settings.example.json src/config/settings.json
       - name: Run tests
-        run: cd src && python -m pytest ../tests/ -q
+        run: cd src && python -m pytest ../tests/ -q -n auto
       - name: Unused imports and names
         run: pip install ruff && ruff check src scripts run.py --select F401,F811,F841
 

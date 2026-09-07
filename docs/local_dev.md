@@ -53,9 +53,10 @@ eslint, tsc, vitest, vite build) and prints one verdict per step. Run it before 
 **Pre-commit** — `git config core.hooksPath scripts/githooks`, once per clone. The hook is
 `ci.sh` scoped to what a commit stages: eslint + typecheck + vitest for `frontend/`, ruff + the
 backend suite for Python. It deselects `-m browser` — the dozen tests that launch a real headless
-chromium, 17 s of the suite — and CI runs those. `--no-verify` skips it.
+chromium — and CI runs those. `--no-verify` skips it.
 
-**Tests** — `cd src && python -m pytest ../tests/ -q`, frontend
+**Tests** — `cd src && python -m pytest ../tests/ -q -n auto` (pytest-xdist; the suite is
+process-parallel, 36 s serial against 9 s here), frontend
 `cd frontend && npm test` (vitest).
 
 ---

@@ -4,14 +4,21 @@ The ONLY scaler module that imports db.store. A later move to SQS-like infra swa
 (ApproximateNumberOfMessages ≈ pending, etc.); policy.py and autoscaler.py never touch storage.
 """
 
+import time
 from typing import Dict, List, NamedTuple, Optional, Protocol
 
 from db import store
+
+_WEEK = 7 * 24 * 3600
 
 
 class QueueStats(NamedTuple):
     pending: int
     oldest_pending_age_seconds: Optional[float]
+    # One job's cost to a worker and a pod's create-to-registered time, both measured over the
+    # last week; None where the week holds no data.
+    job_seconds: Optional[float] = None
+    boot_seconds: Optional[float] = None
 
 
 class WorkerInfo(NamedTuple):
@@ -45,7 +52,10 @@ class StatsSource(Protocol):
 class SqliteStatsSource:
     def queue_stats(self, queue: str) -> QueueStats:
         s = store.queue_stats(queue)
-        return QueueStats(s["pending"], s["oldest_pending_age_seconds"])
+        since = time.time() - _WEEK
+        return QueueStats(s["pending"], s["oldest_pending_age_seconds"],
+                          store.recent_job_seconds(queue, since),
+                          store.recent_boot_seconds(queue, since))
 
     def live_workers(self, queue: str, freshness_seconds: float) -> List[WorkerInfo]:
         return [WorkerInfo(w["id"], w["pod_id"])

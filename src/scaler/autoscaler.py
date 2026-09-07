@@ -21,6 +21,7 @@ from scaler.policy import (
     TerminatePod,
     decide,
 )
+from db.estimates import estimate_seconds
 from scaler.runpod_client import RunPodClient, RunPodError
 from scaler.stats import StatsSource
 
@@ -96,10 +97,11 @@ class Autoscaler:
             staleness = rp.get("stale_worker_seconds", 180)
             policy = ScalingPolicy(
                 max_workers=qcfg.get("max_workers", 2),
-                scale_up_depth_per_worker=qcfg.get("scale_up_depth_per_worker", 10),
                 scale_up_max_age_seconds=qcfg.get("scale_up_max_age_seconds", 300),
                 cooldown_seconds=qcfg.get("cooldown_seconds", 90),
-                boot_deadline_seconds=qcfg.get("boot_deadline_seconds", 900),
+                boot_deadline_seconds=qcfg.get("boot_deadline_seconds", 300),
+                assumed_boot_seconds=qcfg.get("boot_seconds", 150),
+                assumed_job_seconds=estimate_seconds(queue),
             )
             actions = decide(
                 queue, policy,

@@ -3,6 +3,12 @@
 Reap first (a dying pod must stop counting before capacity is measured), then at most one
 StartPod per tick. The reaper only ever sees pods the autoscaler already filtered to this
 queue's `maestro-<queue>-` prefix, so it can never touch a pod it doesn't manage.
+
+A pod is added when the backlog will outlast a boot: the workers on hand, at the queue's
+measured seconds per job, need longer to drain what is pending than a new pod takes to arrive.
+Queue depth alone said nothing about that — an art burst of forty 13-second jobs looked deep
+on every tick of a two-minute boot, and five pods came up for work the first two finished
+(2026-09-06: 17, 8, 5, 2 and 0 jobs each).
 """
 
 from dataclasses import dataclass
@@ -14,10 +20,12 @@ from scaler.stats import QueueStats, WorkerInfo
 @dataclass(frozen=True)
 class ScalingPolicy:
     max_workers: int
-    scale_up_depth_per_worker: int
     scale_up_max_age_seconds: float
     cooldown_seconds: float
     boot_deadline_seconds: float
+    # What a boot costs and a job costs when the week holds no measurement of either.
+    assumed_boot_seconds: float
+    assumed_job_seconds: float
 
 
 @dataclass(frozen=True)
@@ -94,9 +102,12 @@ def decide(queue: str, cfg: ScalingPolicy, stats: QueueStats,
     if effective == 0:
         # Scale-from-zero on ANY pending job, no cooldown: nothing is coming to drain it.
         add = stats.pending > 0
-    elif stats.pending >= cfg.scale_up_depth_per_worker * effective \
-            or (stats.oldest_pending_age_seconds or 0) > cfg.scale_up_max_age_seconds:
-        add = seconds_since_last_scale_up >= cfg.cooldown_seconds
+    else:
+        job = stats.job_seconds if stats.job_seconds is not None else cfg.assumed_job_seconds
+        boot = stats.boot_seconds if stats.boot_seconds is not None else cfg.assumed_boot_seconds
+        drain = stats.pending * job / effective
+        if drain > boot or (stats.oldest_pending_age_seconds or 0) > cfg.scale_up_max_age_seconds:
+            add = seconds_since_last_scale_up >= cfg.cooldown_seconds
     if add and surviving_pods < cfg.max_workers:
         actions.append(StartPod(queue))
 

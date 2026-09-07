@@ -10,9 +10,8 @@ from scaler.policy import (
 )
 from scaler.stats import QueueStats, WorkerInfo
 
-CFG = ScalingPolicy(max_workers=2, scale_up_depth_per_worker=10,
-                    scale_up_max_age_seconds=300, cooldown_seconds=90,
-                    boot_deadline_seconds=900)
+CFG = ScalingPolicy(max_workers=2, scale_up_max_age_seconds=300, cooldown_seconds=90,
+                    boot_deadline_seconds=900, assumed_boot_seconds=120, assumed_job_seconds=13)
 
 IDLE = QueueStats(pending=0, oldest_pending_age_seconds=None)
 
@@ -40,10 +39,32 @@ def test_a_booting_pod_counts_as_capacity():
     assert _decide(stats=QueueStats(5, 30.0), pods=[pod]) == []
 
 
-def test_depth_threshold_adds_one_pod():
+def test_a_backlog_that_outlasts_a_boot_adds_one_pod():
+    # 10 jobs at 13 s on one worker = 130 s to drain; a pod arrives in 120. Worth starting.
     live = [WorkerInfo("w1", "p1")]
     pods = [PodInfo("p1", "maestro-mesh-a1", 600)]
     assert _decide(stats=QueueStats(10, 30.0), live=live, pods=pods) == [StartPod("mesh")]
+
+
+def test_a_backlog_the_workers_will_drain_before_a_boot_adds_nothing():
+    # The 2026-09-06 art burst at its third tick: ~15 jobs of 13 s left, two workers live —
+    # 98 s each against a 120 s boot. Pods 3, 4 and 5 that day did 5, 2 and 0 jobs.
+    live = [WorkerInfo("w1", "p1"), WorkerInfo("w2", "p2")]
+    pods = [PodInfo("p1", "maestro-mesh-a1", 600), PodInfo("p2", "maestro-mesh-a2", 300)]
+    cfg = ScalingPolicy(max_workers=5, scale_up_max_age_seconds=300, cooldown_seconds=90,
+                        boot_deadline_seconds=900, assumed_boot_seconds=120, assumed_job_seconds=13)
+    assert _decide(stats=QueueStats(15, 60.0), live=live, pods=pods, cfg=cfg) == []
+
+
+def test_measured_job_and_boot_seconds_override_the_assumed_ones():
+    live = [WorkerInfo("w1", "p1")]
+    pods = [PodInfo("p1", "maestro-mesh-a1", 600)]
+    # 10 jobs the week says cost 30 s each = 300 s on one worker, against a measured 200 s boot.
+    assert _decide(stats=QueueStats(10, 30.0, job_seconds=30.0, boot_seconds=200.0),
+                   live=live, pods=pods) == [StartPod("mesh")]
+    # The same ten jobs at the week's 5 s each drain in 50 s: nobody boots for that.
+    assert _decide(stats=QueueStats(10, 30.0, job_seconds=5.0, boot_seconds=200.0),
+                   live=live, pods=pods) == []
 
 
 def test_cooldown_blocks_the_add():
@@ -58,8 +79,8 @@ def test_max_workers_caps_the_fleet():
     assert _decide(stats=QueueStats(500, 900.0), live=live, pods=pods) == []
 
 
-def test_oldest_pending_age_triggers_below_the_depth_threshold():
-    # 1 pending job stuck 400s behind a worker busy on a long job — starvation, not depth.
+def test_oldest_pending_age_triggers_below_the_drain_threshold():
+    # 1 pending job stuck 400s behind a worker busy on a long job — starvation, not backlog.
     live = [WorkerInfo("w1", "p1")]
     pods = [PodInfo("p1", "maestro-mesh-a1", 600)]
     assert _decide(stats=QueueStats(1, 400.0), live=live, pods=pods) == [StartPod("mesh")]

@@ -855,6 +855,32 @@ def queue_stats(queue: str) -> Dict:
     }
 
 
+def recent_job_seconds(queue: str, since: float) -> Optional[float]:
+    """What one job on this queue costs a worker: the mean exec time of jobs done since `since`
+    with the slowest tenth left out, so one stuck job does not make the queue look slow. None
+    when nothing finished in the window."""
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT exec_seconds FROM jobs WHERE queue = ? AND status = 'done' "
+            "AND exec_seconds IS NOT NULL AND finished_at >= ? ORDER BY exec_seconds",
+            (queue, since)).fetchall()
+    if not rows:
+        return None
+    kept = [r["exec_seconds"] for r in rows][:max(1, len(rows) * 9 // 10)]
+    return sum(kept) / len(kept)
+
+
+def recent_boot_seconds(queue: str, since: float) -> Optional[float]:
+    """How long this queue's pods take from create to a registered worker, averaged over the
+    pods that registered since `since`. None when none did."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT AVG(registered_at - started_at) AS s FROM workers WHERE queue = ? "
+            "AND source = 'runpod' AND registered_at IS NOT NULL AND registered_at >= ?",
+            (queue, since)).fetchone()
+    return row["s"]
+
+
 def backlog_seconds(queue: str) -> float:
     """Projected GPU-seconds still owed to clear a queue: the reserved estimate of every job not
     yet finished (pending + claimed). What the admin view reads as the live backlog cost."""

@@ -328,7 +328,7 @@ reasoning split; it is the only stack measured to (2026-09-02, `docs/experiments
 `queues.llm.gpu_type_ids` names that card's two editions, Workstation first (faster; $2.19
 against the Server Edition's $2.09 since 2026-09-06), Server second, and `allowed_cuda_versions` is the driver floor
 its CUDA 13 wheels need (`["13.0"]`, RunPod's name for an r580+ host): a pod on an older driver
-is dead on any card and bills until the boot-deadline reaper (`boot_deadline_seconds`, 900)
+is dead on any card and bills until the boot-deadline reaper (`boot_deadline_seconds`, 300)
 collects it. The floor rides every ask, including the widened one — there is no second engine to
 fall back to. The image queue needs the same floor for the same reason (`image-v8` is torch
 cu130).
@@ -379,7 +379,7 @@ c.execute(\"UPDATE workers SET registered_at = started_at\"); c.commit()"'
 
 **`LLM_MODEL` has no default and the entrypoint refuses to start without one.** An llm pod that
 boots without it (or with a name the engine does not serve) exits 1 — and RunPod restarts an
-exited container and keeps billing until `boot_deadline_seconds` (900) expires, while the scaler
+exited container and keeps billing until `boot_deadline_seconds` (300) expires, while the scaler
 creates a replacement in the meantime. The autoscaler delivers it at create; a pod launched by
 hand has to carry it in the template env.
 
@@ -475,13 +475,18 @@ Settings block (`settings.json` → `runpod`, the full key list in `docs/local_d
   not substitutes), `network_volume_ids` (the queue's own volumes, one per datacenter its weights
   are copied to, tried in order; absent, the queue rides `runpod.network_volume_id`),
   `allowed_cuda_versions` (the host-driver floor the queue's engine needs),
-  `max_workers`, `scale_up_depth_per_worker` (add when pending ÷ effective workers hits this),
-  `scale_up_max_age_seconds` (starvation trigger), `cooldown_seconds`, `idle_exit_seconds`
+  `max_workers`, `scale_up_max_age_seconds` (starvation trigger), `cooldown_seconds`,
+  `boot_seconds` (what a boot is assumed to cost until the week has measured one),
+  `idle_exit_seconds`
   (linger tuning: raise for chatty queues, 0 = never exit), `boot_deadline_seconds` (a pod this
   old that no worker has registered from is reaped as wedged). The `queues` dict in `settings.json` replaces the
   default wholesale — carry complete blocks.
-- Scale-from-zero fires on ANY pending job with no cooldown; a booting pod counts as capacity, so
-  a 5-minute boot can't trigger add-forever.
+- Scale-from-zero fires on ANY pending job with no cooldown. Past zero, a pod is added only when
+  the backlog will outlast a boot — pending × the queue's measured seconds per job ÷ workers
+  (live and booting) exceeds the queue's measured boot — or the oldest pending job has starved.
+  Both measurements are the last week's, from `jobs` and `workers`; `boot_seconds` and the
+  billing estimate stand in until the week has data. A booting pod counts as capacity, so a
+  5-minute boot can't trigger add-forever.
 - `queues.video` is the image block with its own `template_id` (the `video-*` tag), the same cards
   and CUDA floor, and a longer `idle_exit_seconds` (90): an anim's sheet job lands ~20 s after
   its still renders, and a build asks for its characters together, so a video pod that exits on

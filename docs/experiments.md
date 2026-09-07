@@ -1879,3 +1879,52 @@ with it, the scene chain having been its only caller. `compose_world` stays,
 because the open question is not the tool but the designer: an open-world island, asked for
 without the word 3D, came back 2D, and why the 2D/3D call lands flat when the ask does not
 decide it is the next thing to measure.
+
+## 2026-09-06 — Cost per finished game off rented pods (prod, Flash-Next via Pennyroyal)
+
+### The question
+
+The stage 3 number: what a one-shot game costs on the rented cards at the current caps, with
+the failure rate beside it. Nothing measured on the owner's box stands in — cold start and the
+serving stack are in the pod's seconds.
+
+### The arm
+
+The six stage-1 games above, costed from RunPod's per-pod billing (2026-09-03..06, grouped by
+pod) joined to the platform's `workers.pod_id`. Each pod's real bill is split across the jobs
+it ran by exec-second share, so a pod's boot, idle and shutdown land on the games that used it
+and a pod that did no work lands on nobody. LLM jobs name their build; art jobs name their game,
+so art is per game. Two builds on one llm pod overlap in exec seconds, which is why the split is
+by share and not seconds × rate. Pod rates in the window: 6000 Pro WK $1.91–2.24/h, 5090 ~$1.00/h,
+4500 ~$0.73/h.
+
+### What came out
+
+| game | builds to a game | llm | art | one-shot | with fix/change |
+|---|---|---|---|---|---|
+| monster quests | 1 | $0.81 | $0.06 | **$0.87** | $1.31 |
+| racing career | 1 | $1.64 | $0.06 | **$1.70** | $3.12 |
+| island | 1 | $0.79 | $0.09 | **$0.87** | $0.87 |
+| fish | 1 | $1.13 | $0.58 | **$1.71** | $1.83 |
+| visual novel | 2 | $2.21 | $0.37 | **$2.59** | $2.59 |
+| Zelda-like | 2 | $1.81 | $1.30 | **$3.10** | $3.97 |
+
+Mean one-shot **$1.81 a game**, range $0.87–3.10; $2.28 with the fixes and change notes the
+owner sent. Art is 23% of the one-shot cost.
+
+Six of six delivered, and two of six took two builds: both of the stranger's games hit the
+200-step cap on the first build and ran again. Those cap-outs are $1.33 and $1.48 that
+delivered nothing — about half of what each of those games cost. One change build failed at
+77 steps ($0.87), and the same game ended with fifteen failed art jobs.
+
+Utilization over the window, every pod: llm 79% (6.1 h worked of 7.8 h billed, $16.93); image
+41% ($2.08); video 58% ($1.30); ten pods of seventy-two did no work at all, $0.94 of it, the
+owner's own test pods included. Art pods boot for one to three minutes of work, and that is
+the whole of their waste — small next to a cap-out.
+
+### Verdict
+
+The stage 3 number exists: **$1–2 a game one-shot, $1.81 mean**, on pods that are already 79%
+busy on the llm queue. The lever is not boot overhead and not the art queue. It is the
+step-cap: a build that runs to 200 steps costs as much as a finished game and ships nothing,
+and it hit two of six. What those two builds spent their steps on is the next thing to read.

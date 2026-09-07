@@ -64,8 +64,9 @@ job row's `game_id`; a job without one is neither metered nor gated.
 the credit ledger (`auth`) and the compute-seconds grant (`db_store.charge_game`) the queue meters
 against — and enqueues the DESIGN. The build starts at `POST /api/games/{id}/build`, once the human
 has read the design. There is no conversational surface — every `llm` job on the queue belongs to a
-game that is paying for it. Metering rides `tools/execution_context.run_scope`: every enqueue inside
-it debits the named game.
+game that is paying for it. Every job on a game names its build — the enqueue refuses one that
+does not — so a build row is the whole of what it cost: its turns, its art, its gates. Metering rides
+`tools/execution_context.run_scope`: every enqueue inside it debits the named game and build.
 
 **Build as a chain of jobs.** A build is not a resident loop. `build_chain.advance()` runs all local
 work synchronously (tool dispatch, staging, cursor writes) and suspends at the one point that needs
@@ -77,9 +78,10 @@ Crash recovery falls out of this: a build with no job in flight and no terminal 
 re-advanced by the reaper (`db/reaper.py`), which also sweeps asset batches awaiting finalize. Job metadata carries only `{stage, run_id, build_id}` — the cursor file is the single
 source that a completion reloads, advances, and rewrites.
 
-A landed turn is appended to the run's own `turns.jsonl` and its jobs row is then emptied, so the
-db holds live work and the run dir holds the archive. The append comes first: the two writes cannot
-share a transaction, and the order is what guarantees the body is never in neither place.
+A landed turn is appended to the run's own `turns.jsonl`, and its jobs row keeps only measurements
+(`db_store.elide_payload` / `elide_result`: model, message count, prompt size, effort, token usage,
+finish reason, tool names, the system prompt's hash and length) — the db holds what a query needs and the run
+dir holds the words. The reply stays whole on the row only until its consumer has read it.
 
 **Assets.** `generate_media` enqueues one `image` job and answers immediately with the path the file
 will appear at. Chained work is named in the job's `metadata.then` (`mesh_from_image`,

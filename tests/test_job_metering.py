@@ -8,7 +8,7 @@ import pytest
 from db import store
 
 
-def _job(queue: str = "llm", model=None, build_id=None) -> str:
+def _job(queue: str = "llm", model=None, build_id="b1") -> str:
     store.create_game("g1", "u1")
     store.charge_game("g1", 1, 10_000.0)
     job_id = store.enqueue_job(queue, {}, game_id="g1", build_id=build_id, model=model)
@@ -76,7 +76,7 @@ def test_an_unrated_or_unknown_card_debits_one_for_one():
     for game, gpu in (("g2", "NVIDIA H100 80GB HBM3"), ("g3", None)):
         store.create_game(game, "u1")
         store.charge_game(game, 1, 10_000.0)
-        job_id = store.enqueue_job("llm", {}, game_id=game)
+        job_id = store.enqueue_job("llm", {}, game_id=game, build_id="b1")
         store.worker_seen("w1", "llm")
         store.claim_job("llm", "w1", 60)
         store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=4.0, gpu_type=gpu)

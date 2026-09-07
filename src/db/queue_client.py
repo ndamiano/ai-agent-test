@@ -12,7 +12,7 @@ from typing import Dict, Optional
 
 from config.settings_manager import settings_manager
 from db import store as db_store
-from tools.execution_context import get_run_id
+from tools.execution_context import get_build_id, get_run_id
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,8 @@ def run_job(queue: str, payload: Dict, model: Optional[str] = None,
     (LLM, image, mesh) shares, so a game out of seconds cannot start GPU work from any path."""
     timeout = timeout_seconds or float(_settings().get("job_timeout_seconds", 900))
     try:
-        job_id = db_store.enqueue_job(queue, payload, game_id=get_run_id(), model=model)
+        job_id = db_store.enqueue_job(queue, payload, game_id=get_run_id(), build_id=get_build_id(),
+                                      model=model)
     except db_store.InsufficientCompute as e:
         logger.error("queue job (%s) refused: %s", queue, e)
         return {"status": "failed", "error": f"compute budget exhausted: {e}"}
@@ -40,6 +41,7 @@ def run_job(queue: str, payload: Dict, model: Optional[str] = None,
     while time.time() < deadline:
         job = db_store.get_job(job_id)
         if job and job["status"] in ("done", "failed"):
+            db_store.elide_job_result(job_id)
             return job
         time.sleep(_POLL_INTERVAL)
     logger.error("queue job %s (%s) timed out after %.0fs", job_id, queue, timeout)

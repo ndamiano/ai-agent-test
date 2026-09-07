@@ -9,7 +9,6 @@ describe('parseRoute', () => {
         expect(parseRoute('/credits')).toEqual({ kind: 'credits' })
         expect(parseRoute('/admin')).toEqual({ kind: 'admin', tab: 'queues' })
         expect(parseRoute('/admin/costs')).toEqual({ kind: 'admin', tab: 'costs' })
-        expect(parseRoute('/prompts')).toEqual({ kind: 'prompts' })
         expect(parseRoute('/game/abc123')).toEqual({ kind: 'game', runId: 'abc123' })
     })
 

@@ -1,4 +1,4 @@
-import type { AdminAnalytics, AdminCosts, AdminQueues, AdminViolation, Demo, DurableEventRow, Game, GameAsset, GameDetail, Grade, GradeTarget, PromptBucket, PromptDetail, PromptScope, PromptTurn } from '../types'
+import type { AdminAnalytics, AdminCosts, AdminQueues, AdminViolation, Demo, DurableEventRow, Game, GameAsset, GameDetail, Grade, GradeTarget } from '../types'
 
 let authToken: string | null = localStorage.getItem('maestro_token')
 let onUnauthorized: (() => void) | null = null
@@ -230,11 +230,4 @@ export const api = {
     getAdminViolations: () =>
         request<{ violations: AdminViolation[] }>('/api/admin/violations'),
 
-    getPromptBuckets: () =>
-        request<PromptBucket[]>('/api/admin/prompts/games'),
-    getPromptTurns: (scope: PromptScope, gameId?: string | null) =>
-        request<PromptTurn[]>(`/api/admin/prompts/turns?scope=${scope}` +
-            (scope === 'game' && gameId ? `&game_id=${encodeURIComponent(gameId)}` : '')),
-    getPromptTurn: (jobId: string) =>
-        request<PromptDetail>(`/api/admin/prompts/turns/${jobId}`),
 }

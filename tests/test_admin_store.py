@@ -13,7 +13,7 @@ def _game():
 
 def test_pending_head_is_claim_order_capped():
     _game()
-    ids = [store.enqueue_job("llm", {}, game_id="g1") for _ in range(4)]
+    ids = [store.enqueue_job("llm", {}, game_id="g1", build_id="b1") for _ in range(4)]
     head = store.pending_jobs_head("llm", 3)
     assert [j["id"] for j in head] == ids[:3]
     assert head[0].keys() == {"id", "game_id", "build_id", "est_seconds", "created_at"}
@@ -22,8 +22,8 @@ def test_pending_head_is_claim_order_capped():
 
 def test_claimed_jobs_leave_the_head_and_name_their_worker():
     _game()
-    first = store.enqueue_job("llm", {}, game_id="g1")
-    second = store.enqueue_job("llm", {}, game_id="g1")
+    first = store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
+    second = store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
     store.worker_seen("w1", "llm")
     store.claim_job("llm", "w1", 60)
 
@@ -37,8 +37,8 @@ def test_claimed_jobs_leave_the_head_and_name_their_worker():
 def test_backlog_seconds_sums_unfinished_estimates():
     _game()
     from db.estimates import QUEUE_SECONDS
-    store.enqueue_job("llm", {}, game_id="g1")
-    store.enqueue_job("llm", {}, game_id="g1")
+    store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
+    store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
     assert store.backlog_seconds("llm") == 2 * QUEUE_SECONDS["llm"]
 
     store.worker_seen("w1", "llm")
@@ -47,7 +47,7 @@ def test_backlog_seconds_sums_unfinished_estimates():
     assert store.backlog_seconds("llm") == QUEUE_SECONDS["llm"]
 
 
-def _finish(queue, exec_seconds, *, game_id, gpu_type=None, build_id=None):
+def _finish(queue, exec_seconds, *, game_id, gpu_type=None, build_id="b1"):
     store.enqueue_job(queue, {}, game_id=game_id, build_id=build_id)
     store.worker_seen("w1", queue)
     claimed = store.claim_job(queue, "w1", 60)

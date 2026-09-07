@@ -137,7 +137,7 @@ def test_reconstruct_fans_out_and_writes_glbs(monkeypatch, tmp_path):
     monkeypatch.setattr(meshes_mod, "run_job", fake_run_job)
     monkeypatch.setattr(meshes_mod, "_decimate", lambda path, target: True)
 
-    with run_scope("run-123"):
+    with run_scope("run-123", "b1"):
         made = meshes_mod.MeshModel().reconstruct(images, tmp_path / "out")
 
     assert set(made) == {str(p) for p in images}

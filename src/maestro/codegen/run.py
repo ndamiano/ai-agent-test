@@ -220,7 +220,9 @@ def _cli_assets(run_id: str) -> int:
     from maestro.codegen.assets import add_assets
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
     print(f"rendering the assets {run_id} asked for\n")
-    out = add_assets(run_id)
+    build_id = db_store.create_build(run_id, kind="assets")
+    db_store.build_started(build_id)
+    out = add_assets(run_id, build_id)
     if not out["ok"]:
         print(out.get("error") or "nothing to render")
         return 1

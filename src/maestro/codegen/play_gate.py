@@ -241,7 +241,7 @@ def _save_state(run_dir, state: Dict) -> None:
     _state_path(run_dir).write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
-def after_build(run_id: str) -> bool:
+def after_build(run_id: str, build_id: str) -> bool:
     """Playtest a build the error gate passed; a watched-failed input re-enters the fix machine
     with ONE fact's note. Returns whether a fix build was started. The judgment half of the
     report only ever lands in play_report.json — it is for the human.
@@ -256,7 +256,7 @@ def after_build(run_id: str) -> bool:
     spec = rs.read_spec() or {}
     state = _load_state(rs.run_dir)
 
-    with run_scope(run_id):
+    with run_scope(run_id, build_id):
         report = play(game_dir(rs.run_dir), str(spec.get("request") or ""))
     if report is None:
         return False

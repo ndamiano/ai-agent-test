@@ -59,26 +59,33 @@ def _design_of(result: Optional[Dict]) -> str:
 def enqueue(run_id: str, ask: str) -> None:
     conn = get_connector()
     payload, model = conn.build_llm_job(_messages(ask), [], MAX_TOKENS)
+    build_id = db_store.create_build(run_id, kind="design")
+    db_store.build_started(build_id)
     try:
-        db_store.enqueue_job("llm", payload, game_id=run_id, model=model,
+        db_store.enqueue_job("llm", payload, game_id=run_id, build_id=build_id, model=model,
                              metadata={"stage": "design", "run_id": run_id})
     except Exception:
         logger.exception("design for %s could not be enqueued — the ask is the prompt", run_id)
+        db_store.build_finished(build_id, "failed")
         _land(run_id, ask)
 
 
 def generate(run_id: str, ask: str) -> str:
     from tools.execution_context import run_scope
+    build_id = db_store.create_build(run_id, kind="design")
+    db_store.build_started(build_id)
     try:
-        with run_scope(run_id):
+        with run_scope(run_id, build_id):
             reply = get_connector().generate_with_tools(_messages(ask), [], max_tokens=MAX_TOKENS)
         text = _design_of(reply)
         if text:
+            db_store.build_finished(build_id, "succeeded", steps=1)
             return _land(run_id, text)
         logger.warning("design for %s came back empty (%s) — the ask is the prompt",
                        run_id, str(reply)[:200])
     except Exception:
         logger.exception("design for %s failed — the ask is the prompt", run_id)
+    db_store.build_finished(build_id, "failed", steps=1)
     return _land(run_id, ask)
 
 

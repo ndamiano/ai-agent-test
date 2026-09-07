@@ -111,7 +111,7 @@ def test_thrown_error_enters_fix_machine_with_one_note(wired, monkeypatch):
     monkeypatch.setattr(error_gate, "probe", lambda g: [
         {"message": "ReferenceError: Game is not defined", "stack": "at onclick (index.html:1)"},
         {"message": "TypeError: also broken", "stack": ""}])
-    error_gate.after_build("r1")
+    error_gate.after_build("r1", "b1")
     assert len(kickoffs.calls) == 1
     assert "Game is not defined" in kickoffs.calls[0]["note"]
     assert "also broken" not in kickoffs.calls[0]["note"]
@@ -121,7 +121,7 @@ def test_thrown_error_enters_fix_machine_with_one_note(wired, monkeypatch):
 def test_clean_probe_kicks_nothing(wired, monkeypatch):
     run_dir, gdir, kickoffs = wired
     monkeypatch.setattr(error_gate, "probe", lambda g: [])
-    error_gate.after_build("r1")
+    error_gate.after_build("r1", "b1")
     assert kickoffs.calls == []
 
 
@@ -129,8 +129,8 @@ def test_same_error_twice_running_stops(wired, monkeypatch):
     run_dir, gdir, kickoffs = wired
     err = [{"message": "TypeError: stuck", "stack": ""}]
     monkeypatch.setattr(error_gate, "probe", lambda g: err)
-    error_gate.after_build("r1")
-    error_gate.after_build("r1")
+    error_gate.after_build("r1", "b1")
+    error_gate.after_build("r1", "b1")
     assert len(kickoffs.calls) == 1
 
 
@@ -144,7 +144,7 @@ def test_round_cap_stops(wired, monkeypatch):
 
     monkeypatch.setattr(error_gate, "probe", churn)
     for _ in range(error_gate.MAX_ROUNDS + 3):
-        error_gate.after_build("r1")
+        error_gate.after_build("r1", "b1")
     assert len(kickoffs.calls) == error_gate.MAX_ROUNDS
 
 

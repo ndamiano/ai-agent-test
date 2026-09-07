@@ -94,7 +94,7 @@ src/
                          `system + tools + concat(added[0..k])`. A `compact` record carries the
                          rounds `build_steps.compact` trimmed to stubs and dropped, and the note
                          that replaced the dropped ones, so a replay shows what was really sent. A FIX appends its own meta and never
-                         truncates. The prompt log reads bodies from here once the row is empty.
+                         truncates.
       archive.py         the run dir's OFF-BOX copy. tools/s3.py is a minimal SigV4 client over
                          `requests` — a wrong signature is a loud 403 and the payload hash rides
                          the request, so a signing bug cannot silently succeed. A settled finalize
@@ -216,7 +216,8 @@ src/
                          create call is where the game is charged — the credit, and the
                          compute-seconds grant the queue meters against (`db_store.charge_game`,
                          through `tools/execution_context.run_scope`): the design is the game's
-                         first inference and the build that follows never charges again. Measured 2026-08-26
+                         first inference, on a build row of its own (`kind=design`), and the
+                         build that follows never charges again. Measured 2026-08-26
                          (`docs/experiments.md`): the model's design of a plain request built a
                          game "a million times better" than three stages of the request itself.
       error_gate.py      the ERROR GATE — after a playable finalize, open the run dir's `game/`
@@ -270,7 +271,10 @@ src/
                          this result (save_sprite / save_flat / decimate / save_anim), and the
                          batch's FINALIZE. It owns those
                          names so the queue stays a generic transport that never learns what an
-                         asset is. Every save runs the SAFETY policy first (`_admit`): the worker
+                         asset is. Two finalizes: `assets` lands the art and leaves the build's
+                         row to the build machine (a build turn's generate_media), `art_build`
+                         lands it and ends the row, for a batch that IS its build (a top-up, a
+                         regenerate). Every save runs the SAFETY policy first (`_admit`): the worker
                          attached NSFW scores to the render, `assets.render_verdict` decides, and
                          a refused (or verdict-less) render is deleted, marked on the manifest and
                          recorded as a violation — a refused mesh source never reaches TRELLIS.

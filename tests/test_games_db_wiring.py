@@ -208,7 +208,7 @@ def test_detail_reports_remaining_net_of_queued_work(client):
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
     db_store.charge_game(run_id, 1, 1000.0)
-    db_store.enqueue_job("mesh", {}, game_id=run_id)
+    db_store.enqueue_job("mesh", {}, game_id=run_id, build_id="b1")
 
     detail = client.get(f"/api/games/{run_id}", headers=headers).json()
     assert detail["budget_pct_remaining"] == (1000.0 - estimate_seconds("mesh")) / 1000.0
@@ -298,11 +298,12 @@ def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client, monkeypat
 
     job = db_store.claim_job("image", "w1", 60)
     assert job is not None and job["game_id"] == run_id and job["batch_id"]
+    assert [b["kind"] for b in db_store.builds_for(run_id) if b["id"] == job["build_id"]] == ["regen"]
     # the merged prompt reaches the positive behind the item quality-tag prefix
     assert job["payload"]["workflow"]["p"]["inputs"]["text"].endswith("a brave knight, pixel art")
     meta = json.loads(job["metadata"])
     assert meta["asset_id"] == "hero"
-    assert meta["then"] == {"operations": ["save_sprite"], "finalize": "assets"}
+    assert meta["then"] == {"operations": ["save_sprite"], "finalize": "art_build"}
 
 
 def test_regenerate_merge_is_attributed_to_the_game(client, monkeypatch):

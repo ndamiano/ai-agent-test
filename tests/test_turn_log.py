@@ -11,7 +11,6 @@ import json
 import pytest
 
 import maestro.state
-from api.routers import prompts
 from auth import store as auth_store
 from db import store as db_store
 from maestro.codegen import build_chain, build_state, build_steps, turn_log
@@ -40,21 +39,6 @@ def headers():
         u = auth_store.create_user(handle, "pw-pass1234", role="admin", email=f"{handle}@example.com")
         return {"Authorization": f"Bearer {auth_store.issue_token(u.id)}"}
     return _issue
-
-
-@pytest.fixture
-def cleared(monkeypatch):
-    """Each job row exactly as it stood the moment before its body was cleared — the row the prompt
-    log used to read, kept so a test can compare it against what the archive reads back."""
-    seen = {}
-    real = db_store.clear_job_body
-
-    def spy(job_id):
-        seen[job_id] = db_store.get_job(job_id)
-        real(job_id)
-
-    monkeypatch.setattr(db_store, "clear_job_body", spy)
-    return seen
 
 
 def _reply(calls=None, content="", prompt_tokens=10):
@@ -92,7 +76,7 @@ def _log(run_id):
             turn_log.path(RunState(run_id).run_dir).read_text(encoding="utf-8").splitlines()]
 
 
-def test_a_landed_turn_is_appended_and_its_row_emptied(run):
+def test_a_landed_turn_is_appended_and_its_row_keeps_only_measurements(run):
     build_id = build_chain.kickoff(run)
     job = _land(run, build_id, _reply([_write("index.html")]))
 
@@ -105,26 +89,10 @@ def test_a_landed_turn_is_appended_and_its_row_emptied(run):
     assert (record["exec_seconds"], record["error"]) == (2.0, None)
 
     row = db_store.get_job(job["id"])
-    assert row["payload"] == {} and row["result"] is None
+    assert "body" not in row["payload"] and row["payload"]["n_messages"] == 1
 
 
-def test_the_archive_reads_back_exactly_as_the_row_did(run, cleared, headers, app_client):
-    """The prompt log's view of a turn must not change because its body moved to disk — the shape
-    is the same reconstruction, off the record rather than off the row."""
-    build_id = build_chain.kickoff(run)
-    job = _land(run, build_id, _reply([_write("index.html")], content="writing the page"))
-
-    view = app_client.get(f"/api/admin/prompts/turns/{job['id']}", headers=headers()).json()
-
-    assert view == prompts._turn_view(cleared[job["id"]])
-    assert view["system"] and view["messages"][0]["text"] == "make a game"
-    assert [t["name"] for t in view["tools"]] == [
-        "list_files", "read_file", "write_file", "edit_file", "generate_media",
-        "compose_world", "done"]
-    assert view["response"]["tool_calls"][0]["name"] == "write_file"
-
-
-def test_every_request_the_build_sent_replays_from_the_log(run, cleared):
+def test_every_request_the_build_sent_replays_from_the_log(run):
     """The whole point of storing only what each turn ADDED: turn k is the system prompt, the tool
     schemas and every added slice up to k. Including across a compaction, which drops rounds from
     the live transcript that the log still has to account for."""
@@ -174,45 +142,6 @@ def test_a_fix_appends_its_own_build_and_keeps_the_first(run):
     archived = turn_log.read_turn(RunState(run).run_dir, fix_job["id"])
     assert len(archived["messages"]) == 1
     assert "the ship never moves" in archived["messages"][0]["content"]
-
-
-def test_an_append_that_fails_leaves_the_row_holding_the_body(run, monkeypatch):
-    """The append and the sqlite write cannot be one transaction, so the order is the guarantee:
-    there is never a moment where neither copy exists."""
-    build_id = build_chain.kickoff(run)
-    job = _pending()
-    reply = _reply([_write("index.html")])
-    db_store.complete_job(job["id"], "w1", reply, None, 2.0)
-
-    def full(*a, **kw):
-        raise OSError("No space left on device")
-
-    monkeypatch.setattr(turn_log, "append_turn", full)
-    with pytest.raises(OSError):
-        build_chain.on_completion(run, build_id, reply, None, job["id"], 2.0)
-
-    row = db_store.get_job(job["id"])
-    assert row["payload"]["body"]["messages"]
-    assert row["result"]["choices"]
-
-
-def test_the_turn_index_measures_archived_turns_from_the_log(run, headers, app_client):
-    """The index reads sizes and the system prompt's head off the row — which is empty once the
-    body moves. It fills those in from the log rather than showing an unnamed turn of zero KB."""
-    build_id = build_chain.kickoff(run)
-    _land(run, build_id, _reply([_write("index.html", 3000)]))
-    _land(run, build_id, _reply([_write("game.js")]))
-
-    rows = app_client.get(
-        f"/api/admin/prompts/turns?scope=game&game_id={run}", headers=headers()).json()
-
-    # Two landed turns, read out of the log, plus the one still on the queue with its own body.
-    assert [r["status"] for r in rows] == ["done", "done", "pending"]
-    assert all(r["system_head"] for r in rows)
-    assert len({r["system_hash"] for r in rows}) == 1
-    assert [r["n_messages"] for r in rows] == [1, 3, 5]
-    assert rows[0]["payload_chars"] < rows[1]["payload_chars"] < rows[2]["payload_chars"]
-
 
 
 def test_the_cli_build_carries_the_default_step_cap(run):

@@ -21,7 +21,7 @@ def _game(tmp_path, files):
 @pytest.fixture
 def tools(tmp_path):
     _game(tmp_path, {"game.js": SRC})
-    return build_tools(RunState(tmp_path))
+    return build_tools(RunState(tmp_path), "b1")
 
 
 @pytest.mark.parametrize("path", ["../escaped.js", "../../etc/passwd", "a/../../out.js"])
@@ -80,7 +80,7 @@ def test_edit_names_double_escaping_as_the_reason(tools, tmp_path):
 
 def test_edit_names_double_escaped_quotes_too(tmp_path):
     _game(tmp_path, {"index.html": '<div id="x">\n  <p>hi</p>\n</div>\n'})
-    t = build_tools(RunState(tmp_path))
+    t = build_tools(RunState(tmp_path), "b1")
     r = t["edit_file"](path="index.html", old_text='<div id=\\"x\\">\\n  <p>hi</p>', new_text="x")
     assert r["ok"] is False and "escaped twice" in r["error"]
 
@@ -113,7 +113,7 @@ def test_read_returns_the_whole_file(tools):
 
 def test_a_single_line_past_the_ceiling_says_it_was_cut_mid_line(tmp_path):
     _game(tmp_path, {"big.js": "x" * (MAX_READ_CHARS + 500)})
-    r = build_tools(RunState(tmp_path))["read_file"](path="big.js")
+    r = build_tools(RunState(tmp_path), "b1")["read_file"](path="big.js")
     assert r["ok"] and "cut here, mid-line" in r["content"]
     assert len(r["content"]) < MAX_READ_CHARS + 300
 
@@ -126,7 +126,7 @@ def test_a_window_ends_on_a_line_boundary(tmp_path):
     """The measured loop: a read cut mid-line is copied into old_text, where it matches nothing."""
     body = _numbered(400)
     _game(tmp_path, {"big.js": body})
-    r = build_tools(RunState(tmp_path))["read_file"](path="big.js")
+    r = build_tools(RunState(tmp_path), "b1")["read_file"](path="big.js")
     shown = r["content"].split("\n\n[", 1)[0]
     assert body.startswith(shown)
     assert shown.endswith("\n") and len(shown) <= MAX_READ_CHARS
@@ -134,7 +134,7 @@ def test_a_window_ends_on_a_line_boundary(tmp_path):
 
 def test_the_note_says_where_to_read_the_rest_and_to_split_the_file(tmp_path):
     _game(tmp_path, {"big.js": _numbered(400)})
-    r = build_tools(RunState(tmp_path))["read_file"](path="big.js")
+    r = build_tools(RunState(tmp_path), "b1")["read_file"](path="big.js")
     assert "of 400" in r["content"] and "worth splitting" in r["content"]
     assert f"offset {int(r['lines'].split('-')[1].split('/')[0]) + 1}" in r["content"]
 
@@ -142,7 +142,7 @@ def test_the_note_says_where_to_read_the_rest_and_to_split_the_file(tmp_path):
 def test_offset_reaches_the_tail_a_first_read_could_not_show(tmp_path):
     body = _numbered(400)
     _game(tmp_path, {"big.js": body})
-    read = build_tools(RunState(tmp_path))["read_file"]
+    read = build_tools(RunState(tmp_path), "b1")["read_file"]
     first = read(path="big.js")
     nxt = int(first["lines"].split("-")[1].split("/")[0]) + 1
     rest = read(path="big.js", offset=nxt)
@@ -152,7 +152,7 @@ def test_offset_reaches_the_tail_a_first_read_could_not_show(tmp_path):
 
 def test_offset_past_the_end_is_reported(tmp_path):
     _game(tmp_path, {"small.js": "a\nb\n"})
-    r = build_tools(RunState(tmp_path))["read_file"](path="small.js", offset=9)
+    r = build_tools(RunState(tmp_path), "b1")["read_file"](path="small.js", offset=9)
     assert r["ok"] is False and "past the end" in r["error"]
 
 
@@ -165,7 +165,7 @@ def test_a_long_single_line_is_not_elided_below_the_ceiling(tmp_path):
     """Mid-file elision broke edit anchors; the harness only ever truncated the tail."""
     line = "const DATA = [" + ",".join(str(i) for i in range(2000)) + "];\n"
     _game(tmp_path, {"data.js": line})
-    r = build_tools(RunState(tmp_path))["read_file"](path="data.js")
+    r = build_tools(RunState(tmp_path), "b1")["read_file"](path="data.js")
     assert r["content"] == line
 
 

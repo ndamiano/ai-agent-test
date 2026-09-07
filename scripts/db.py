@@ -9,6 +9,7 @@ nothing but the container is installed.
     scripts/db.py builds                  # per-build duration, steps, status
     scripts/db.py models                  # jobs and hours grouped by what actually served them
     scripts/db.py failures                # failure rate by queue
+    scripts/db.py turns                   # llm jobs per game, newest first
     scripts/db.py sql "select ..."        # anything else
 
 `--db` points at another file; on prod that is the path inside the container's data volume.
@@ -60,6 +61,20 @@ QUERIES = {
           FROM jobs
          WHERE created_at > :since AND status IN ('done','failed')
          GROUP BY queue
+    """,
+    "turns": """
+        SELECT substr(j.game_id,1,8) AS game,
+               substr(j.build_id,1,8) AS build,
+               j.created_at,
+               j.exec_seconds,
+               json_extract(j.payload, '$.prompt_chars') AS prompt_chars,
+               json_extract(j.payload, '$.n_messages') AS n_messages,
+               json_extract(j.result, '$.usage.completion_tokens') AS completion_tokens,
+               json_extract(j.result, '$.finish_reason') AS finish_reason,
+               json_extract(j.result, '$.tool_names') AS tool_names
+          FROM jobs j
+         WHERE j.queue = 'llm' AND j.created_at > :since
+         ORDER BY j.created_at DESC
     """,
 }
 

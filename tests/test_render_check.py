@@ -72,7 +72,7 @@ def test_a_mesh_is_checked_as_the_sprite_its_image_leg_renders(tmp_path):
 
 
 def test_a_defect_lands_on_the_manifest_entry(run_dir, tmp_path):
-    request_media(RUN, run_dir, "hero", "a hero", "plain style", kind="sprite")
+    request_media(RUN, run_dir, "b1", "hero", "a hero", "plain style", kind="sprite")
     src = _png(tmp_path / "out.png", 255)
     asset_chain.run_operations({"run_id": RUN, "asset_id": "hero", "kind": "sprite",
                                 "then": {"operations": ["save_sprite"]}},
@@ -82,7 +82,7 @@ def test_a_defect_lands_on_the_manifest_entry(run_dir, tmp_path):
 
 
 def test_a_clean_render_leaves_no_defect(run_dir, tmp_path):
-    request_media(RUN, run_dir, "floor", "worn floorboards", "plain style", kind="tile")
+    request_media(RUN, run_dir, "b1", "floor", "worn floorboards", "plain style", kind="tile")
     src = _png(tmp_path / "out.png", 255)
     asset_chain.run_operations({"run_id": RUN, "asset_id": "floor", "kind": "tile",
                                 "then": {"operations": ["save_flat"]}},
@@ -95,7 +95,7 @@ def test_a_flat_kind_is_saved_whole(run_dir, tmp_path):
     """save_flat does not autocrop: cropping a backdrop to its "subject" is how a scene becomes a
     handful of planks. (A tile is the one flat kind that gets resynthesized — the quilt post-op,
     tested with the asset chain.)"""
-    request_media(RUN, run_dir, "sky", "a starry night sky", "plain style", kind="scene")
+    request_media(RUN, run_dir, "b1", "sky", "a starry night sky", "plain style", kind="scene")
     src = _png(tmp_path / "out.png", 255, size=(128, 128))
     asset_chain.run_operations({"run_id": RUN, "asset_id": "sky", "kind": "scene",
                                 "then": {"operations": ["save_flat"]}},

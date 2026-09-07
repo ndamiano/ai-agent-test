@@ -10,7 +10,6 @@ Plain parameterized SQL, short-lived connections, WAL. No sqlite-isms in the DML
 Postgres port is DDL + driver work, not a rewrite.
 """
 
-import hashlib
 import json
 import logging
 import sqlite3
@@ -325,6 +324,9 @@ def _insert_job_locked(conn, queue: str, payload: Dict, game_id: Optional[str],
         remaining = _remaining_locked(conn, game_id)
         if remaining < est:
             raise InsufficientCompute(game_id, remaining, est)
+        if build_id is None:
+            # A job that belongs to a game belongs to a build: cost and history join on the build.
+            raise ValueError(f"job on game {game_id!r} has no build_id")
     conn.execute(
         "INSERT INTO jobs (id, queue, game_id, build_id, status, payload, model, "
         "est_seconds, batch_id, metadata, created_at) "
@@ -460,6 +462,86 @@ def served_model(result: Optional[Dict]) -> Optional[str]:
     return name.rsplit("/", 1)[-1] if isinstance(name, str) and name else None
 
 
+def _system_of(body: Dict) -> str:
+    if body.get("instructions") is not None:
+        return body["instructions"]
+    first = (body.get("messages") or [{}])[0]
+    return first.get("content") or "" if first.get("role") == "system" else ""
+
+
+def _text_len(content) -> int:
+    if isinstance(content, str):
+        return len(content)
+    return len(json.dumps(content, ensure_ascii=False)) if content else 0
+
+
+def elide_payload(queue: str, payload: Dict) -> Dict:
+    """What a job's request leaves on its row once it has run: the operational facts, never the
+    text. An llm turn's body is the whole transcript so far and the run dir's turn log already
+    holds it; an image or video body is a base64 blob the file store holds. Both wire formats
+    (chat `messages`, Responses `input`) reduce to the same fields."""
+    if queue == "llm":
+        body = payload.get("body") or {}
+        turns = body.get("messages") or body.get("input") or []
+        system = _system_of(body)
+        reasoning = body.get("reasoning")
+        if isinstance(reasoning, dict):
+            reasoning = reasoning.get("effort")
+        return {"model": body.get("model"),
+                "n_messages": len(turns) - (1 if body.get("messages") and system else 0),
+                "prompt_chars": len(system) + sum(
+                    _text_len(m.get("content") if "content" in m else m.get("output")
+                              or m.get("arguments"))
+                    for m in turns if m.get("role") != "system"),
+                "reasoning": reasoning,
+                "max_tokens": body.get("max_output_tokens") or body.get("max_tokens")}
+    if queue == "image":
+        wf = payload.get("workflow") or {}
+        node = next((wf[k] for k in ("p", "6") if k in wf), {})
+        return {"prompt": (node.get("inputs") or {}).get("text") or "",
+                "mode": "img2img" if payload.get("uploads") else "txt2img"}
+    if queue == "video":
+        return {"kind": payload.get("kind"), "anims": list(payload.get("anims") or {}),
+                "dirs": payload.get("dirs") or []}
+    return {"kind": payload.get("kind")}
+
+
+def elide_result(queue: str, result: Optional[Dict]) -> Optional[Dict]:
+    """What a reply leaves on its row: token usage, why it stopped, which tools it called — never
+    the text or the arguments. An art reply keeps everything but its base64 blobs — the blob
+    paths, the served model and the safety verdict are the row's record of the render."""
+    if result is None or "tool_names" in result:
+        return result
+    if queue != "llm":
+        return {k: ([{kk: vv for kk, vv in i.items() if not kk.endswith("_b64")} for i in v]
+                    if k == "images" else v)
+                for k, v in result.items() if not k.endswith("_b64")}
+    if "choices" in result:
+        choice = (result.get("choices") or [{}])[0]
+        calls = (choice.get("message") or {}).get("tool_calls") or []
+        names = [(c.get("function") or {}).get("name") for c in calls]
+        finish = choice.get("finish_reason")
+    else:
+        items = result.get("output") or []
+        names = [i.get("name") for i in items if i.get("type") == "function_call"]
+        finish = result.get("status")
+    return {"usage": result.get("usage"), "finish_reason": finish,
+            "tool_names": [n for n in names if n]}
+
+
+def elide_job_result(job_id: str) -> None:
+    """Called by whoever consumed a finished job's reply — the completion route for a chained job,
+    `queue_client.run_job` for a blocking one — so the row holds the full reply only until it
+    has been read."""
+    with _db() as conn:
+        row = conn.execute("SELECT queue, result FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if row is None or not row["result"]:
+            return
+        elided = elide_result(row["queue"], json.loads(row["result"]))
+        conn.execute("UPDATE jobs SET result = ? WHERE id = ?",
+                     (json.dumps(elided, ensure_ascii=False), job_id))
+
+
 def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Optional[str],
                  exec_seconds: float, gpu_type: Optional[str] = None,
                  continuation: Optional[Dict] = None) -> Optional[Dict]:
@@ -493,13 +575,19 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
     # No immediate=True: the UPDATE below is the first statement, so the write lock is already
     # held by the time the continuation's admission reads the game's headroom.
     with _db() as conn:
+        job_row = conn.execute(
+            "SELECT queue, payload FROM jobs WHERE id = ? AND worker_id = ? AND status = 'claimed'",
+            (job_id, worker_id)).fetchone()
+        if job_row is None:
+            return None
+        payload = elide_payload(job_row["queue"], json.loads(job_row["payload"]))
         cur = conn.execute(
-            "UPDATE jobs SET status = ?, result = ?, error = ?, exec_seconds = ?, "
+            "UPDATE jobs SET status = ?, payload = ?, result = ?, error = ?, exec_seconds = ?, "
             "billed_seconds = ?, gpu_type = ?, model = COALESCE(?, model), "
-            "finished_at = ? WHERE id = ? AND worker_id = ? AND status = 'claimed'",
-            (status, json.dumps(result, ensure_ascii=False) if result is not None else None,
-             error, exec_seconds, billed, gpu_type, served_model(result), now, job_id,
-             worker_id),
+            "finished_at = ? WHERE id = ?",
+            (status, json.dumps(payload, ensure_ascii=False),
+             json.dumps(result, ensure_ascii=False) if result is not None else None,
+             error, exec_seconds, billed, gpu_type, served_model(result), now, job_id),
         )
         if cur.rowcount != 1:
             return None
@@ -548,14 +636,6 @@ def get_job(job_id: str) -> Optional[Dict]:
     return _job_dict(row)
 
 
-def clear_job_body(job_id: str) -> None:
-    """Drop one job's request and reply, keeping the row. Called only once the body is durably
-    archived elsewhere — a build turn's payload is the whole transcript so far, so the rows are
-    where a build's conversation gets stored once per turn (measured 2026-07-31: 951 MB)."""
-    with _db() as conn:
-        conn.execute("UPDATE jobs SET payload = NULL, result = NULL WHERE id = ?", (job_id,))
-
-
 def _job_dict(row: sqlite3.Row) -> Dict:
     job = dict(row)
     job["payload"] = json.loads(job["payload"]) if job["payload"] else {}
@@ -589,78 +669,6 @@ def batch_jobs(batch_id: str) -> List[Dict]:
         rows = conn.execute(
             "SELECT * FROM jobs WHERE batch_id = ? ORDER BY created_at", (batch_id,)).fetchall()
     return [_job_dict(r) for r in rows]
-
-
-# The prompt log's index columns. A listing carries only sizes plus the head of the system prompt,
-# and the reader pulls one turn's full text at a time. A build turn's body has moved OUT of the row
-# by the time it is read (maestro/codegen/turn_log.py), which is what the NULLs here mean — the
-# router fills those rows in from the run dir's log.
-# A db that has served both wire formats holds both, and a chat body's system prompt is messages[0]
-# — MessageBuilder.build is what puts it there.
-_TURN_COLUMNS = (
-    "id, game_id, build_id, status, model, created_at, started_at, finished_at, "
-    "exec_seconds, error, metadata, length(payload) AS payload_chars, "
-    "COALESCE(json_extract(payload, '$.body.instructions'), "
-    "         json_extract(payload, '$.body.messages[0].content')) AS system, "
-    "COALESCE(json_array_length(json_extract(payload, '$.body.input')), "
-    "         json_array_length(json_extract(payload, '$.body.messages')) - 1) AS n_messages"
-)
-
-_SYSTEM_HEAD_CHARS = 160
-
-
-def system_index(system: Optional[str]) -> Dict:
-    """A turn's system prompt as index columns. A turn's system prompt is its prompt FILE rendered
-    — measured over a 661-turn build, 8 distinct texts covered every turn. Hashing it is what lets
-    the reader collapse a log into the handful of prompts that actually produced it; the file name
-    itself is never recorded."""
-    system = system or ""
-    return {"system_hash": hashlib.sha1(system.encode("utf-8")).hexdigest()[:12],
-            "system_head": system[:_SYSTEM_HEAD_CHARS],
-            "system_chars": len(system)}
-
-
-def _llm_turns(where: str, params: tuple, limit: int) -> List[Dict]:
-    with _db() as conn:
-        rows = conn.execute(
-            f"SELECT {_TURN_COLUMNS} FROM jobs WHERE queue = 'llm' AND {where} "
-            # Newest-first under the cap, reversed after: a log past the cap loses its OLDEST
-            # turns, never the ones the reader came for.
-            "ORDER BY created_at DESC, rowid DESC LIMIT ?", params + (limit,)).fetchall()
-    out = []
-    for row in reversed(rows):
-        turn = dict(row)
-        turn.update(system_index(turn.pop("system")))
-        turn["metadata"] = json.loads(turn["metadata"]) if turn["metadata"] else {}
-        out.append(turn)
-    return out
-
-
-def llm_turns_for_game(game_id: str, limit: int = 2000) -> List[Dict]:
-    """Every llm turn one game spent, oldest first."""
-    return _llm_turns("game_id = ?", (game_id,), limit)
-
-
-def llm_turns_platform(limit: int = 2000) -> List[Dict]:
-    """The turns no game owns — enqueued with no game to bill. Nothing else records them."""
-    return _llm_turns("game_id IS NULL", (), limit)
-
-
-def llm_turns_all(limit: int = 2000) -> List[Dict]:
-    return _llm_turns("1 = 1", (), limit)
-
-
-def llm_turn_buckets() -> List[Dict]:
-    """One row per game that has spent llm turns (plus a game_id=None row for the platform's own),
-    newest activity first — the pick list for the prompt log."""
-    with _db() as conn:
-        rows = conn.execute(
-            "SELECT j.game_id AS game_id, COUNT(*) AS turns, MIN(j.created_at) AS first_at, "
-            "MAX(j.created_at) AS last_at, SUM(COALESCE(j.exec_seconds, 0)) AS exec_seconds, "
-            "g.title AS title, g.status AS status, g.user_id AS user_id "
-            "FROM jobs j LEFT JOIN games g ON g.id = j.game_id "
-            "WHERE j.queue = 'llm' GROUP BY j.game_id ORDER BY last_at DESC").fetchall()
-    return [dict(r) for r in rows]
 
 
 def requeue_lapsed_leases() -> int:

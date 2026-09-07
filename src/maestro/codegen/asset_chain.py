@@ -178,7 +178,10 @@ OPERATIONS = {"save_sprite": _save_sprite, "save_flat": _save_flat, "decimate": 
               "save_anim": _save_anim}
 
 
-def _finalize_assets(md: Dict, jobs: List[Dict]) -> None:
+def _finalize_landing(md: Dict, jobs: List[Dict]):
+    """What every asset batch owes on landing: mark what rendered, stage the game if it is built,
+    and emit. Returns the batch's build_id (one job carries it) and whether the run is ok, so a
+    finalize that owns the build can close it."""
     run_id = md["run_id"]
     state = RunState(run_id)
     entries = {e["id"]: e for e in read_manifest(state.run_dir)}
@@ -201,11 +204,24 @@ def _finalize_assets(md: Dict, jobs: List[Dict]) -> None:
     logger.info("assets %s: rendered %d/%d asset(s)", run_id, len(rendered), len(ids))
     build_id = next((j["build_id"] for j in jobs if j["build_id"]), None)
     _emit("assets_done", run_id, build_id=build_id, ok=ok, rendered=sorted(rendered))
+    return build_id, ok
+
+
+def _finalize_assets(md: Dict, jobs: List[Dict]) -> None:
+    """Mid-build art: the batch lands but the build's own row stays open — the model is still
+    writing the game, so its build closes in the build's own finalize, not here."""
+    _finalize_landing(md, jobs)
+
+
+def _finalize_art_build(md: Dict, jobs: List[Dict]) -> None:
+    """A standalone art batch (a top-up, a regenerate, a dedicated art build): the batch IS the
+    build, so the last landing ends the build's row."""
+    build_id, ok = _finalize_landing(md, jobs)
     if build_id:
         db_store.build_finished(build_id, "succeeded" if ok else "failed")
 
 
-FINALIZERS = {"assets": _finalize_assets}
+FINALIZERS = {"assets": _finalize_assets, "art_build": _finalize_art_build}
 
 
 def build_continuation(metadata: Dict, result: Optional[Dict]) -> Optional[Dict]:

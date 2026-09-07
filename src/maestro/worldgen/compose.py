@@ -58,7 +58,7 @@ def world_dir(game_root) -> Path:
     return Path(game_root) / WORLD_DIR
 
 
-def compose(game_root: Path, run_dir, run_id: str, description: str,
+def compose(game_root: Path, run_dir, run_id: str, build_id: str, description: str,
             seed: Optional[int]) -> Dict:
     """Build the world's ground synchronously, publish it, and start the art behind it."""
     from maestro.worldgen.build import build_world
@@ -68,11 +68,11 @@ def compose(game_root: Path, run_dir, run_id: str, description: str,
     prompt = description if seed is None else f"{description} (variation {seed})"
     # The run scope is what every job this raises is admitted and metered against; a tool call
     # runs outside the build's own.
-    with run_scope(run_id):
+    with run_scope(run_id, build_id):
         build_world(prompt, out_dir, stop_after="construct")
         job = publish(out_dir, game_root)
 
-    threading.Thread(target=_finish, args=(game_root, out_dir, run_id, prompt),
+    threading.Thread(target=_finish, args=(game_root, out_dir, run_id, build_id, prompt),
                      daemon=True).start()
 
     return {"ok": True,
@@ -86,7 +86,7 @@ def compose(game_root: Path, run_dir, run_id: str, description: str,
                      "loading it from this path and do not build a second world.")}
 
 
-def _finish(game_root: Path, out_dir: Path, run_id: str, prompt: str) -> None:
+def _finish(game_root: Path, out_dir: Path, run_id: str, build_id: str, prompt: str) -> None:
     """The legs after the ground, on this run's own thread.
 
     `run_scope` is re-entered here rather than inherited: a thread starts with none of the
@@ -94,7 +94,7 @@ def _finish(game_root: Path, out_dir: Path, run_id: str, prompt: str) -> None:
     from maestro.worldgen.build import build_world
     from tools.execution_context import run_scope
 
-    with run_scope(run_id):
+    with run_scope(run_id, build_id):
         for start_at, stop_after in LEGS:
             try:
                 build_world(prompt, out_dir, start_at=start_at, stop_after=stop_after)

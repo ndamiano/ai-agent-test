@@ -221,7 +221,7 @@ def _advance_locked(run_id: str, result: Optional[Dict], landed: Optional[Dict] 
         _archive_turn(rs, cursor, landed, result)
     if cursor.paused and result is None:
         return   # nothing to apply, and a re-drive (reaper, resume race) must not restart a parked build
-    tools = build_tools(rs)
+    tools = build_tools(rs, cursor.build_id)
     outcome = build_steps.step(spec, rs.run_dir, tools, cursor, result,
                                error=(landed or {}).get("error"))
 
@@ -258,22 +258,16 @@ def _advance_locked(run_id: str, result: Optional[Dict], landed: Optional[Dict] 
 
 
 def _archive_turn(rs: RunState, cursor: BuildCursor, landed: Dict, result: Optional[Dict]) -> None:
-    """Write the landed turn to the run dir's log, then DROP its body from the jobs row.
-
-    A build turn's request is the whole transcript, so keeping it in the row stores the same
-    conversation once per turn. The log stores each message once — everything appended since the
-    last archive is exactly what this turn's request added to the one before it.
-
-    The append and the sqlite write cannot be one transaction, so the ORDER is the guarantee: an
-    append that fails leaves the row's copy intact and nothing is lost; a clear that fails leaves
-    two copies and only disk is wasted. There is never a moment with neither."""
+    """Write the landed turn to the run dir's log. A build turn's request is the whole transcript,
+    and the jobs row keeps only its measurements (`db_store.elide_payload`); the log stores each
+    message once — everything appended since the last archive is exactly what this turn's request
+    added to the one before it, and the cursor holds the live copy until it is appended."""
     message = ((result or {}).get("choices") or [{}])[0].get("message")
     turn_log.append_turn(rs.run_dir, turn=cursor.turn, job_id=landed["job_id"],
                          added=cursor.history[cursor.logged:], response=message,
                          usage=(result or {}).get("usage") or {},
                          exec_seconds=landed["exec_seconds"], error=landed["error"])
     cursor.logged = len(cursor.history)
-    db_store.clear_job_body(landed["job_id"])
 
 
 def _playable(run_dir) -> bool:
@@ -319,15 +313,15 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
         # Post-finalize runs AFTER the lock this finalize holds is released — a kickoff blocks on
         # the same lock, so running it inline here would deadlock. A build stopped by hand gets
         # no gate: the human ended it, and an auto-build would restart what they stopped.
-        threading.Thread(target=_post_finalize, args=(run_id,), daemon=True).start()
+        threading.Thread(target=_post_finalize, args=(run_id, cursor.build_id), daemon=True).start()
 
 
-def _post_finalize(run_id: str) -> None:
+def _post_finalize(run_id: str, build_id: str) -> None:
     """The error gate, then the play gate, then the archive. A gate fix's own finalize re-enters
     here, so only a SETTLED chain (no fix kicked by either gate) is archived — the bucket holds
     finished games rather than one snapshot per intermediate."""
     from maestro.codegen import archive
-    if not error_gate.after_build(run_id) and not play_gate.after_build(run_id):
+    if not error_gate.after_build(run_id, build_id) and not play_gate.after_build(run_id, build_id):
         archive.archive(run_id)
 
 

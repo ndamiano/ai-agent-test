@@ -369,7 +369,7 @@ def _save_state(run_dir, state: Dict) -> None:
     _state_path(run_dir).write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
-def after_build(run_id: str) -> bool:
+def after_build(run_id: str, build_id: str) -> bool:
     """Probe a just-finalized playable build; a thrown error re-enters the fix machine with ONE
     error's note. Runs outside the run's advance lock (kickoff blocks until it is free).
     Returns whether a fix build was started — a caller with its own next step (a stage advance)
@@ -387,7 +387,7 @@ def after_build(run_id: str) -> bool:
     gdir = game_dir(rs.run_dir)
     state = _load_state(rs.run_dir)
 
-    with run_scope(run_id):
+    with run_scope(run_id, build_id):
         errors = probe(gdir)
     if not errors:
         if state["rounds"]:

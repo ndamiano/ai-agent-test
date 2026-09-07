@@ -13,7 +13,7 @@ from maestro.state import RunState
 @pytest.fixture
 def tools(tmp_path):
     (tmp_path / "game").mkdir(exist_ok=True)
-    return build_tools(RunState(tmp_path))
+    return build_tools(RunState(tmp_path), "b1")
 
 
 def _cursor(**kw):

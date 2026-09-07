@@ -41,7 +41,7 @@ def _safe(root: Path, path: str) -> Path:
     return p
 
 
-def build_tools(state) -> dict:
+def build_tools(state, build_id: str) -> dict:
     root = game_dir(state.run_dir)
 
     def list_files(**_) -> dict:
@@ -151,7 +151,7 @@ def build_tools(state) -> dict:
 
     def generate_media(id=None, kind=DEFAULT_KIND, subject=None, style=None, details=None,
                        **_) -> dict:
-        return request_media(state.run_id, state.run_dir, id, subject, style,
+        return request_media(state.run_id, state.run_dir, build_id, id, subject, style,
                              kind or DEFAULT_KIND, details)
 
     def compose_world(description=None, seed=None, **_) -> dict:
@@ -164,7 +164,7 @@ def build_tools(state) -> dict:
             return {"ok": False,
                     "error": "this game already has its world — read world/world.json for its "
                              "size and regions instead of building another."}
-        return compose(root, state.run_dir, state.run_id, description,
+        return compose(root, state.run_dir, state.run_id, build_id, description,
                        int(seed) if seed is not None else None)
 
     def _reported(fn):

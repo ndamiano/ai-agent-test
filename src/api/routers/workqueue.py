@@ -174,9 +174,15 @@ def _prepare(job_id: str, result: Optional[Dict]) -> tuple:
     return blobs, metadata, continuation, job.get("queue")
 
 
-def _land(body: "CompleteBody", continuation: Optional[Dict], queue: Optional[str]) -> Optional[Dict]:
+def _land(body: "CompleteBody", continuation: Optional[Dict], queue: Optional[str],
+          consumed: bool) -> Optional[Dict]:
+    """`consumed` says this route hands the reply on (a build turn, a design, an asset chain), so
+    the row can drop it now; a job nobody here consumes has a blocking waiter polling for it,
+    which elides the row once it has read it."""
     outcome = db_store.complete_job(body.job_id, body.worker_id, body.result, body.error,
                                     body.exec_seconds, body.gpu_type, continuation)
+    if outcome is not None and consumed:
+        db_store.elide_job_result(body.job_id)
     if outcome is not None and outcome["game_id"]:
         _emit("job_done", outcome["game_id"], build_id=outcome["build_id"], job_id=body.job_id,
               queue=queue, ok=body.error is None, exec_seconds=body.exec_seconds)
@@ -192,7 +198,8 @@ async def complete(body: CompleteBody, request: Request):
         _prepare, body.job_id, body.result)
     # sqlite, not the event loop: the completion txn also admits and inserts the follow-up,
     # and _emit writes an events row.
-    outcome = await asyncio.to_thread(_land, body, continuation, queue)
+    outcome = await asyncio.to_thread(_land, body, continuation, queue,
+                                      bool(metadata.get("stage") or metadata.get("then")))
     if outcome is None:
         for blob in blobs:
             blob.unlink(missing_ok=True)
@@ -207,6 +214,9 @@ async def complete(body: CompleteBody, request: Request):
         follow_up = (build_chain.on_completion, metadata["run_id"], metadata.get("build_id"),
                      body.result, body.error, body.job_id, body.exec_seconds)
     elif metadata.get("stage") == "design":
+        if outcome["build_id"]:
+            db_store.build_finished(outcome["build_id"],
+                                    "succeeded" if body.error is None else "failed", steps=1)
         follow_up = (design.on_complete, metadata["run_id"], body.result, body.error)
     else:
         follow_up = (asset_chain.on_completion, metadata, body.result, outcome["batch_id"],

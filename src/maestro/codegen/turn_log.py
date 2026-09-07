@@ -79,21 +79,6 @@ def read_turn(run_dir, job_id: str) -> Optional[Dict]:
     return None
 
 
-def read_index(run_dir) -> Dict[str, Dict]:
-    """{job_id: {system, n_messages, prompt_chars}} for every turn in the log — the sizes a turn
-    listing shows, from one scan of the file rather than a reconstruction per turn."""
-    out: Dict[str, Dict] = {}
-    for meta, record, messages, chars in _replay(run_dir):
-        out[record["job_id"]] = {
-            "system": meta["system"],
-            "n_messages": len(messages),
-            # Within a few dozen bytes of the row's old length(payload): the same system prompt,
-            # tools and messages, minus the queue envelope around them.
-            "prompt_chars": chars + len(json.dumps(meta["system"], ensure_ascii=False))
-            + len(json.dumps(meta["tools"], ensure_ascii=False))}
-    return out
-
-
 def _replay(run_dir) -> Iterator[Tuple[Dict, Dict, List[Dict], int]]:
     """Walk the log, rebuilding the transcript as the build built it. Yields
     (meta, turn record, messages as that turn sent them, their serialized size)."""

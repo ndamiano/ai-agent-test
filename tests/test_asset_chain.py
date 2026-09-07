@@ -20,7 +20,7 @@ def _game(seconds: float = 10_000.0, game_id: str = "g1") -> str:
 
 def _image_job(batch: str, asset_id: str = "goblin", game_id: str = "g1") -> str:
     return store.enqueue_job(
-        "image", {"kind": "comfy_image"}, game_id=game_id, batch_id=batch,
+        "image", {"kind": "comfy_image"}, game_id=game_id, build_id="b1", batch_id=batch,
         metadata={"run_id": game_id, "asset_id": asset_id, "kind": "mesh",
                   "then": {"enqueue": "mesh_from_image", "finalize": "assets"}})
 
@@ -61,7 +61,7 @@ def test_only_one_completion_of_a_batch_sees_it_complete():
 
 def test_a_job_outside_any_batch_never_reports_complete():
     _game()
-    job = store.enqueue_job("llm", {"n": 1}, game_id="g1")
+    job = store.enqueue_job("llm", {"n": 1}, game_id="g1", build_id="b1")
     out = _complete(job)
     assert out["batch_id"] is None
     assert out["batch_complete"] is False
@@ -129,7 +129,7 @@ def test_a_game_with_queued_batch_work_reads_as_active():
 
 def test_unbatched_work_does_not_count_as_an_active_batch():
     _game()
-    store.enqueue_job("llm", {"n": 1}, game_id="g1")
+    store.enqueue_job("llm", {"n": 1}, game_id="g1", build_id="b1")
     assert store.has_active_batch("g1") is False
 
 
@@ -137,7 +137,7 @@ def test_a_lapsed_lease_is_requeued_without_any_claim_traffic():
     """claim_job requeues these too, but only when a claim arrives. A queue that goes quiet would
     otherwise hold a dead job and its reservation forever."""
     _game()
-    job = store.enqueue_job("mesh", {"k": 1}, game_id="g1")
+    job = store.enqueue_job("mesh", {"k": 1}, game_id="g1", build_id="b1")
     store.claim_job("mesh", "w1", lease_seconds=-1)
     assert store.requeue_lapsed_leases() == 1
     assert store.get_job(job)["status"] == "pending"
@@ -145,7 +145,7 @@ def test_a_lapsed_lease_is_requeued_without_any_claim_traffic():
 
 def test_stale_pending_jobs_fail_and_release_their_reservation():
     _game(10_000.0)
-    store.enqueue_job("mesh", {"k": 1}, game_id="g1")
+    store.enqueue_job("mesh", {"k": 1}, game_id="g1", build_id="b1")
     reserved = store.compute_remaining("g1")
     failed = store.fail_stale_pending(-1.0)
     assert len(failed) == 1
@@ -220,6 +220,32 @@ def test_finalize_on_a_failed_build_neither_stages_nor_claims_ok(_asset_env):
     asset_chain._finalize_assets(_md(), [{"metadata": {}, "build_id": None}])
     assert staged == []
     assert events[0][1]["ok"] is False
+
+
+def test_a_build_turns_art_lands_without_ending_the_build(_asset_env):
+    """generate_media art carries the build's id for cost, and the "assets" finalize leaves the
+    build's row to the build machine — the model is still writing the game."""
+    asset_chain, staged, events = _asset_env
+    _game()
+    bid = store.create_build("g1", kind="build")
+    store.build_started(bid)
+    store.set_status("g1", "building")
+    asset_chain.FINALIZERS["assets"](_md(), [{"metadata": {}, "build_id": bid}])
+    (b,) = store.builds_for("g1")
+    assert b["status"] == "running" and b["finished_at"] is None
+    assert events == [("assets_done", {"build_id": bid, "ok": True, "rendered": []})]
+
+
+def test_a_standalone_art_batch_is_its_own_build_and_ends_it(_asset_env):
+    asset_chain, staged, events = _asset_env
+    _game()
+    bid = store.create_build("g1", kind="assets")
+    store.build_started(bid)
+    store.set_status("g1", "built")
+    asset_chain.FINALIZERS["art_build"](_md(), [{"metadata": {}, "build_id": bid}])
+    (b,) = store.builds_for("g1")
+    assert b["status"] == "succeeded" and b["finished_at"] is not None
+    assert staged == ["g1"]
 
 
 # ── The safety verdict: worker scores, control-plane policy, fail closed ─────────────────────

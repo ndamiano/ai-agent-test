@@ -86,7 +86,7 @@ def pipeline(monkeypatch):
 
 
 def _compose(run, pipeline, **kw):
-    tools = build_tools(run)
+    tools = build_tools(run, "b1")
     return tools["compose_world"](description="a meadow by the sea", **kw)
 
 
@@ -191,5 +191,5 @@ def test_a_second_world_is_refused(run, pipeline):
 
 
 def test_a_description_is_required(run, pipeline):
-    tools = build_tools(run)
+    tools = build_tools(run, "b1")
     assert "needs the argument 'description'" in tools["compose_world"]()["error"]

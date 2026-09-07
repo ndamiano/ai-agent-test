@@ -65,7 +65,6 @@ export type Route =
     | { kind: 'credits' }
     | { kind: 'demos' }
     | { kind: 'admin'; tab: AdminTab }
-    | { kind: 'prompts' }
     | { kind: 'grade'; runId: string }
     | { kind: 'grades' }
 
@@ -81,7 +80,6 @@ export const parseRoute = (path: string): Route => {
     if (admin && (ADMIN_TABS as readonly string[]).includes(admin[1])) {
         return { kind: 'admin', tab: admin[1] as AdminTab }
     }
-    if (path === '/prompts') return { kind: 'prompts' }
     if (path === '/grades') return { kind: 'grades' }
     const grade = path.match(/^\/grade\/([A-Za-z0-9_-]+)$/)
     if (grade) return { kind: 'grade', runId: grade[1] }

@@ -51,7 +51,7 @@ def test_next_lists_pending_jobs_in_claim_order_with_their_wait(app_client):
     db_store.charge_game("g1", 1, 10_000)
     build = db_store.create_build("g1")
     first = db_store.enqueue_job("mesh", {}, game_id="g1", build_id=build)
-    second = db_store.enqueue_job("mesh", {}, game_id="g1")
+    second = db_store.enqueue_job("mesh", {}, game_id="g1", build_id="b1")
 
     mesh, totals = _queue(app_client, "mesh")
     assert [j["id"] for j in mesh["next"]] == [first, second]
@@ -66,7 +66,7 @@ def test_next_is_capped_at_ten(app_client):
     db_store.create_game("g1", "u1")
     db_store.charge_game("g1", 1, 100_000)
     for _ in range(12):
-        db_store.enqueue_job("image", {}, game_id="g1")
+        db_store.enqueue_job("image", {}, game_id="g1", build_id="b1")
     image, _ = _queue(app_client, "image")
     assert (image["pending"], len(image["next"])) == (12, 10)
 
@@ -79,7 +79,7 @@ def test_workers_report_state_card_price_and_the_job_they_hold(app_client, monke
                              "gpu_rates": {"NVIDIA GeForce RTX 5090": 1.0, "BIG": 2.5}}})
     db_store.create_game("g1", "u1")
     db_store.charge_game("g1", 1, 10_000)
-    jid = db_store.enqueue_job("mesh", {}, game_id="g1")
+    jid = db_store.enqueue_job("mesh", {}, game_id="g1", build_id="b1")
     db_store.worker_seen("busy", "mesh", gpu_type="BIG", source="runpod", pod_id="p1")
     db_store.worker_seen("idle", "mesh", gpu_type="NVIDIA GeForce RTX 5090", source="local")
     db_store.claim_job("mesh", "busy", 60)
@@ -169,7 +169,7 @@ def test_costs_joins_runpod_billing_against_our_logs_per_card(app_client, monkey
                           gpu_type="NVIDIA GeForce RTX 5090")
     db_store.build_finished(build, "built")
     # The game's design ran before the window opened, on another card: it still costs the game.
-    design = db_store.enqueue_job("llm", {"p": 0}, game_id="g1")
+    design = db_store.enqueue_job("llm", {"p": 0}, game_id="g1", build_id="b1")
     db_store.claim_job("llm", "w1", lease_seconds=120)
     db_store.complete_job(design, "w1", {"ok": True}, None, exec_seconds=1800,
                           gpu_type="NVIDIA RTX PRO 4500 Blackwell")

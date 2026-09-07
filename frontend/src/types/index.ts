@@ -59,66 +59,6 @@ export interface GameAsset {
 // The prompt log (admin-only): every llm turn any game spent, reconstructed from the durable jobs
 // rows. The index carries sizes and the head of the system prompt; the bodies are tens of KB each,
 // so a turn's full text is fetched on click.
-export type PromptScope = 'all' | 'game' | 'platform'
-
-export interface PromptBucket {
-    game_id: string | null
-    turns: number
-    last_at: number
-    exec_seconds: number
-    title: string | null
-    status: string | null
-    user_id: string | null
-}
-
-export interface PromptTurn {
-    id: string
-    game_id: string | null
-    build_id: string | null
-    status: string
-    model: string | null
-    created_at: number
-    started_at: number | null
-    finished_at: number | null
-    exec_seconds: number | null
-    error: string | null
-    metadata: Record<string, any>
-    payload_chars: number | null
-    // A turn's system prompt is its prompt FILE rendered, so the hash groups a log into the handful
-    // of prompts that produced it — the file name itself is never recorded anywhere.
-    system_hash: string
-    system_head: string | null
-    system_chars: number
-    n_messages: number | null
-}
-
-export interface PromptMessage {
-    role: string
-    kind: 'text' | 'tool_call' | 'tool_result'
-    name: string | null
-    text: string
-}
-
-export interface PromptDetail {
-    id: string
-    game_id: string | null
-    build_id: string | null
-    status: string
-    model: string | null
-    created_at: number
-    exec_seconds: number | null
-    error: string | null
-    stage: string | null
-    reasoning: string | null
-    system: string
-    messages: PromptMessage[]
-    tools: { name: string; description: string; parameters: Record<string, any> }[]
-    response: {
-        text: string
-        tool_calls: { name: string; arguments: string }[]
-        usage: Record<string, any>
-    } | null
-}
 
 // A safety refusal as the admin surface lists it (GET /api/admin/violations). `matched` is the
 // matched term(s) or refusal reason — never the flagged content itself.

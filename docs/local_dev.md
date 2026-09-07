@@ -327,7 +327,7 @@ bind, `WORKING_DIRECTORY`, `WORKQUEUE_TOKEN` + its timeouts, the `LLM_*` default
 ## Reading the platform DB
 
 `scripts/db.py` — stdlib only, runs anywhere the file is: named queries (`cost`, `builds`,
-`models`, `failures`) and `sql "<text>"` for the rest; `--db` points it at another file, `--since`
+`models`, `failures`, `turns`) and `sql "<text>"` for the rest; `--db` points it at another file, `--since`
 at a date. Read it from a snapshot, never the live file (`docs/backups.md` "Query hygiene").
 
 ---

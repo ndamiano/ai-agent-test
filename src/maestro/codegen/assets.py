@@ -317,20 +317,21 @@ def _anim_fields(kind: str, details: Optional[Dict]) -> Dict:
             "facings": details["facings"]}
 
 
-def _then_for(kind: str) -> Dict:
+def _then_for(kind: str, finalize: str = "assets") -> Dict:
     """What a finished render owes. A mesh's image leg chains TRELLIS and an anim's the video
     model; a matted kind is cropped to
     its subject on the way in and an unmatted one must not be, since cropping a tile to its
-    "subject" is how a floor becomes a handful of planks."""
+    "subject" is how a floor becomes a handful of planks. `finalize` is `"art_build"` only when
+    the batch IS its build (a top-up, a regenerate) and its last landing may end the row."""
     if kind == "mesh":
-        return {"enqueue": "mesh_from_image", "finalize": "assets"}
+        return {"enqueue": "mesh_from_image", "finalize": finalize}
     if kind == "anim":
-        return {"enqueue": "anim_from_image", "finalize": "assets"}
+        return {"enqueue": "anim_from_image", "finalize": finalize}
     op = "save_sprite" if kind in MATTED_KINDS else "save_flat"
-    return {"operations": [op], "finalize": "assets"}
+    return {"operations": [op], "finalize": finalize}
 
 
-def request_media(run_id: str, run_dir, asset_id: str, subject: str, style: str,
+def request_media(run_id: str, run_dir, build_id: str, asset_id: str, subject: str, style: str,
                   kind: str = DEFAULT_KIND, details: Optional[Dict] = None) -> Dict:
     """ONE asset. Enqueues the render and answers with the path the file will appear at, so the
     model can write code against it on the same turn. `subject` and `style` are the prose,
@@ -378,9 +379,8 @@ def request_media(run_id: str, run_dir, asset_id: str, subject: str, style: str,
                                       "draw this one with code instead"}
     then = _then_for(rkind)
     try:
-        # No build_id: this batch's finalize would otherwise close the BUILD's row the moment the
-        # first sprite lands, while the model is still writing the game.
-        db_store.enqueue_job("image", payload, game_id=run_id, batch_id=uuid.uuid4().hex[:16],
+        db_store.enqueue_job("image", payload, game_id=run_id, build_id=build_id,
+                             batch_id=uuid.uuid4().hex[:16],
                              metadata={"run_id": run_id, "asset_id": asset_id, "kind": rkind,
                                        "then": then, **_anim_fields(kind, details)})
     except db_store.InsufficientCompute:
@@ -412,7 +412,7 @@ def request_media(run_id: str, run_dir, asset_id: str, subject: str, style: str,
     return out
 
 
-def start_from_manifest(run_id: str, run_dir, build_id: Optional[str] = None) -> Optional[str]:
+def start_from_manifest(run_id: str, run_dir, build_id: str) -> Optional[str]:
     """Enqueue every missing asset at once and return the batch id — the TOP-UP path, for a run
     whose renders failed or were never paid for.
 
@@ -437,7 +437,7 @@ def start_from_manifest(run_id: str, run_dir, build_id: Optional[str] = None) ->
             _active.discard(run_id)
 
 
-def _enqueue_batch(run_id: str, entries: List[Dict], build_id: Optional[str]) -> str:
+def _enqueue_batch(run_id: str, entries: List[Dict], build_id: str) -> str:
     batch_id = uuid.uuid4().hex[:16]
     enqueued = 0
     for e in entries:
@@ -445,16 +445,16 @@ def _enqueue_batch(run_id: str, entries: List[Dict], build_id: Optional[str]) ->
         mesh = kind == "mesh"
         queue = "image"
         payload = build_image_payload(e["prompt"], kind)
-        then = _then_for(kind)
+        then = _then_for(kind, "art_build")
         src = asset_path(run_id, e["id"], "src.png")
         if mesh and src.exists():
             # A mesh needs ComfyUI and then TRELLIS, and one GPU can only hold one of them, so a
             # top-up that always restarted at the image leg could never reach the second half.
-            queue, then = "mesh", {"operations": ["decimate"], "finalize": "assets"}
+            queue, then = "mesh", {"operations": ["decimate"], "finalize": "art_build"}
             payload = {"kind": "trellis_mesh",
                        "image_b64": base64.b64encode(src.read_bytes()).decode("ascii")}
         elif kind == "anim" and src.exists():
-            queue, then = "video", {"operations": ["save_anim"], "finalize": "assets"}
+            queue, then = "video", {"operations": ["save_anim"], "finalize": "art_build"}
             payload = build_anim_payload(base64.b64encode(src.read_bytes()).decode("ascii"),
                                          e["details"]["anims"], e["details"]["facings"])
         if payload is None:
@@ -476,7 +476,7 @@ def _enqueue_batch(run_id: str, entries: List[Dict], build_id: Optional[str]) ->
     return batch_id if enqueued else ""
 
 
-def add_assets(run_id: str, build_id: Optional[str] = None) -> Dict:
+def add_assets(run_id: str, build_id: str) -> Dict:
     """The manual re-render (the API's `assets` action): top up whatever the manifest declares and
     the run doesn't have yet."""
     state = RunState(run_id)
@@ -497,9 +497,9 @@ def regenerate_asset(run_id: str, asset_id: str, note: str, mode: str = "full") 
     entry = next((e for e in read_manifest(state.run_dir) if e["id"] == asset_id), None)
     if entry is None:
         return {"ok": False, "error": f"no asset {asset_id!r} in the manifest"}
-    # The merge is a GPU job like any other, and it is the one enqueue here that goes through the
-    # blocking connector, which reads the owning game off the run scope rather than an argument.
-    with run_scope(run_id):
+    build_id = db_store.create_build(run_id, kind="regen")
+    db_store.build_started(build_id)
+    with run_scope(run_id, build_id):
         prompt = _merge_prompt(entry["prompt"], note)
     kind = entry_kind(entry)
     init_b64 = None
@@ -511,9 +511,9 @@ def regenerate_asset(run_id: str, asset_id: str, note: str, mode: str = "full") 
     if payload is None:
         return {"ok": False, "error": "the prompt was blocked by the safety filter"}
     batch_id = uuid.uuid4().hex[:16]
-    db_store.enqueue_job("image", payload, game_id=run_id, batch_id=batch_id,
+    db_store.enqueue_job("image", payload, game_id=run_id, build_id=build_id, batch_id=batch_id,
                          metadata={"run_id": run_id, "asset_id": asset_id,
-                                   "kind": kind, "then": _then_for(kind),
+                                   "kind": kind, "then": _then_for(kind, "art_build"),
                                    **_anim_fields(entry.get("kind") or DEFAULT_KIND,
                                                   entry.get("details"))})
     _update(state.run_dir, asset_id, defect=None, refused=None)

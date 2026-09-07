@@ -160,8 +160,7 @@ def _busy(a, client, pods):
     from scaler.stats import QueueStats, WorkerInfo
     a._settings = lambda: {"llm": {"model": "m", "n_ctx": 65535}, "workqueue": {"token": "wtoken"},
                            "runpod": {**RP, "queues": {"llm": {**QCFG, "max_workers": 3}}}}
-    a._stats.queue_stats.return_value = QueueStats(pending=50, oldest_pending_age_seconds=5.0,
-                                                   job_seconds=30.0, boot_seconds=120.0)
+    a._stats.queue_stats.return_value = QueueStats(pending=50, job_seconds=30.0)
     a._stats.live_workers.return_value = [WorkerInfo("w0", "p0")]
     a._stats.stale_workers.return_value = []
     a._stats.terminated_workers_with_pods.return_value = []

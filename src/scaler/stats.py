@@ -14,11 +14,8 @@ _WEEK = 7 * 24 * 3600
 
 class QueueStats(NamedTuple):
     pending: int
-    oldest_pending_age_seconds: Optional[float]
-    # One job's cost to a worker and a pod's create-to-registered time, both measured over the
-    # last week; None where the week holds no data.
+    # One job's cost to a worker, measured over the last week; None where the week holds none.
     job_seconds: Optional[float] = None
-    boot_seconds: Optional[float] = None
 
 
 class WorkerInfo(NamedTuple):
@@ -53,9 +50,7 @@ class SqliteStatsSource:
     def queue_stats(self, queue: str) -> QueueStats:
         s = store.queue_stats(queue)
         since = time.time() - _WEEK
-        return QueueStats(s["pending"], s["oldest_pending_age_seconds"],
-                          store.recent_job_seconds(queue, since),
-                          store.recent_boot_seconds(queue, since))
+        return QueueStats(s["pending"], store.recent_job_seconds(queue, since))
 
     def live_workers(self, queue: str, freshness_seconds: float) -> List[WorkerInfo]:
         return [WorkerInfo(w["id"], w["pod_id"])

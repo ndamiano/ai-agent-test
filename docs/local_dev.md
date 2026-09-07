@@ -192,8 +192,8 @@ endpoint — inference rides the queue.
 
 `slots` is how many jobs one llm worker runs at once against its engine (`worker/agent.py
 --slots`); an llm pod reads it at create. The scaler counts workers, not slots, so the llm
-queue's backlog rule and `scale_up_max_age_seconds` are per pod and scale with it: two slots,
-twice the backlog and twice the wait before a second card is rented.
+queue's `min_jobs_per_pod` is per pod and scales with it: two slots, twice the backlog before a
+second card is rented.
 
 `n_ctx` is the INPUT budget: when a prompt leaves less than 16K tokens of it, `build_steps.compact`
 stubs every superseded file body and drops the rounds that only read, then stubs the bodies out

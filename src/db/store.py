@@ -898,17 +898,6 @@ def recent_job_seconds(queue: str, since: float) -> Optional[float]:
     return sum(kept) / len(kept)
 
 
-def recent_boot_seconds(queue: str, since: float) -> Optional[float]:
-    """How long this queue's pods take from create to a registered worker, averaged over the
-    pods that registered since `since`. None when none did."""
-    with _db() as conn:
-        row = conn.execute(
-            "SELECT AVG(registered_at - started_at) AS s FROM workers WHERE queue = ? "
-            "AND source = 'runpod' AND registered_at IS NOT NULL AND registered_at >= ?",
-            (queue, since)).fetchone()
-    return row["s"]
-
-
 def backlog_seconds(queue: str) -> float:
     """Projected GPU-seconds still owed to clear a queue: the reserved estimate of every job not
     yet finished (pending + claimed). What the admin view reads as the live backlog cost."""

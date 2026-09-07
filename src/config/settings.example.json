@@ -41,7 +41,8 @@
           "NVIDIA RTX PRO 4500 Blackwell"
         ],
         "max_workers": 3,
-        "scale_up_max_age_seconds": 300,
+        "boot_seconds": 150,
+        "min_jobs_per_pod": 6,
         "cooldown_seconds": 90,
         "idle_exit_seconds": 120,
         "boot_deadline_seconds": 300
@@ -54,7 +55,8 @@
           "NVIDIA RTX PRO 6000 Blackwell Server Edition"
         ],
         "max_workers": 3,
-        "scale_up_max_age_seconds": 300,
+        "boot_seconds": 240,
+        "min_jobs_per_pod": 6,
         "cooldown_seconds": 300,
         "idle_exit_seconds": 60,
         "boot_deadline_seconds": 300,
@@ -69,7 +71,8 @@
           "NVIDIA RTX PRO 4500 Blackwell"
         ],
         "max_workers": 3,
-        "scale_up_max_age_seconds": 300,
+        "boot_seconds": 90,
+        "min_jobs_per_pod": 6,
         "cooldown_seconds": 90,
         "idle_exit_seconds": 30,
         "boot_deadline_seconds": 300
@@ -81,7 +84,8 @@
           "NVIDIA RTX PRO 4500 Blackwell"
         ],
         "max_workers": 3,
-        "scale_up_max_age_seconds": 300,
+        "boot_seconds": 100,
+        "min_jobs_per_pod": 6,
         "cooldown_seconds": 90,
         "idle_exit_seconds": 90,
         "boot_deadline_seconds": 300

@@ -13,13 +13,11 @@ def _backdate_worker(worker_id, seconds):
 
 def test_queue_stats_counts_and_oldest_age():
     src = SqliteStatsSource()
-    assert src.queue_stats("mesh") == (0, None, None, None)
+    assert src.queue_stats("mesh") == (0, None)
 
     store.enqueue_job("mesh", {"n": 1})
     store.enqueue_job("mesh", {"n": 2})
-    st = src.queue_stats("mesh")
-    assert st.pending == 2
-    assert st.oldest_pending_age_seconds >= 0
+    assert src.queue_stats("mesh").pending == 2
 
     store.claim_job("mesh", "w1", lease_seconds=60)
     st = src.queue_stats("mesh")
@@ -31,7 +29,7 @@ def test_queue_stats_ignores_other_queues_and_finished_jobs():
     store.enqueue_job("image", {})
     store.claim_job("mesh", "w1", lease_seconds=60)
     store.complete_job(job, "w1", {"ok": 1}, None, 1.0)
-    assert SqliteStatsSource().queue_stats("mesh") == (0, None, 1.0, None)
+    assert SqliteStatsSource().queue_stats("mesh") == (0, 1.0)
 
 
 def test_job_seconds_is_the_week_s_mean_with_the_slowest_tenth_left_out():
@@ -40,15 +38,6 @@ def test_job_seconds_is_the_week_s_mean_with_the_slowest_tenth_left_out():
         store.claim_job("image", "w1", lease_seconds=60)
         store.complete_job(job, "w1", {"ok": 1}, None, secs)
     assert SqliteStatsSource().queue_stats("image").job_seconds == 2.0
-
-
-def test_boot_seconds_is_create_to_registered_over_the_queue_s_pods():
-    store.worker_created("pod1", "image", "5090", 1.0)
-    with store._db() as conn:
-        conn.execute("UPDATE workers SET started_at = started_at - 90 WHERE pod_id = 'pod1'")
-    store.worker_seen("pod1", "image", "5090", source="runpod", pod_id="pod1")
-    boot = SqliteStatsSource().queue_stats("image").boot_seconds
-    assert 89 <= boot <= 92
 
 
 def test_live_and_stale_filtering():

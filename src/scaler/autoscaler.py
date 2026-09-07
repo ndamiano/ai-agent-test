@@ -97,11 +97,11 @@ class Autoscaler:
             staleness = rp.get("stale_worker_seconds", 180)
             policy = ScalingPolicy(
                 max_workers=qcfg.get("max_workers", 2),
-                scale_up_max_age_seconds=qcfg.get("scale_up_max_age_seconds", 300),
                 cooldown_seconds=qcfg.get("cooldown_seconds", 90),
                 boot_deadline_seconds=qcfg.get("boot_deadline_seconds", 300),
-                assumed_boot_seconds=qcfg.get("boot_seconds", 150),
+                boot_seconds=qcfg.get("boot_seconds", 150),
                 assumed_job_seconds=estimate_seconds(queue),
+                min_jobs_per_pod=qcfg.get("min_jobs_per_pod", 6),
             )
             actions = decide(
                 queue, policy,

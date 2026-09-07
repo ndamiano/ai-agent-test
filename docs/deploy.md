@@ -475,18 +475,22 @@ Settings block (`settings.json` → `runpod`, the full key list in `docs/local_d
   not substitutes), `network_volume_ids` (the queue's own volumes, one per datacenter its weights
   are copied to, tried in order; absent, the queue rides `runpod.network_volume_id`),
   `allowed_cuda_versions` (the host-driver floor the queue's engine needs),
-  `max_workers`, `scale_up_max_age_seconds` (starvation trigger), `cooldown_seconds`,
-  `boot_seconds` (what a boot is assumed to cost until the week has measured one),
+  `max_workers`, `cooldown_seconds`,
+  `boot_seconds` (what a boot costs this queue — a flat estimate, never measured),
+  `min_jobs_per_pod` (jobs a new pod must be owed when it lands, or it is not worth its boot),
   `idle_exit_seconds`
   (linger tuning: raise for chatty queues, 0 = never exit), `boot_deadline_seconds` (a pod this
   old that no worker has registered from is reaped as wedged). The `queues` dict in `settings.json` replaces the
   default wholesale — carry complete blocks.
 - Scale-from-zero fires on ANY pending job with no cooldown. Past zero, a pod is added only when
-  the backlog will outlast a boot — pending × the queue's measured seconds per job ÷ workers
-  (live and booting) exceeds the queue's measured boot — or the oldest pending job has starved.
-  Both measurements are the last week's, from `jobs` and `workers`; `boot_seconds` and the
-  billing estimate stand in until the week has data. A booting pod counts as capacity, so a
-  5-minute boot can't trigger add-forever.
+  it is owed `min_jobs_per_pod` when it lands: the workers on hand (live and booting) eat
+  `boot_seconds` ÷ seconds-per-job each while it boots, and what is left splits across the fleet
+  it joins. Seconds per job is the last week's, from `jobs`, with the billing estimate standing
+  in until the week has data; `boot_seconds` is configured and never measured, because a worker
+  that registers under an id no create made a row for reads as an instant boot and dragged the
+  average to a fraction of the truth. A booting pod counts as capacity, so a 5-minute boot can't
+  trigger add-forever. Age triggers nothing — an old pending job means the fleet is still
+  chewing, and the pod bought for it lands after that job is gone.
 - `queues.video` is the image block with its own `template_id` (the `video-*` tag), the same cards
   and CUDA floor, and a longer `idle_exit_seconds` (90): an anim's sheet job lands ~20 s after
   its still renders, and a build asks for its characters together, so a video pod that exits on

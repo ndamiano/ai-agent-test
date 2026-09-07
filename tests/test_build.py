@@ -603,21 +603,69 @@ def _file_history(n=6):
     return h
 
 
-def test_compact_trims_bodies_before_dropping_any_round(tmp_path):
+def _bodies(history):
+    """Which messages still carry a whole 1500-char body, by index."""
+    return [i for i, m in enumerate(history) if "y" * 1500 in json.dumps(m)]
+
+
+def test_compact_stubs_the_oldest_bodies_only_until_the_tail_fits(tmp_path):
     (tmp_path / "game").mkdir()
     cursor = _cursor(history=_file_history())
     n_before = len(cursor.history)
-    # 12 rounds of ~1.5K each; the budget holds the 3 fresh ones whole plus 9 trimmed to stubs.
-    assert build_steps.compact(tmp_path, cursor, keep_chars=12000) > 0
+    # Six files, each written then read: the read supersedes the write, leaving six bodies of
+    # ~1.5K. A budget two bodies short means the two OLDEST reads go and the four newest stay whole.
+    deduped = build_steps.dedupe_bodies(cursor.history)
+    keep = sum(len(json.dumps(m)) for m in deduped[1:]) - 2 * 1400
+    assert build_steps.compact(tmp_path, cursor, keep_chars=keep) > 0
     assert len(cursor.history) == n_before                   # every round is still there
     assert cursor.history[1]["role"] == "assistant"          # no re-grounding note: nothing dropped
-    old_write = json.loads(cursor.history[1]["tool_calls"][0]["function"]["arguments"])
-    assert old_write["path"] == "f0.js" and "1500 chars" in old_write["content"]
     assert "read f0.js lines 1-40/40" in cursor.history[4]["content"]
-    # The newest rounds keep their bodies whole: the model is editing against them.
-    assert cursor.history[-1]["content"].count("y") == 1500
-    assert "y" * 1500 in cursor.history[-2]["tool_calls"][0]["function"]["arguments"] or \
-        "y" * 1500 in cursor.history[-4]["tool_calls"][0]["function"]["arguments"]
+    assert "read f1.js lines 1-40/40" in cursor.history[8]["content"]
+    assert _bodies(cursor.history) == [12, 16, 20, 24]      # the reads of f2..f5, whole
+
+
+def test_compact_keeps_only_the_newest_copy_of_each_file(tmp_path):
+    (tmp_path / "game").mkdir()
+    h = _file_history(n=1)
+    for k in range(3):                                       # three more whole reads of f0.js
+        h.append({"role": "assistant", "content": f"again {k}",
+                  "tool_calls": [{"id": f"a{k}", "type": "function",
+                                  "function": {"name": "read_file",
+                                               "arguments": json.dumps({"path": "f0.js"})}}]})
+        h.append({"role": "tool", "tool_call_id": f"a{k}",
+                  "content": f'<file path="f0.js" lines="1-40/40">\n{"y" * 1500}\n</file>'})
+    cursor = _cursor(history=h)
+    assert build_steps.compact(tmp_path, cursor, keep_chars=10_000_000) == 1
+    assert _bodies(cursor.history) == [len(h) - 1]           # the newest read alone keeps its bytes
+    write = json.loads(cursor.history[1]["tool_calls"][0]["function"]["arguments"])
+    assert write["content"] == "[wrote f0.js, 1500 chars — a newer copy is later in this transcript]"
+    assert "a newer copy is later in this transcript" in cursor.history[4]["content"]
+    assert "read it again" not in json.dumps(cursor.history)
+
+
+def test_a_line_window_never_supersedes_the_whole_file(tmp_path):
+    (tmp_path / "game").mkdir()
+    h = _file_history(n=1)
+    h.append({"role": "assistant", "content": "peek",
+              "tool_calls": [{"id": "w", "type": "function",
+                              "function": {"name": "read_file",
+                                           "arguments": json.dumps({"path": "f0.js", "offset": 5})}}]})
+    h.append({"role": "tool", "tool_call_id": "w",
+              "content": f'<file path="f0.js" lines="5-40/40">\n{"y" * 1500}\n</file>'})
+    cursor = _cursor(history=h)
+    build_steps.compact(tmp_path, cursor, keep_chars=10_000_000)
+    assert _bodies(cursor.history) == [4, 6]                 # the whole read and the window both live
+
+
+def test_compact_is_a_noop_when_nothing_is_superseded_and_it_fits(tmp_path):
+    (tmp_path / "game").mkdir()
+    h = _file_history(n=2)
+    for m in h[1:]:                                          # keep the reads, drop the writes' bodies
+        for tc in m.get("tool_calls") or []:
+            if tc["function"]["name"] == "write_file":
+                tc["function"]["arguments"] = json.dumps({"path": "f.js", "content": "short"})
+    cursor = _cursor(history=h)
+    assert build_steps.compact(tmp_path, cursor, keep_chars=10_000_000) == 0
 
 
 def test_compact_drops_rounds_only_when_trimming_is_not_enough(tmp_path):
@@ -632,7 +680,7 @@ def test_compact_drops_rounds_only_when_trimming_is_not_enough(tmp_path):
 def test_compaction_replays_the_trim_from_the_turn_log(tmp_path):
     (tmp_path / "game").mkdir()
     cursor = _cursor(history=_file_history())
-    build_steps.compact(tmp_path, cursor, keep_chars=12000)
+    build_steps.compact(tmp_path, cursor, keep_chars=8000)
     from maestro.codegen import turn_log
     record = json.loads(turn_log.path(tmp_path).read_text().splitlines()[-1])
     assert record["kind"] == "compact" and record["trimmed"] > 0 and record["dropped"] == 0
@@ -686,3 +734,31 @@ def test_a_misnamed_argument_is_named_back(tmp_path, tools):
     said = cursor.history[-1]["content"]
     assert "KeyError" not in said
     assert "needs the argument 'path'" in said and "file" in said
+
+
+def test_the_output_cap_is_whatever_the_window_has_left(tmp_path, tools, monkeypatch):
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    first = cursor.out_cap
+    cursor.logged = len(cursor.history)
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _reply(calls=[("write_file", {"path": "a.js", "content": "z" * 3000})],
+                            usage={"prompt_tokens": 110_000}))
+    # The last counted prompt plus this round (a 3K write and its result), never the whole
+    # transcript re-estimated: a transcript of 110K tokens is well over 330K chars.
+    assert first > 100_000
+    assert 131_072 - 110_000 - 1200 < cursor.out_cap < 131_072 - 110_000 - 1000
+
+
+def test_compaction_fires_when_the_window_has_less_than_the_room_left(tmp_path, tools, monkeypatch):
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    cursor.history = _file_history()
+    cursor.prompt_tokens = 131_072 - build_steps._COMPACT_ROOM - 1
+    build_steps._infer(tmp_path, cursor)
+    assert cursor.compacted == 0
+    cursor.prompt_tokens = 131_072 - build_steps._COMPACT_ROOM + 1
+    build_steps._infer(tmp_path, cursor)
+    assert cursor.compacted == 1

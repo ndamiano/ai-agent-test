@@ -6,8 +6,9 @@ and either returns the NEXT request or `Done`. The driver (build_chain) enqueues
 `llm` job, dies, and re-enters this function on the completion — so the whole loop is spread across
 process deaths, its scratch carried in the durable cursor.
 
-The transcript IS the memory: compaction (drop the oldest whole rounds, re-ground on the file
-listing) is what keeps it inside the context window.
+The transcript IS the memory: compaction (the newest copy of each file's body wins, then bodies
+out of the oldest rounds until the tail fits, then the oldest whole rounds dropped and the model
+re-grounded on the file listing) is what keeps it inside the context window.
 """
 
 from __future__ import annotations
@@ -31,21 +32,14 @@ logger = logging.getLogger(__name__)
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 
 MAX_TURNS = 200
-# Per-turn output cap. Sized for a THINKING model: turn 0 of a build thinks 25-36K tokens before its
-# first tool call, and at 16K every such turn ended at the cap with no content and no call.
-MAX_TOKENS = 50_000
-# The server admits a turn only if prompt + max_tokens fits the window, so the cap is what the
-# window has left after the prompt, less room for the estimate to be wrong.
-_CAP_MARGIN = 6_000
-_CAP_FLOOR = 16_000
 # Ties to tools.MAX_READ_CHARS — a read cut here too would contradict its own truncation note.
 _MAX_TOOL_CHARS = 20_000
 # A turn the driver was asked to re-send with nothing to apply (a reaper re-drive). Each one
 # enqueues a fresh job, so a worker that dies every time would re-drive forever.
 _REDRIVE_GIVE_UP = 8
-# Compact when the last prompt crossed this fraction of the window, leaving room for the reply and
-# the next tool result; keep this fraction of it afterwards.
-_COMPACT_AT = 0.62
+# Compact when the last prompt left less than this many tokens of the window for the reply; keep
+# this fraction of the window afterwards.
+_COMPACT_ROOM = 16_000
 _COMPACT_KEEP = 0.33
 # Consecutive turns with no tool call before the build gives up. Each nudge differs: repeating one
 # verbatim reproduces the reply that earned it.
@@ -460,7 +454,7 @@ def _dispatch(tools, cursor, tc) -> dict:
 
 def _infer(run_dir, cursor, report: Optional[str] = None) -> Infer:
     ctx = _n_ctx()
-    if cursor.prompt_tokens > int(ctx * _COMPACT_AT):
+    if cursor.prompt_tokens > ctx - _COMPACT_ROOM:
         if compact(run_dir, cursor, int(ctx * _COMPACT_KEEP) * 4):
             cursor.compacted += 1
             cursor.prompt_tokens = 0   # unknown until the server reports the trimmed prompt back
@@ -472,8 +466,14 @@ def _infer(run_dir, cursor, report: Optional[str] = None) -> Infer:
     if cursor.compacted:
         report += f" (compacted {cursor.compacted}×)"
     cursor.actions = []
-    est = max(cursor.prompt_tokens, sum(len(json.dumps(m)) for m in msgs) // 3)
-    cursor.out_cap = max(_CAP_FLOOR, ctx - est - _CAP_MARGIN)
+    # The server admits a turn only if prompt + max_tokens fits the window: the cap is whatever the
+    # window has left after the prompt. The prompt is the last one the server counted plus this
+    # turn's round; counting the whole transcript at 3 chars a token instead would overshoot a
+    # near-full window and hand the server a cap below zero.
+    chars = lambda ms: sum(len(json.dumps(m)) for m in ms)
+    est = (cursor.prompt_tokens + chars(cursor.history[cursor.logged:]) // 3
+           if cursor.prompt_tokens else chars(msgs) // 3)
+    cursor.out_cap = ctx - est
     return Infer(msgs, SCHEMAS, cursor.out_cap, report=report)
 
 
@@ -492,13 +492,37 @@ def rounds(history: List[dict]) -> List[List[dict]]:
     return out
 
 
-# Rounds whose file bodies compaction leaves whole: the newest ones are what the model is about to
-# edit against, and a stub there turns "edit what I just read" into a re-read.
-_FRESH_ROUNDS = 3
 _FILE_RESULT = re.compile(r'^<file path="([^"]*)"(?: lines="([^"]*)")?>\n(.*)\n</file>$', re.S)
 
 
-def _stub_call(tc: dict) -> Optional[dict]:
+# Why a stub states where the bytes are and never says "read it again": told to re-read, the model
+# re-reads the whole project after every compaction, and the reads refill the window (measured
+# 2026-09-06: two prod builds spent ~150 of 200 steps that way and shipped nothing).
+_SUPERSEDED = "a newer copy is later in this transcript"
+_ON_DISK = "on disk; not repeated here"
+
+
+def _write_key(tc: dict) -> Optional[tuple]:
+    fn = tc.get("function") or {}
+    if fn.get("name") != "write_file":
+        return None
+    args = parse_args(fn.get("arguments"))
+    body = args.get("content")
+    return ("write", args.get("path")) if isinstance(body, str) and len(body) >= 200 else None
+
+
+def _result_key(m: dict) -> Optional[tuple]:
+    """A whole-file read keys on the path alone; a window ("5-40/40", or a read cut at the
+    ceiling) keys on its span too."""
+    hit = _FILE_RESULT.match(m.get("content") or "")
+    if not hit or len(hit.group(3)) < 200:
+        return None
+    span = hit.group(2)
+    whole = re.fullmatch(r"1-(\d+)/(\d+)", span or "")
+    return ("read", hit.group(1), None if not span or (whole and whole[1] == whole[2]) else span)
+
+
+def _stub_call(tc: dict, why: str) -> Optional[dict]:
     fn = tc.get("function") or {}
     name = fn.get("name")
     if name not in ("write_file", "edit_file"):
@@ -508,23 +532,50 @@ def _stub_call(tc: dict) -> Optional[dict]:
         body = args.get("content")
         if not isinstance(body, str) or len(body) < 200:
             return None
-        args["content"] = f"[{len(body)} chars, written — on disk as {args.get('path')}]"
+        args["content"] = f"[wrote {args.get('path')}, {len(body)} chars — {why}]"
     else:
         old, new = args.get("old_text"), args.get("new_text")
         if not (isinstance(old, str) and isinstance(new, str)) or len(old) + len(new) < 200:
             return None
         args["old_text"] = f"[{len(old)} chars replaced in {args.get('path')}]"
-        args["new_text"] = f"[{len(new)} chars — on disk]"
+        args["new_text"] = f"[{len(new)} chars — {why}]"
     return {**tc, "function": {**fn, "arguments": json.dumps(args, ensure_ascii=False)}}
 
 
-def _stub_result(m: dict) -> Optional[dict]:
+def _stub_result(m: dict, why: str) -> Optional[dict]:
     hit = _FILE_RESULT.match(m.get("content") or "")
     if not hit or len(hit.group(3)) < 200:
         return None
     span = f" lines {hit.group(2)}" if hit.group(2) else ""
-    return {**m, "content": f"[read {hit.group(1)}{span}, {len(hit.group(3))} chars — dropped to "
-                            "save room; read it again before editing it]"}
+    return {**m, "content": f"[read {hit.group(1)}{span}, {len(hit.group(3))} chars — {why}]"}
+
+
+def dedupe_bodies(history: List[dict]) -> List[dict]:
+    """The newest body of each file wins: every older write or read of the same file becomes a
+    stub pointing at the newer copy. A read of a line window is its own key, so a window never
+    stands in for the whole file, nor the whole for a window. Edits are deltas, not bodies, and
+    stay whole — an edit after the live read is what the model changed since."""
+    seen: set = set()
+    out = []
+    for m in reversed(history[1:]):
+        if m["role"] == "tool":
+            key = _result_key(m)
+            if key in seen:
+                m = _stub_result(m, _SUPERSEDED) or m
+            elif key:
+                seen.add(key)
+        elif m.get("tool_calls"):
+            calls = []
+            for tc in m["tool_calls"]:
+                key = _write_key(tc)
+                if key and (key in seen or ("read", key[1], None) in seen):
+                    tc = _stub_call(tc, _SUPERSEDED) or tc
+                elif key:
+                    seen.add(key)
+                calls.append(tc)
+            m = {**m, "tool_calls": calls}
+        out.append(m)
+    return history[:1] + out[::-1]
 
 
 def trim_bodies(history: List[dict], rounds_to_trim: int) -> List[dict]:
@@ -537,37 +588,46 @@ def trim_bodies(history: List[dict], rounds_to_trim: int) -> List[dict]:
         for m in g:
             if i < rounds_to_trim:
                 if m.get("tool_calls"):
-                    m = {**m, "tool_calls": [_stub_call(tc) or tc for tc in m["tool_calls"]]}
+                    m = {**m, "tool_calls": [_stub_call(tc, _ON_DISK) or tc for tc in m["tool_calls"]]}
                 elif m["role"] == "tool":
-                    m = _stub_result(m) or m
+                    m = _stub_result(m, _ON_DISK) or m
             out.append(m)
     return out
 
 
 def compact(run_dir, cursor, keep_chars: int) -> int:
-    """Trim file bodies out of the old rounds; only if the tail still does not fit, drop the OLDEST
-    whole rounds and RE-GROUND on the file list.
+    """Stub every superseded file body; then, oldest round first, stub the bodies out of rounds
+    until the tail fits `keep_chars`; only if it still does not fit, drop the OLDEST whole rounds
+    and RE-GROUND on the file list.
 
     A transcript is mostly file bodies that are also on disk, and dropping a round loses the
     model's memory of having written it. Trimmed, the round still says what the model did; the
-    bytes come back on `read_file`. When rounds do go, the re-grounding matters more than the
-    trim: the dropped rounds are where the model watched itself write the files, so after one it
-    is editing code it no longer remembers. Returns the rounds changed, trimmed or dropped."""
+    bytes come back on `read_file`. The newest rounds are the last to lose their bodies, because
+    they are what the model is about to edit against. When rounds do go, the re-grounding matters
+    more than the trim: the dropped rounds are where the model watched itself write the files, so
+    after one it is editing code it no longer remembers. Returns the rounds trimmed or dropped, 1
+    when only superseded bodies went, 0 when nothing changed."""
     size = lambda msgs: sum(len(json.dumps(m)) for m in msgs)
-    groups = rounds(cursor.history)
-    trimmed = max(0, len(groups) - _FRESH_ROUNDS)
-    history = trim_bodies(cursor.history, trimmed) if trimmed else list(cursor.history)
-    if history == cursor.history:
-        trimmed = 0
+    history = dedupe_bodies(cursor.history)
+    deduped = history != cursor.history
     groups = rounds(history)
-    total = size([m for g in groups for m in g])
+    whole = [size(g) for g in groups]
+    stubbed = [size(g) for g in rounds(trim_bodies(history, len(groups)))]
+    total, trimmed = sum(whole), 0
+    while total > keep_chars and trimmed < len(groups):
+        total += stubbed[trimmed] - whole[trimmed]
+        trimmed += 1
+    if whole[:trimmed] == stubbed[:trimmed]:
+        trimmed = 0
+    history = trim_bodies(history, trimmed) if trimmed else history
+    groups = rounds(history)
     dropped, removed = 0, 0
     while groups and total > keep_chars:
         g = groups.pop(0)
         total -= size(g)
         dropped += 1
         removed += len(g)
-    if not trimmed and not dropped:
+    if not deduped and not trimmed and not dropped:
         return 0
     kept = [m for g in groups for m in g]
     note = None
@@ -586,7 +646,7 @@ def compact(run_dir, cursor, keep_chars: int) -> int:
     turn_log.append_compact(run_dir, turn=cursor.turn, trimmed=trimmed, dropped=dropped,
                             note=note["content"] if note else None)
     cursor.logged = max(1, cursor.logged - removed + (1 if note else 0))
-    return trimmed + dropped
+    return trimmed + dropped or 1
 
 
 def _request_from(spec) -> str:

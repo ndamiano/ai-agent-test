@@ -105,10 +105,11 @@ def _replay(run_dir) -> Iterator[Tuple[Dict, Dict, List[Dict], int]]:
 
 
 def _compacted(messages: List[Dict], record: Dict) -> List[Dict]:
-    """Replay one compaction exactly as build_steps.compact performed it: file bodies stubbed out
-    of the oldest rounds, then the oldest whole rounds gone with the re-grounding note in their
-    place, the request kept."""
+    """Replay one compaction exactly as build_steps.compact performed it: superseded file bodies
+    stubbed, then the bodies out of the oldest rounds, then the oldest whole rounds gone with the
+    re-grounding note in their place, the request kept."""
     from maestro.codegen import build_steps   # module-level would cycle: build_steps writes here
+    messages = build_steps.dedupe_bodies(messages)
     if record["trimmed"]:
         messages = build_steps.trim_bodies(messages, record["trimmed"])
     groups = build_steps.rounds(messages)

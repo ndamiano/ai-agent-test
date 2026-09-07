@@ -61,14 +61,19 @@ partial view and a schema, it fills the schema.
 
 ### The transcript IS the memory
 
-No context-rebuilding, no per-step minimal window. When the prompt approaches the context limit,
-the FILE BODIES in the old rounds are replaced by a stub naming the path and size — the round still
-says what the model wrote, read and edited, and the bytes are on disk — and only if that is not
-enough are the OLDEST WHOLE ROUNDS dropped and the model re-grounded on the current file listing
+No context-rebuilding, no per-step minimal window. When the prompt leaves the window less room
+than a reply needs, the NEWEST COPY of each file's body wins — every older write or read of the
+same file becomes a stub pointing at the newer one — then, OLDEST ROUND FIRST and only until the
+tail fits, the FILE BODIES are replaced by a stub naming the path and size — the round still says
+what the model wrote, read and edited, and the bytes are on disk — and only if that is not enough
+are the OLDEST WHOLE ROUNDS dropped and the model re-grounded on the current file listing
 (`build_steps.compact`). Rounds are never split — a `tool` message whose assistant `tool_calls` is
-gone is an orphan, and a chat template is entitled to 500 the turn. The re-grounding matters more
-than the trim: the dropped rounds are where the model watched itself write the files, so without it
-the model edits code it no longer remembers.
+gone is an orphan, and a chat template is entitled to 500 the turn. A stub says where the bytes
+are and never tells the model to read them again: told to, it re-reads the whole project after
+every compaction, the reads refill the window, and the build spends its steps on nothing
+(measured 2026-09-06, two of six prod games). The re-grounding matters more than the trim: the
+dropped rounds are where the model watched itself write the files, so without it the model edits
+code it no longer remembers.
 
 ### A gate may only detect BROKEN, never "bad"
 
@@ -279,9 +284,9 @@ What does help:
    on mechanical turns — and the model writes the whole game inside its think before the first
    tool call, so the cap must hold a whole think plus the answer: at 16K every opening turn ended
    at the cap with nothing; at 50K a turn that wanted 68K re-thought from zero on every retry, five
-   minutes each. The cap is `n_ctx − prompt − 6K` (floor 16K): ninfer admits a request only when
-   prompt + max_tokens fits its window, and with that cap the same turn stopped on its own at 47K
-   and the build finished in 24 turns. The window is not a ceiling the model cannot reach: a
+   minutes each. The cap is `n_ctx − prompt`, whatever the window has left: an engine admits a
+   request only when prompt + max_tokens fits its window, and with that cap the same turn stopped
+   on its own at 47K and the build finished in 24 turns. The window is not a ceiling the model cannot reach: a
    fourteen-system design ran a 120K budget dry on turn 0 and called no tool, so what turn 0 costs
    is set by the design's breadth, and the fix for that is the design, not a bigger cap.
    Effort is `llm.reasoning`, forwarded as `reasoning_effort`;

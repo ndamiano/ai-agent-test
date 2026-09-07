@@ -109,12 +109,14 @@ def test_every_request_the_build_sent_replays_from_the_log(run):
         assert job["payload"]["body"]["tools"] == archived["meta"]["tools"]
 
 
-def test_a_compaction_records_the_rounds_it_dropped_and_its_note(run):
+def test_a_compaction_records_the_rounds_it_dropped_and_its_note(run, monkeypatch):
+    # A window too small to hold even two rounds of stubs, so the only way to make room is to drop.
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 300)
     build_id = build_chain.kickoff(run)
     _land(run, build_id, _reply([_write("index.html", 3000)]))
     _land(run, build_id, _reply([_write("game.js", 3000)], prompt_tokens=3000))
 
-    (event,) = [r for r in _log(run) if r["kind"] == "compact"]
+    event = [r for r in _log(run) if r["kind"] == "compact"][-1]
     assert event["dropped"] >= 1
     assert "index.html" in event["note"]
 

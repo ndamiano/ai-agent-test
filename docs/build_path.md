@@ -93,7 +93,8 @@ src/
                          and a `turn` record carries only what that turn ADDED — turn k is
                          `system + tools + concat(added[0..k])`. A `compact` record carries the
                          rounds `build_steps.compact` trimmed to stubs and dropped, and the note
-                         that replaced the dropped ones, so a replay shows what was really sent. A FIX appends its own meta and never
+                         that replaced the dropped ones; the newest-copy-wins pass is a function of
+                         the transcript alone, so a replay shows what was really sent. A FIX appends its own meta and never
                          truncates.
       archive.py         the run dir's OFF-BOX copy. tools/s3.py is a minimal SigV4 client over
                          `requests` — a wrong signature is a loud 403 and the payload hash rides

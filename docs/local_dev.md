@@ -84,7 +84,7 @@ larger variant artifact of the same model left no room for them and died at laun
 `--presence-penalty 0` is load-bearing: ninfer's sampler defaults to Qwen3 thinking defaults,
 penalty 1.0 among them, which degrades long structured output. There is no `--no-thinking`:
 thinking is `llm.reasoning` (below), sent as `reasoning_effort` on every call, and ninfer has no
-thinking-budget flag — the build's per-turn output cap, `n_ctx − prompt − 6K`, is what bounds it,
+thinking-budget flag — the build's per-turn output cap, `n_ctx − prompt`, is what bounds it,
 because ninfer admits a request only when prompt + max_tokens fits `--max-context`. `--model-id`
 must match `llm.model` in settings.json.
 
@@ -190,8 +190,9 @@ endpoint — inference rides the queue.
 `scale_up_depth_per_worker` and `scale_up_max_age_seconds` on the llm queue are per pod and
 scale with it: two slots, twice the depth and twice the wait before a second card is rented.
 
-`n_ctx` is the INPUT budget: when a transcript approaches it, `build_steps.compact` stubs the file
-bodies out of old rounds and, only if that is not enough, drops the oldest whole rounds and
+`n_ctx` is the INPUT budget: when a prompt leaves less than 16K tokens of it, `build_steps.compact`
+stubs every superseded file body, then the bodies out of the oldest rounds until a third of the
+window holds the rest and, only if that is not enough, drops the oldest whole rounds and
 re-grounds the model on the file listing (`CLAUDE.md`). Nothing else trims.
 
 The two `_args` strings are appended to an engine's launch line, one per engine: `ninfer_args` by

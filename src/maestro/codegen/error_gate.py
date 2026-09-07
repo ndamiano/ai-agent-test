@@ -328,6 +328,27 @@ def _node_check(source: str) -> Optional[str]:
     return first_err
 
 
+def _node_message(source: str) -> Optional[str]:
+    """The parse failure as a person would read it — "line 2: Unexpected token ';'" — or None when
+    the source parses. `_node_check` answers with the location alone because its caller supplies
+    the rest; a model reading the answer itself needs the message with it."""
+    line = _node_check(source)
+    if line is None:
+        return None
+    with tempfile.NamedTemporaryFile("w", suffix=".mjs", delete=False) as f:
+        f.write(source)
+        tmp = f.name
+    try:
+        res = subprocess.run(["node", "--check", tmp], capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return f"line {line}"
+    finally:
+        Path(tmp).unlink(missing_ok=True)
+    said = next((ln.strip() for ln in res.stderr.splitlines()
+                 if ln.strip().startswith("SyntaxError:")), "")
+    return f"line {line}: {said[len('SyntaxError:'):].strip()}" if said else f"line {line}"
+
+
 def _declaration_sites(name: str, game_dir: Path) -> List[str]:
     pattern = re.compile(rf"\b(?:const|let|var|function|class)\s+{re.escape(name)}\b")
     out = []

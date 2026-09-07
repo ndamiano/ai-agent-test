@@ -13,7 +13,12 @@ from maestro.codegen.staging import RUNTIME_DIR, game_dir
 
 _VENDOR_FILES = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
 
-MAX_READ_CHARS = 20_000   # one read's ceiling; past this the read returns a WINDOW and says so.
+# A read lands in a PROGRAM'S variable, not in the transcript — only what the program prints costs
+# the window — so there is no reason to cut one short. A ceiling here was a context guard, and
+# under a program it guards nothing while making a partial read look like a whole one: the model
+# discards the truncation note it never printed and then reasons from a fragment (measured
+# 2026-09-07: counted occurrences over 43% of a file and read the zeroes as missing edits).
+MAX_READ_CHARS = 8_000_000
 
 
 _ESCAPES = {"\\r\\n": "\n", "\\n": "\n", "\\t": "\t", "\\\"": "\"", "\\'": "'"}
@@ -107,9 +112,8 @@ def build_tools(state, build_id: str) -> dict:
                 f"at that cut is not what the file says, so do not use it as an edit anchor.]")
         elif end < total and not (want and end - start >= want):
             content += (
-                f"\n\n[showed lines {start + 1}-{end} of {total}; the file is too long to read at "
-                f"once. Read the rest with offset {end + 1}. A file this size is worth splitting — "
-                f"move a system out into its own file so later reads and edits stay cheap.]")
+                f"\n\n[showed lines {start + 1}-{end} of {total}; read the rest with offset "
+                f"{end + 1}.]")
         return {"ok": True, "path": path, "content": content, "lines": f"{start + 1}-{end}/{total}"}
 
     def write_file(path=None, content=None, **_) -> dict:
@@ -168,6 +172,33 @@ def build_tools(state, build_id: str) -> dict:
         return compose(root, state.run_dir, state.run_id, build_id, description,
                        int(seed) if seed is not None else None)
 
+    def check_syntax(paths=None, **_) -> dict:
+        """Does the game's JavaScript parse? The error gate's own parser, run HERE — the program
+        that asks is confined and cannot start anything itself.
+
+        It only ever answers BROKEN or not: a file parses or it does not, and a parse error can
+        only be satisfied by fixing the syntax. Nothing here judges what the code DOES."""
+        from maestro.codegen.error_gate import _node_message
+        if paths is None:
+            paths = [str(p.relative_to(root)) for p in sorted(root.rglob("*.js"))
+                     if p.name not in _VENDOR_FILES and p.parent != root / "lib"]
+        elif isinstance(paths, str):
+            paths = [paths]
+        out = {}
+        for rel in paths:
+            p = _safe(root, rel)
+            if not p.exists():
+                out[rel] = f"no such file: {rel}"
+                continue
+            out[rel] = _node_message(p.read_text(encoding="utf-8", errors="replace")) or "OK"
+        return {"ok": True, "checked": out}
+
+    def done(summary=None, **_) -> dict:
+        """The build says it is finished. Nothing happens here: the driver reads `done` off the
+        ledger of what the program called, answers the FIRST one with the nudge, and ends the
+        build on the second."""
+        return {"ok": True, "summary": str(summary or "")}
+
     def _reported(fn):
         """A tool result is a BOUNDARY: anything the call raises comes back as text the model can
         act on. Never substitute a default for a bad argument — the report is what lets it retry."""
@@ -186,4 +217,6 @@ def build_tools(state, build_id: str) -> dict:
             {"list_files": list_files, "read_file": read_file,
              "write_file": write_file, "edit_file": edit_file,
              "generate_media": generate_media,
-             "compose_world": compose_world}.items()}
+             "compose_world": compose_world,
+             "check_syntax": check_syntax,
+             "done": done}.items()}

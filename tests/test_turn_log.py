@@ -41,13 +41,13 @@ def headers():
     return _issue
 
 
-def _reply(calls=None, content="", prompt_tokens=10):
+def _reply(programs=None, content="", prompt_tokens=10):
     message = {"role": "assistant", "content": content}
-    if calls:
+    if programs:
         message["tool_calls"] = [
             {"id": f"c{i}", "type": "function",
-             "function": {"name": n, "arguments": json.dumps(a)}}
-            for i, (n, a) in enumerate(calls)]
+             "function": {"name": "python", "arguments": json.dumps({"code": code})}}
+            for i, code in enumerate(programs)]
     return {"choices": [{"message": message}],
             "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": 20}}
 
@@ -68,7 +68,8 @@ def _land(run_id, build_id, reply):
 
 
 def _write(name, size=40):
-    return ("write_file", {"path": name, "content": "x" * size})
+    body = "x" * size
+    return f'write_file(path="{name}", content="{body}")'
 
 
 def _log(run_id):
@@ -85,7 +86,7 @@ def test_a_landed_turn_is_appended_and_its_row_keeps_only_measurements(run):
     record = _log(run)[1]
     assert record["job_id"] == job["id"]
     assert record["added"] == [{"role": "user", "content": "make a game"}]
-    assert record["response"]["tool_calls"][0]["function"]["name"] == "write_file"
+    assert record["response"]["tool_calls"][0]["function"]["name"] == "python"
     assert (record["exec_seconds"], record["error"]) == (2.0, None)
 
     row = db_store.get_job(job["id"])

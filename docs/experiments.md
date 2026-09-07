@@ -1928,3 +1928,87 @@ The stage 3 number exists: **$1–2 a game one-shot, $1.81 mean**, on pods that 
 busy on the llm queue. The lever is not boot overhead and not the art queue. It is the
 step-cap: a build that runs to 200 steps costs as much as a finished game and ships nothing,
 and it hit two of six. What those two builds spent their steps on is the next thing to read.
+
+
+---
+
+## 2026-09-07 — The model writes PROGRAMS instead of tool calls (local 5090, qwen3.8_27b nvfp4 via ninfer, 131K window, reasoning medium)
+
+### The question
+CodeAct (arXiv 2402.01030) has the model emit a Python program that calls the tools, instead of one
+JSON tool call per turn. Does that shape work on the 27B, what does it cost, and what breaks?
+
+### Turn 0, one design (a noodle-shop management game), n=1 per cell
+| arm | wall | completion | finish | what it did |
+|---|---|---|---|---|
+| seven JSON schemas (prod) | 47 s | 6,993 | tool_calls | 4 × read_file |
+| one `python` tool | 86 s | 11,323 | tool_calls | one program: a loop over 4 reads |
+| a fenced ```python block, no `tools` param, `stop: ["\n```\n"]` | 51 s | 7,722 | stop | one program, then a constraint solver |
+| the same fenced block with no stop | 217 s | 38,761 | stop | 64 programs — it played both sides of the conversation until it ran out of things to invent |
+
+`stop` works per request on ninfer's HTTP API, and is NOT matched during reasoning: the think ran
+23,395 chars containing six code fences of its own and none of them ended the turn. The `python`
+tool needs no stop string at all — `</tool_call>` is a trained stop — so that is the shape built.
+Across 15 samples over four designs the two encodings produced the same programs; the fenced form
+lost one turn in five to the model reverting to `<function=list_files>` XML when no `tools` param
+was present, and both hit the same turn-0 runaway (60K completion, no program) on the fattest design.
+
+### What the encoding costs, measured against the server's own tokenizer
+| | tokens |
+|---|---|
+| 24,168 chars of game.js as raw text | 8,173 |
+| the same as a JSON string | 8,424 (+3.1%) |
+| the same as `write_file` arguments | 8,434 (+3.2%) |
+| seven tool schemas, every turn | 1,831 |
+| one `python` schema, every turn | 266 |
+
+So the JSON tax is the SCHEMAS (1,565 tokens of window back, permanently), not the escaping. Both
+sit in the cached prefix, so what they cost is window occupancy — which is what triggers compaction.
+
+### Two moderated builds of the same design, every program approved by hand
+| | v1 | v2 |
+|---|---|---|
+| turns | 29, never finished | 37, called `done` |
+| tool calls | 35 in the first 8 turns (4.4/turn) | 99 (2.7/turn) |
+| prompt at the end | 52K / 131K | 72K / 131K, no compaction ever needed |
+| failed calls | 1 (a no-op edit, which ABORTED 10 later edits) | 0 |
+| art asks | 22, two of them from one loop over a roster | 22 |
+
+v1 ran with reads capped at 20K, tool failures raised, no syntax check and 1×1 placeholder art.
+Every one of those was a defect of the harness, and v2 fixed all four: reads uncapped, failures
+returned as `ERROR:` strings, a `check_syntax` function, and prod's own `write_placeholder`.
+
+What the model did with it, unprompted: wrote a backtracking solver for a 14-night schedule with
+constraints, wrote asserts for it, ran them, and caught `AssertionError: ('Ryo', 4)` — a wrong
+count already written to disk. Indexed a 1,047-line file by regex and printed 31 lines rather than
+re-reading it. Emitted 41,918 chars of JavaScript in one raw string that `node --check` accepted
+first try, with zero backslashes needed. Found and fixed a `green onion`/`scallion` mismatch in its
+own roster. Called `check_syntax` 9 times in v2, unprompted.
+
+44 `edit_file` calls in v1, 43 landing first try on multi-line anchors reproduced from memory: the
+escaping failure that JSON-serialized reads caused (2026-07-29) does not reappear when the file is
+a Python string.
+
+### What broke, and what each one changed
+- **A raise abandons the rest of the program.** One no-op edit in a batch of 16 applied 5 and never
+  attempted 10. The model recovered unassisted in one turn — but every tool now RETURNS its error.
+- **It reached for the machine twice.** `subprocess.run(["node", "--check", …])` to check its own
+  JavaScript, and `open("/tmp/sched.json", "w")` for scratch. Neither was hostile; both are why the
+  program runs confined. Refusing the first cost four turns of hand-reading 1,000 lines, which is
+  what earned `check_syntax`.
+- **Silent truncation is worse in a variable than in the window.** The 20K read cap let the model
+  count occurrences over 43% of a file and read the zeroes as missing edits; under JSON the note is
+  unmissable because the content IS the message. The cap is gone.
+- **A load-dead game the gate catches.** v2 shipped `main.js` importing `./lib/canvas.js` from
+  inside `js/`, so three libraries 404'd and nothing ran — a black page with no uncaught exception.
+  The error gate's script-404 rule names it exactly ("the page asked for js/lib/canvas.js … the
+  path in the import that names it is wrong"); the session had no gate, so it stopped at `done`.
+
+### Verdict
+Built. The turn count is the lever — 99 calls in 37 turns is work that would have been ~99 turns —
+and the second-order win is that a read need not enter the transcript at all. What is NOT measured
+yet: any of this on Flash-Next through SGLang, which is what prod runs, and whether a full battery
+holds the shape. Neither the fenced encoding nor a persistent namespace is built: the model reused
+no bound name in either build, retyping a schedule it had computed two turns earlier, and a
+persistent namespace would also defeat the static pre-check by leaving names bound across programs.
+

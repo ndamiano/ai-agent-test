@@ -13,16 +13,17 @@ re-grounded on the file listing) is what keeps it inside the context window.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import logging
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Union
 
 from llm_clients.message_builder import MessageBuilder
 from maestro.codegen import asset_use, code_map, turn_log
+from maestro.codegen.pyexec import runner
 from maestro.codegen.staging import game_dir
 from maestro.services import parse_args, parse_args_checked
 from maestro.tool_calls import parse_tool_calls
@@ -32,8 +33,6 @@ logger = logging.getLogger(__name__)
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 
 MAX_TURNS = 200
-# Ties to tools.MAX_READ_CHARS — a read cut here too would contradict its own truncation note.
-_MAX_TOOL_CHARS = 20_000
 # A turn the driver was asked to re-send with nothing to apply (a reaper re-drive). Each one
 # enqueues a fresh job, so a worker that dies every time would re-drive forever.
 _REDRIVE_GIVE_UP = 8
@@ -45,14 +44,17 @@ _COMPACT_KEEP = 0.33
 # verbatim reproduces the reply that earned it.
 _NO_CALL_GIVE_UP = 4
 _NUDGES = [
-    "Keep going. Use a tool, or call done if the game is finished.",
-    "That reply contained no tool call, so nothing was saved. Emit an actual tool call.",
-    "Still no tool call landed. Call write_file with path \"index.html\" and a minimal page as "
-    "content, then build the rest.",
+    "Keep going. Call the python tool with a program, or call done() in one if the game is "
+    "finished.",
+    "That reply carried no python tool call, so nothing ran. Emit an actual tool call whose "
+    "`code` is the program.",
+    "Still no program landed. Call the python tool with exactly this and nothing else: "
+    "write_file(path=\"index.html\", content=\"<!doctype html><title>game</title>\"), then "
+    "build the rest.",
 ]
 # The third nudge on a game that already has its page (a fix, a later stage) would overwrite it.
-_NUDGE_EXISTING = ("Still no tool call landed. Call list_files, then read_file the file you mean "
-                   "to change and edit_file it.")
+_NUDGE_EXISTING = ("Still no program landed. Call the python tool with a program that calls "
+                   "list_files(), then reads the file you mean to change and edits it.")
 
 
 def _nudge(streak: int, run_dir) -> str:
@@ -104,155 +106,22 @@ class Done:
 Outcome = Union[Infer, Done]
 
 
-# Descriptions stay short: every clause is another instruction competing with the request, on every
-# turn.
-LIST_SCHEMA = {"type": "function", "function": {
-    "name": "list_files",
-    "description": "List the files in the project directory.",
-    "parameters": {"type": "object", "properties": {}, "required": []}}}
-READ_SCHEMA = {"type": "function", "function": {
-    "name": "read_file",
-    "description": "Read a file from the project directory.",
+# One tool: the model writes a PROGRAM, and the program calls the build's functions. Seven schemas
+# cost 1,831 tokens of every turn's window against this one's 266 (measured 2026-09-07), and a
+# program can loop, branch and check what it just did — twenty-two art asks from a roster, a
+# verifier over a table it generated, a search across a file that never enters the transcript.
+# The functions themselves are documented in build.txt, where the model reads them once per turn
+# rather than in a schema it re-reads with every tool.
+PYTHON_SCHEMA = {"type": "function", "function": {
+    "name": "python",
+    "description": ("Run one Python program. It may call list_files, read_file, write_file, "
+                    "edit_file, generate_media, compose_world, check_syntax and done. Whatever "
+                    "it prints comes back to you."),
     "parameters": {"type": "object",
-                   "properties": {"path": {"type": "string"},
-                                  "offset": {"type": "integer", "description":
-                                             "First line to show, 1-based. Use it to read past a "
-                                             "read that said the file was too long."},
-                                  "lines": {"type": "integer", "description":
-                                            "How many lines to show from offset. Read one "
-                                            "function by its line range instead of the file."}},
-                   "required": ["path"]}}}
-WRITE_SCHEMA = {"type": "function", "function": {
-    "name": "write_file",
-    "description": "Write a file to the project directory, replacing it if it exists.",
-    "parameters": {"type": "object",
-                   "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
-                   "required": ["path", "content"]}}}
-EDIT_SCHEMA = {"type": "function", "function": {
-    "name": "edit_file",
-    "description": ("Change part of an existing file. Replaces the exact text in old_text with "
-                    "new_text. old_text must appear exactly once in the file. Use this instead of "
-                    "rewriting a whole file to change a small part of it."),
-    "parameters": {"type": "object",
-                   "properties": {"path": {"type": "string"},
-                                  "old_text": {"type": "string", "description":
-                                               "Exact text to replace, with real newlines and "
-                                               "quotes — never \\n or \\\" as characters."},
-                                  "new_text": {"type": "string", "description": "Text to put in its place."}},
-                   "required": ["path", "old_text", "new_text"]}}}
-MEDIA_SCHEMA = {"type": "function", "function": {
-    "name": "generate_media",
-    "description": ("Have an artist draw an image, an animated actor or a 3D model for the game. "
-                    "Returns the path for the art. A game's art shares one visual style: before "
-                    "the first call, write one style phrase naming medium, palette and outline "
-                    "(like \"painted cartoon style, warm forest palette, soft dark outlines\") "
-                    "and pass it as `style` on every call. The style is stylized and cartoonish "
-                    "— chunky simplified shapes, bold colour — unless the request names another "
-                    "style. Example:\n"
-                    "{\"id\": \"knight\", \"kind\": \"actor\", "
-                    "\"subject\": \"a chibi knight in a silver helmet with a red plume, blue "
-                    "tunic, round wooden shield, short sword\", "
-                    "\"style\": \"chunky cartoon chibi style, bold flat colors, soft dark "
-                    "outlines\", "
-                    "\"details\": {\"body\": \"biped\", \"view\": \"side\", "
-                    "\"facings\": 4, \"anims\": [{\"name\": \"walk\", \"action\": "
-                    "\"walks in place, legs alternating, arms swinging\"}]}}"),
-    "parameters": {"type": "object",
-                   "properties": {"id": {"type": "string",
-                                         "description": "Short name: letters, digits, - and _."},
-                                  "kind": {"type": "string",
-                                           "enum": ["sprite", "actor", "tile", "scene", "mesh"],
-                                           "description":
-                                               "sprite: one thing, cut out, drawn on top of the "
-                                               "game — a key, a lamp, a coin. actor: a thing with "
-                                               "a body — a character, a creature, a vehicle — "
-                                               "drawn as a sprite, or animated into a sheet of "
-                                               "the anims you name and drawn with lib/sprites.js. "
-                                               "tile: a surface the game repeats, fills its "
-                                               "frame — describe real ground or wall seen from "
-                                               "directly above (\"mossy forest floor with small "
-                                               "stones, seen from directly above\"); the words "
-                                               "texture, seamless and pattern come back as noise; "
-                                               "a tile is drawn small in the game, so build it "
-                                               "from large simple shapes with minimal fine detail "
-                                               "— fine detail turns to noise at game size — and "
-                                               "in muted, low-contrast colors: the ground is the "
-                                               "backdrop the sprites must stand out against, so a "
-                                               "tile keeps the style's palette but never its "
-                                               "vividness or bold outlines. "
-                                               "scene: a whole picture the game draws behind "
-                                               "everything. mesh: a 3D model."},
-                                  "subject": {"type": "string",
-                                              "description":
-                                                  "WHAT to draw, described for an artist, with no "
-                                                  "style words. Lead with the thing, then mood "
-                                                  "and lighting, then detail — trailing detail is "
-                                                  "what the artist drops. Name colors that stand "
-                                                  "out against the game's background."},
-                                  "style": {"type": "string",
-                                            "description":
-                                                "The game's one style phrase: medium, palette, "
-                                                "outline. The same words on every call."},
-                                  "details": {"type": "object",
-                                              "description":
-                                                  "Facts about the thing that are not prose. "
-                                                  "body: its body plan — biped, quadruped, or "
-                                                  "whatever it is (winged, wheeled, a box, a "
-                                                  "blob). view: how the game shows it — side, "
-                                                  "front, top-down, 3/4 top-down. anims: the "
-                                                  "animations, one entry each; `name` is what "
-                                                  "the game asks lib/sprites.js for, `action` is "
-                                                  "what happens in one sentence, starting and "
-                                                  "ending at the rest pose (\"walks in place, "
-                                                  "legs alternating\", \"the wheels spin and "
-                                                  "the body rocks over bumps\"). facings: with "
-                                                  "anims — 4 when the game shows it from the "
-                                                  "side and needs front, right, back and left; "
-                                                  "1 when one view is all there is (seen from "
-                                                  "above, or flat like a card) and the game "
-                                                  "rotates it in code. Today only an actor is "
-                                                  "animated; anims on any other kind are kept "
-                                                  "and it renders still.",
-                                              "properties": {
-                                                  "body": {"type": "string"},
-                                                  "view": {"type": "string"},
-                                                  "anims": {"type": "array",
-                                                            "items": {"type": "object",
-                                                                      "properties": {"name": {"type": "string"},
-                                                                                     "action": {"type": "string"}},
-                                                                      "required": ["name", "action"]}},
-                                                  "facings": {"type": "integer", "enum": [1, 4]}}}},
-                   "required": ["id", "kind", "subject", "style"]}}}
-WORLD_SCHEMA = {"type": "function", "function": {
-    "name": "compose_world",
-    "description": ("Have a whole 3D WORLD built into the project: ground with hills and valleys, "
-                    "regions of different kinds of land, and the trees, rocks and buildings "
-                    "standing on them. Answers with the world's size and its regions in metres, "
-                    "and the ground loads from that moment; the scenery keeps rendering into the "
-                    "same files while you write the game. Load it with world.js. One world per "
-                    "game, and only for a 3D game."),
-    "parameters": {"type": "object",
-                   "properties": {"description": {"type": "string",
-                                                  "description":
-                                                      "What the landscape IS, in a sentence or "
-                                                      "two: the kinds of land in it and what "
-                                                      "stands on them. Never a size, a distance "
-                                                      "or a count — the world chooses its own "
-                                                      "scale. Describe the place, not the game "
-                                                      "played on it."},
-                                  "seed": {"type": "integer",
-                                           "description": "A different seed is a different "
-                                                          "world."}},
-                   "required": ["description"]}}}
-DONE_SCHEMA = {"type": "function", "function": {
-    "name": "done",
-    "description": "Call when the project is finished and playable.",
-    "parameters": {"type": "object",
-                   "properties": {"summary": {"type": "string"}},
-                   "required": ["summary"]}}}
+                   "properties": {"code": {"type": "string"}},
+                   "required": ["code"]}}}
 
-SCHEMAS = [LIST_SCHEMA, READ_SCHEMA, WRITE_SCHEMA, EDIT_SCHEMA, MEDIA_SCHEMA,
-           WORLD_SCHEMA, DONE_SCHEMA]
+SCHEMAS = [PYTHON_SCHEMA]
 
 
 def _n_ctx() -> int:
@@ -325,23 +194,16 @@ def step(spec, run_dir, tools, cursor, result, error: Optional[str] = None) -> O
         if len(content) > 2000:
             content = "[…analysis truncated…]\n" + content[-2000:]
         cursor.no_call_streak = 0
-        cursor.history.append({"role": "assistant", "content": content, "tool_calls": calls})
-        for tc in calls:
-            if tc["function"]["name"] == "done":
-                args = parse_args(tc["function"].get("arguments"))
-                if not cursor.done_nudged:
-                    # The nudge is the TOOL RESULT, not a user message after it: one message answers
-                    # one call, and no round is left with its `tool` half missing.
-                    cursor.done_nudged = True
-                    cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
-                                           "content": _done_nudge(run_dir)})
-                    continue
-                cursor.finished = True
-                cursor.summary = _clip(args.get("summary", ""), 400)
-                cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
-                                       "content": "ok"})
-                continue
-            _apply(tools, cursor, tc)
+        # One program is the whole of a turn. A model that emits two calls means the second to run
+        # after the first, and running both without showing it the first's output would be acting
+        # on a result it never saw — so the rest are answered, unrun, and it decides.
+        cursor.history.append({"role": "assistant", "content": content, "tool_calls": calls[:1]})
+        _apply(tools, cursor, calls[0], run_dir)
+        if len(calls) > 1:
+            cursor.history.append({"role": "user", "content":
+                                   f"Only the first program ran; the other {len(calls) - 1} did "
+                                   "not. Send one program per reply — what the first one printed "
+                                   "is above, so write the next one knowing it."})
         if cursor.finished:
             return Done(f"done after {cursor.turn} turn(s): {cursor.summary}")
 
@@ -366,93 +228,133 @@ def _opening_line(cursor) -> str:
     return f"{label}: {sent}" if sent else label
 
 
-def _action_of(tc, res) -> str:
-    """One turn's tool call as a line for the build feed — what the model DID, since the turn
-    counter alone says only that it is still going. A failure carries its reason: the whole point
-    of watching the feed is seeing the build go wrong before its step cap says so."""
-    name = tc["function"]["name"]
-    args = parse_args(tc["function"].get("arguments"))
-    target = args.get("path") or args.get("id") or ""
+def _actions_of(outcome) -> List[str]:
+    """One turn's program as lines for the build feed — what the model DID, since the turn counter
+    alone says only that it is still going. A failure carries its reason: the whole point of
+    watching the feed is seeing the build go wrong before its step cap says so.
+
+    Repeats are folded ("wrote 6 files") because a program may make a hundred calls and the feed is
+    read by a person."""
+    if outcome.refused:
+        return [f"program refused: {_clip(outcome.refused, 110)}"]
     verb = {"write_file": "wrote", "edit_file": "edited", "read_file": "read",
-            "generate_media": "asked for art",
-            "compose_world": "built a world",
-            "list_files": "listed files"}.get(name, name)
-    line = f"{verb} {target}".strip()
-    if res.get("ok", True):
-        return line
-    return f"{line} — failed: {_clip(res.get('error') or 'no reason given', 120)}"
+            "generate_media": "asked for art", "compose_world": "built a world",
+            "list_files": "listed files", "check_syntax": "checked the syntax", "done": "done"}
+    lines, seen = [], {}
+    for name, target, ok in outcome.ledger:
+        if name == "done":
+            lines.append("said it is done")
+            continue
+        key = (verb.get(name, name), ok)
+        seen.setdefault(key, [])
+        if target and target not in seen[key]:
+            seen[key].append(target)
+        elif not target:
+            seen[key].append("")
+    for (word, ok), targets in seen.items():
+        named = [x for x in targets if x]
+        failed = "" if ok else " — failed"
+        if len(named) > 3:
+            noun = "asks" if word.startswith("asked") else "files"
+            lines.append(f"{word} {len(named)} {noun}" + (failed and " — all failed"))
+        elif named:
+            lines.append(f"{word} {', '.join(named)}{failed}")
+        else:
+            lines.append(f"{word}{failed}")
+    if outcome.timed_out:
+        lines.append("the program ran out of time and was stopped")
+    elif outcome.failed:
+        lines.append("the program raised")
+    return lines or ["ran a program that called nothing"]
 
 
-def _repeat_note(cursor, tc, res) -> Optional[str]:
-    """The error text alone cannot say it has been seen before, so a resent call repeats to the
-    step cap.
-
-    Counted per call, not against the previous call alone: a model stuck on one edit re-reads the
-    file between attempts, and that succeeding read must not clear the failing edit's count
-    (measured 2026-07-29: 12 identical failing edits, every one scored as the first)."""
-    sig = hashlib.sha1(
-        json.dumps([tc["function"]["name"], parse_args(tc["function"].get("arguments"))],
-                   sort_keys=True, default=str).encode("utf-8")).hexdigest()
-    if res.get("ok", True):
-        cursor.repeat_counts.pop(sig, None)
+def _repeat_note(cursor, code: str, outcome) -> Optional[str]:
+    """The error text alone cannot say it has been seen before, so a resent program repeats to the
+    step cap. Keyed on the program, since the program is now the whole of what a turn sends
+    (measured 2026-07-29 on single calls: 12 identical failing edits, every one scored as the
+    first)."""
+    if not (outcome.refused or outcome.failed or any(not ok for _, _, ok in outcome.ledger)):
+        cursor.repeat_counts.pop(_sig(code), None)
         return None
+    sig = _sig(code)
     n = cursor.repeat_counts.get(sig, 0) + 1
     cursor.repeat_counts[sig] = n
     if n < 2:
         return None
-    return (f"You have now sent this tool call {n} times with exactly identical parameters, and it "
-            f"has failed every time. Try something new.")
+    return (f"\n\nYou have now sent this exact program {n} times and it has gone wrong every "
+            "time. Try something new.")
 
 
-def _tool_content(res) -> str:
-    """Serialized, a file body shows every quote as \\" — which the model then copies into old_text,
-    where it matches nothing."""
-    if res.get("ok") and "content" in res:
-        span = f" lines=\"{res['lines']}\"" if res.get("lines") else ""
-        return f"<file path=\"{res.get('path')}\"{span}>\n{res['content']}\n</file>"
-    return json.dumps(res)[:_MAX_TOOL_CHARS]
+def _sig(code: str) -> str:
+    return hashlib.sha1(code.encode("utf-8")).hexdigest()
+
+
+def _result_of(outcome) -> str:
+    """What the turn hears back: what the program PRINTED, then the calls it made.
+
+    The ledger rides every result because a failed call now returns its error as a value rather
+    than raising — a program that does not look at what a call gave back would otherwise never
+    learn it failed, and would carry on believing ten files were written when nine were."""
+    if outcome.refused:
+        return outcome.refused
+    body = outcome.stdout.strip() or "(the program ran and printed nothing)"
+    if not outcome.ledger:
+        return body
+    lines = [f"  {name} {target}".rstrip() + ("" if ok else "  — FAILED")
+             for name, target, ok in outcome.ledger]
+    failed = sum(1 for _, _, ok in outcome.ledger if not ok)
+    if len(lines) > 40:
+        lines = lines[:20] + [f"  … {len(lines) - 40} more …"] + lines[-20:]
+    tail = "\n\n[what the program called:\n" + "\n".join(lines) + "\n]"
+    if failed:
+        tail += (f"\n[{failed} of those FAILED. A failed call returns its error as a string "
+                 "instead of doing anything; everything after it still ran.]")
+    return body + tail
 
 
 def _cut_off(tc) -> bool:
     """Did this call's argument JSON stop mid-write? The model reached the output cap while
-    streaming a big `content`, so the arguments are unterminated and nothing can be recovered from
+    streaming a big program, so the arguments are unterminated and nothing can be recovered from
     them. parse_args answers {} — which reaches the tool as a MISSING argument, and a model told it
-    forgot `path` resends the same oversized call (measured 2026-08-01: a 64 KB write_file reported
-    as KeyError: 'path', then four turns the server itself refused, then a dead build)."""
+    forgot `code` resends the same oversized program (measured 2026-08-01 on write_file: a 64 KB
+    call reported as KeyError: 'path', then four turns the server itself refused, then a dead
+    build)."""
     return not parse_args_checked(tc["function"].get("arguments"))[1]
 
 
-def _apply(tools, cursor, tc) -> None:
+def _apply(tools, cursor, tc, run_dir) -> bool:
+    """Run one program and record what it did. Answers whether the build is finished."""
     if _cut_off(tc):
-        res = {"ok": False, "error": "Your reply hit the output token limit part-way through this "
-                                     f"call's arguments, so the call never ran. {_TOO_BIG}"}
-        cursor.actions.append(f"{tc['function']['name']} — cut off by the output limit")
+        cursor.actions.append("the program was cut off by the output limit")
         cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
-                               "content": _tool_content(res)})
-        return
-    try:
-        res = _dispatch(tools, cursor, tc)
-    except Exception as e:
-        # A tool argument is untrusted input, so each tool validates its own. This is the backstop
-        # for the case that slips through: an exception here would otherwise escape the completion
-        # handler and strand the build until the reaper re-drives it, with the model never learning
-        # what went wrong. It surfaces as a tool error and is logged as the bug it is.
-        logger.exception("tool %s raised", tc["function"]["name"])
-        res = {"ok": False, "error": f"{tc['function']['name']} failed: {e}"}
-    cursor.actions.append(_action_of(tc, res))
-    note = _repeat_note(cursor, tc, res)
-    if note:
-        res = {**res, "error": f"{res.get('error') or ''}\n\n{note}".strip()}
-    cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
-                           "content": _tool_content(res)})
+                               "content": "Your reply hit the output token limit part-way through "
+                                          f"the program, so nothing ran. {_TOO_BIG}"})
+        return False
+    code = parse_args(tc["function"].get("arguments")).get("code")
+    if not isinstance(code, str) or not code.strip():
+        cursor.actions.append("no program in the call")
+        cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
+                               "content": "That call carried no `code`, so nothing ran. Send the "
+                                          "program as the `code` argument."})
+        return False
 
+    outcome = runner.run(code, tools)
+    cursor.actions.extend(_actions_of(outcome))
+    content = _result_of(outcome) + (_repeat_note(cursor, code, outcome) or "")
 
-def _dispatch(tools, cursor, tc) -> dict:
-    name = tc["function"]["name"]
-    fn = tools.get(name)
-    if fn is None:
-        return {"ok": False, "error": f"unknown tool: {name!r}"}
-    return fn(**parse_args(tc["function"].get("arguments")))
+    finished = [t for name, t, ok in outcome.ledger if name == "done" and ok]
+    if finished and not cursor.done_nudged:
+        # The nudge is the TOOL RESULT, not a user message after it: one message answers one call,
+        # and no round is left with its `tool` half missing.
+        cursor.done_nudged = True
+        cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
+                               "content": content + "\n\n" + _done_nudge(run_dir)})
+        return False
+    cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": content})
+    if finished:
+        cursor.finished = True
+        cursor.summary = _clip(finished[0], 400)
+    return cursor.finished
 
 
 def _infer(run_dir, cursor, report: Optional[str] = None) -> Infer:
@@ -495,112 +397,121 @@ def rounds(history: List[dict]) -> List[List[dict]]:
     return out
 
 
-_FILE_RESULT = re.compile(r'^<file path="([^"]*)"(?: lines="([^"]*)")?>\n(.*)\n</file>$', re.S)
-
-
 # Why a stub states where the bytes are and never says "read it again": told to re-read, the model
 # re-reads the whole project after every compaction, and the reads refill the window (measured
 # 2026-09-06: two prod builds spent ~150 of 200 steps that way and shipped nothing).
 _SUPERSEDED = "a newer copy is later in this transcript"
 _ON_DISK = "on disk; not repeated here"
 
+# A body is worth stubbing at this size and no smaller: below it the stub costs about what the
+# text does.
+_BODY = 200
 
-def _write_key(tc: dict) -> Optional[tuple]:
-    fn = tc.get("function") or {}
-    if fn.get("name") != "write_file":
+
+def _program_of(tc: dict) -> Optional[str]:
+    if (tc.get("function") or {}).get("name") != "python":
         return None
-    args = parse_args(fn.get("arguments"))
-    body = args.get("content")
-    return ("write", args.get("path")) if isinstance(body, str) and len(body) >= 200 else None
+    code = parse_args(tc["function"].get("arguments")).get("code")
+    return code if isinstance(code, str) else None
 
 
-def _result_key(m: dict) -> Optional[tuple]:
-    """A whole-file read keys on the path alone; a window ("5-40/40", or a read cut at the
-    ceiling) keys on its span too."""
-    hit = _FILE_RESULT.match(m.get("content") or "")
-    if not hit or len(hit.group(3)) < 200:
-        return None
-    span = hit.group(2)
-    whole = re.fullmatch(r"1-(\d+)/(\d+)", span or "")
-    return ("read", hit.group(1), None if not span or (whole and whole[1] == whole[2]) else span)
+def _written_in(code: str) -> List[tuple]:
+    """Every `write_file(path=..., content=<a literal>)` in the program, as (path, span, chars).
+
+    The span is where the literal SITS in the source, so it can be cut out and the rest of the
+    program left exactly as the model wrote it. A body built at runtime — joined, formatted,
+    a variable — has no span and is left alone: the program is the only record of how it was
+    made."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+    out = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "write_file"):
+            continue
+        args = {kw.arg: kw.value for kw in node.keywords}
+        path, body = args.get("path"), args.get("content")
+        if not (isinstance(path, ast.Constant) and isinstance(path.value, str)):
+            continue
+        if not (isinstance(body, ast.Constant) and isinstance(body.value, str)):
+            continue
+        if len(body.value) < _BODY:
+            continue
+        out.append((path.value, (body.lineno, body.col_offset,
+                                 body.end_lineno, body.end_col_offset), len(body.value)))
+    return out
+
+
+def _splice(code: str, spans: List[tuple]) -> str:
+    """The program with each named span replaced by a one-line stub. Cutting from the END keeps
+    every earlier span's offsets true."""
+    lines = code.split("\n")
+    for (l1, c1, l2, c2), text in sorted(spans, key=lambda s: s[0], reverse=True):
+        head = lines[l1 - 1][:c1]
+        tail = lines[l2 - 1][c2:]
+        lines[l1 - 1:l2] = [head + text + tail]
+    return "\n".join(lines)
 
 
 def _stub_call(tc: dict, why: str) -> Optional[dict]:
-    fn = tc.get("function") or {}
-    name = fn.get("name")
-    if name not in ("write_file", "edit_file", "generate_media"):
+    """The program with its written-out file bodies replaced by a note saying where they are.
+
+    The round keeps its shape — the loops, the art asks, the order it did things in — and loses
+    only bytes that are also on disk. The transcript is never re-run, so a program that no longer
+    executes is not a problem; what it has to keep saying is what the model DID."""
+    code = _program_of(tc)
+    if not code:
         return None
-    args = parse_args(fn.get("arguments"))
-    if name == "generate_media":
-        if len(fn.get("arguments") or "") < 200:
-            return None
-        args = {"id": args.get("id"), "kind": args.get("kind"),
-                "subject": f"[{why}; the manifest on disk has the rest]"}
-    elif name == "write_file":
-        body = args.get("content")
-        if not isinstance(body, str) or len(body) < 200:
-            return None
-        args["content"] = f"[wrote {args.get('path')}, {len(body)} chars — {why}]"
-    else:
-        old, new = args.get("old_text"), args.get("new_text")
-        if not (isinstance(old, str) and isinstance(new, str)) or len(old) + len(new) < 200:
-            return None
-        args["old_text"] = f"[{len(old)} chars replaced in {args.get('path')}]"
-        args["new_text"] = f"[{len(new)} chars — {why}]"
-    return {**tc, "function": {**fn, "arguments": json.dumps(args, ensure_ascii=False)}}
+    spans = [(span, json.dumps(f"[the {n} chars written to {path} — {why}]"))
+             for path, span, n in _written_in(code)]
+    if not spans:
+        return None
+    args = parse_args(tc["function"].get("arguments"))
+    args["code"] = _splice(code, spans)
+    return {**tc, "function": {**tc["function"],
+                               "arguments": json.dumps(args, ensure_ascii=False)}}
 
 
-def _stub_result(m: dict, why: str) -> Optional[dict]:
-    hit = _FILE_RESULT.match(m.get("content") or "")
-    if not hit or len(hit.group(3)) < 200:
-        return None
-    span = f" lines {hit.group(2)}" if hit.group(2) else ""
-    return {**m, "content": f"[read {hit.group(1)}{span}, {len(hit.group(3))} chars — {why}]"}
+def _write_keys(tc: dict) -> List[tuple]:
+    return [("write", path) for path, _, _ in _written_in(_program_of(tc) or "")]
+
+
+# What a program can call without changing anything. A round of only these is a list of filenames
+# the model once opened.
+_LOOKING = {"read_file", "list_files", "check_syntax"}
+
+
+def _called_in(code: str) -> set:
+    """The tool functions the program calls, by name."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return set()
+    return {n.func.id for n in ast.walk(tree)
+            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
 
 
 def _read_only(group: List[dict]) -> bool:
-    """A round that only looked: every call a read or a listing, every result already a stub.
-    Once the map in the compaction note says what each file is, such a round is a list of
-    filenames the model once opened, and keeping it teaches it that opening files is the work."""
+    """A round that only LOOKED. Judged by what the program called, never by whether it wrote
+    bytes worth keeping: an edit writes no body and a one-line file writes a short one, and
+    dropping either would lose the record of a change the model made.
+
+    Once the map in the compaction note says what each file is, a round that only looked is a list
+    of filenames, and keeping it teaches the model that opening files is the work."""
     calls = group[0].get("tool_calls") or []
-    if not calls:
+    if not calls or any(_program_of(tc) is None for tc in calls):
         return False
-    if any((tc.get("function") or {}).get("name") not in ("read_file", "list_files") for tc in calls):
-        return False
-    return all(not _FILE_RESULT.match(m.get("content") or "") for m in group[1:] if m["role"] == "tool")
+    named = set().union(*(_called_in(_program_of(tc)) for tc in calls))
+    return bool(named & _LOOKING) and not (named - _LOOKING - {"print", "len", "range",
+                                                               "sorted", "enumerate", "str",
+                                                               "int", "repr", "set", "list"})
 
 
 def drop_read_only_rounds(history: List[dict]) -> List[dict]:
     groups = rounds(history)
     return history[:1] + [m for g in groups if not _read_only(g) for m in g]
-
-
-def dedupe_bodies(history: List[dict]) -> List[dict]:
-    """The newest body of each file wins: every older write or read of the same file becomes a
-    stub pointing at the newer copy. A read of a line window is its own key, so a window never
-    stands in for the whole file, nor the whole for a window. Edits are deltas, not bodies, and
-    stay whole — an edit after the live read is what the model changed since."""
-    seen: set = set()
-    out = []
-    for m in reversed(history[1:]):
-        if m["role"] == "tool":
-            key = _result_key(m)
-            if key in seen:
-                m = _stub_result(m, _SUPERSEDED) or m
-            elif key:
-                seen.add(key)
-        elif m.get("tool_calls"):
-            calls = []
-            for tc in m["tool_calls"]:
-                key = _write_key(tc)
-                if key and (key in seen or ("read", key[1], None) in seen):
-                    tc = _stub_call(tc, _SUPERSEDED) or tc
-                elif key:
-                    seen.add(key)
-                calls.append(tc)
-            m = {**m, "tool_calls": calls}
-        out.append(m)
-    return history[:1] + out[::-1]
 
 
 def trim_bodies(history: List[dict], rounds_to_trim: int) -> List[dict]:
@@ -611,13 +522,34 @@ def trim_bodies(history: List[dict], rounds_to_trim: int) -> List[dict]:
     out = list(history[:1])
     for i, g in enumerate(groups):
         for m in g:
-            if i < rounds_to_trim:
-                if m.get("tool_calls"):
-                    m = {**m, "tool_calls": [_stub_call(tc, _ON_DISK) or tc for tc in m["tool_calls"]]}
-                elif m["role"] == "tool":
-                    m = _stub_result(m, _ON_DISK) or m
+            if i < rounds_to_trim and m.get("tool_calls"):
+                m = {**m, "tool_calls": [_stub_call(tc, _ON_DISK) or tc for tc in m["tool_calls"]]}
             out.append(m)
     return out
+
+
+def dedupe_bodies(history: List[dict]) -> List[dict]:
+    """The newest written body of each file wins: every older write of the same path becomes a
+    stub pointing at the newer copy.
+
+    Only writes are deduped. A read no longer carries a body at all — the program reads a file
+    into a variable and prints what it chose to, so the transcript holds the model's own summary,
+    which is not something to stand in for. Edits stay whole: an edit after the live write is what
+    the model changed since."""
+    seen: set = set()
+    out = []
+    for m in reversed(history[1:]):
+        if m.get("tool_calls"):
+            calls = []
+            for tc in m["tool_calls"]:
+                keys = _write_keys(tc)
+                if keys and all(k in seen for k in keys):
+                    tc = _stub_call(tc, _SUPERSEDED) or tc
+                seen.update(keys)
+                calls.append(tc)
+            m = {**m, "tool_calls": calls}
+        out.append(m)
+    return history[:1] + out[::-1]
 
 
 def compact(run_dir, cursor, keep_chars: int) -> int:

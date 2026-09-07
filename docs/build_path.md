@@ -67,7 +67,10 @@ src/
                          answered with nothing, which the nudge branch handles; an `error` is a turn
                          the WORKER could not deliver, which is neither. Collapsing any two of the
                          three scolds the model for a reply it never sent and burns a turn.
-                         Owns the eight tool schemas (`done` is handled here, not in tools.py),
+                         Owns the ONE tool schema — the model writes a PROGRAM and `pyexec.runner`
+                         runs it — the LEDGER of what that program called (which is what the feed
+                         line, the repeat note and the `done` signal are all read off, since a
+                         program's calls are not in its arguments),
                          the transcript, compaction (`CLAUDE.md`; the note it ends with carries
                          `code_map`), the DONE-NUDGE (`cursor.done_nudged` — asked
                          once, then the next `done` is taken), and
@@ -134,8 +137,32 @@ src/
                          that leaves half the game at another version is not a restore. git is a
                          BOUNDARY — a snapshot that cannot be taken is logged and the build carries
                          on, since losing history is not a reason to lose a game.
+      pyexec/            where a model-written PROGRAM runs. `runner.run(code, tools)` answers
+                         with what it printed, the ledger of what it called, and whether it was
+                         refused, raised or ran out of time.
+                         seccomp.py — the filter a process installs on ITSELF (`prctl`, via
+                         ctypes, no dependency and no privileges): open, exec, socket, clone and
+                         the rest denied outright. A DENY list is only enough because the confined
+                         program needs nothing from the kernel — every path and every render goes
+                         to the parent.
+                         child.py — imports first (openat is gone afterwards), filter second,
+                         model code third; a filter that will not install exits rather than
+                         running the program free.
+                         rpc.py — length-prefixed JSON over one socket, one call in flight.
+                         runner.py — spawns the child with a scrubbed environment, serves each
+                         call from `build_tools`, caps the calls and the wall clock, and runs
+                         `check` first as a courtesy, never as the boundary (`CLAUDE.md`).
       tools.py           list_files / read_file / write_file / edit_file / generate_media /
-                         compose_world — the smallest surface that works, and kept that way.
+                         compose_world / check_syntax / done — the smallest surface that works,
+                         and kept that way. They are FUNCTIONS the program calls, so a failure
+                         comes back as a value it can read rather than an exception that abandons
+                         the rest of the program. `read_file` returns the WHOLE file however long:
+                         the ceiling was a context guard, and a read lands in a variable, not the
+                         window. `check_syntax` is the error gate's own module parser per file —
+                         node reads `export` in a `.js` as a CommonJS failure and answers "retry as
+                         a module" with status 0, so a game checked as a script is always clean.
+                         `done` does nothing but carry its summary: the driver reads it off the
+                         ledger.
                          compose_world is worldgen's build face: one 3D world per game, refused
                          a second time because the game is already written against the first
                          one's metres and regions. A path is resolved and must land inside the

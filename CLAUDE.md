@@ -36,12 +36,15 @@ step, no engine of ours between it and the screen. Two stages:
    themselves as the prompt, and the build starts on those. After the build the page renders the
    design as headed sections read from its shape, over the same string the edit box holds — a
    view, never a copy — and an edit there is what a rebuild sends.
-2. **Build:** a non-LLM **driver** (`maestro/codegen/build_chain.py`) hands the model seven tools —
-   `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `compose_world`,
-   `done` — and a running transcript, and lets it write the game. It decides the file layout, the data shapes,
-   the systems, and what art gets drawn. It calls `done` when the game is playable. The build is not
-   a resident loop: each llm turn is a job on the `llm` queue and its completion drives the next
-   turn, so the driver holds no state between turns.
+2. **Build:** a non-LLM **driver** (`maestro/codegen/build_chain.py`) gives the model ONE tool —
+   it writes a PYTHON PROGRAM — and a running transcript, and lets it write the game. The program
+   calls `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `compose_world`,
+   `check_syntax` and `done` as functions, with loops, variables and conditions around them, and
+   what it prints comes back as the turn's result. The model decides the file layout, the data
+   shapes, the systems, and what art gets drawn. It calls `done` when the game is playable. The
+   build is not a resident loop: each llm turn is a job on the `llm` queue and its completion
+   drives the next turn, so the driver holds no state between turns — and no program's variables
+   survive to the next one either. The FILES are what carries.
 
 ---
 
@@ -59,15 +62,43 @@ but never called, in all three models, because the schema had no boot-sequence c
 model given the whole problem and a transcript decomposes it *by domain* and wires it up; given a
 partial view and a schema, it fills the schema.
 
+### The model writes PROGRAMS, not tool calls
+
+One turn is one program. Measured 2026-09-07 on one design, 27B local: 99 tool calls over 37 turns
+against roughly one per turn under seven JSON schemas — twenty-two art asks came out of a loop over
+a roster, a whole night schedule was generated and CHECKED with asserts before it was written, and
+a 42 KB file landed in one turn as a raw string that `node --check` accepted first try. The seven
+schemas cost 1,831 tokens of every turn's window; the one `python` schema costs 266.
+
+Three properties follow, and each one paid for itself in that build:
+
+A READ NEED NOT ENTER THE TRANSCRIPT. `read_file` returns into a variable; only what the program
+PRINTS costs the window. The model indexed a 1,000-line file by regex and printed 31 lines. That
+run reached `done` at 72K of a 131K window with no compaction at all.
+
+A PROGRAM CAN CHECK ITSELF. Asked for a fourteen-night schedule with constraints, the model wrote
+it, wrote a verifier, ran it, and got `AssertionError: ('Ryo', 4)` — a wrong count it had already
+written to disk. It fixed it two turns later. Nothing in a JSON tool call can fail that way.
+
+A FAILED CALL RETURNS, IT DOES NOT RAISE. An exception abandons every statement after it: one
+no-op edit in a batch of sixteen applied five and never attempted ten. Every tool answers with its
+error as a string beginning `ERROR:`, the program carries on, and the turn's result ends with the
+LEDGER of what it called and which of those failed — because a program that ignores a return value
+would otherwise never learn.
+
 ### The transcript IS the memory
 
 No context-rebuilding, no per-step minimal window. When the prompt leaves the window less room
-than a reply needs, the NEWEST COPY of each file's body wins — every older write or read of the
-same file becomes a stub pointing at the newer one — and a round that only LOOKED at files goes
-entirely; then, OLDEST ROUND FIRST and only until the tail fits, the FILE BODIES are replaced by
+than a reply needs, the NEWEST COPY of each file's body wins — every older write of the same file
+becomes a stub pointing at the newer one — and a round that only LOOKED at files goes entirely;
+then, OLDEST ROUND FIRST and only until the tail fits, the FILE BODIES are replaced by
 a stub naming the path and size — the round still says what the model wrote and edited, and the
 bytes are on disk — and only if that is not enough are the OLDEST WHOLE ROUNDS dropped
-(`build_steps.compact`). Rounds are never split — a `tool` message whose assistant `tool_calls`
+(`build_steps.compact`). A body now sits INSIDE the program that wrote it, so a stub is spliced
+over the string literal's own source span and the rest of the program is left exactly as the model
+wrote it: the loop, the art asks and the order it did things in still say what it DID, which is the
+whole point of keeping the round. A body the program ASSEMBLED has no span and is left whole — the
+program is the only record of how it was made. Rounds are never split — a `tool` message whose assistant `tool_calls`
 is gone is an orphan, and a chat template is entitled to 500 the turn. Every compaction ends by
 RE-GROUNDING the model on the CODE MAP (`code_map.py`): each file, its imports, every declaration
 with its line range. That is what the model was re-reading for — does render.js export
@@ -99,6 +130,27 @@ screen offers — nothing more. Teaching it to play would be a "must DO X" gate 
 Everything past that is a HUMAN judgement: a game that runs but plays wrong is
 obvious to a person and near-impossible for code, so the gap stays VISIBLE rather than filled with a
 proxy.
+
+### A program the model wrote runs CONFINED, and the confinement is a syscall filter
+
+Tool dispatch happens in the CONTROL PLANE — `build_chain.advance` runs it synchronously, beside
+the database, every user's run dir and the worker token. So the program runs in its own
+interpreter, which narrows ITSELF with a seccomp-bpf filter (`pyexec/seccomp.py`) before it
+compiles a byte of model code: no file may be opened, no process started, no socket made. It holds
+no environment and reaches the project only by asking the parent over a socket, which serves the
+call with the same `build_tools` the build has always used — so the path jail and every reported
+failure are unchanged, and the confined side needs no privileges of its own.
+
+`prctl(PR_SET_NO_NEW_PRIVS)` then `PR_SET_SECCOMP` is refused by nothing: a process may always
+narrow what it is allowed to do. That is what makes this work as a non-root user in a container
+with no `CAP_SYS_ADMIN`, where a namespace sandbox would need unprivileged user namespaces the host
+may not grant.
+
+The static check that runs first (`pyexec/runner.check`) is NOT the boundary. It refuses the
+obvious reach before anything runs so the model reads "there is no os module here" instead of a
+traceback from inside a library — and it is allowed to be wrong, because the filter is what
+actually holds. Never move a safety argument onto it: it reasons about one program's source, and a
+frozen module or a name bound another way is exactly what it cannot see.
 
 ### The one exception is SAFETY, and it is not a gate the model builds against
 
@@ -210,6 +262,12 @@ The snippet rung is `runtime/vendor/lib/` — files beside the game whose header
 named in one line of `build.txt`. It closed the 2026-07-27 ledger (3D scenes lit near-black, silent
 games, arrow-keys-only input) 6/6 against a control arm, with zero misuse, because the doc lands in
 the window on `read_file` at the moment of use rather than in the prompt on every turn.
+
+A new function on the program's surface is cheaper than a new tool was — one line in `build.txt`
+against a whole JSON schema — but it is still read on every turn, so it earns its place the same
+way. `check_syntax` earned its own: the model reached for `node --check` through `subprocess` twice
+in two builds, and refused, spent four turns hand-reading a thousand lines instead. It only ever
+answers BROKEN or not, which is the one thing a gate may detect.
 
 An unused schema costs every turn of every build, so a tool that fails to earn its place comes back
 out. `generate_media` is the standing case — see the art ledger in `docs/build_path.md`.

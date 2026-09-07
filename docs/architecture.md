@@ -69,6 +69,13 @@ game that is paying for it. Every job on a game names its build — the enqueue 
 does not — so a build row is the whole of what it cost: its turns, its art, its gates. Metering rides
 `tools/execution_context.run_scope`: every enqueue inside it debits the named game and build.
 
+A build turn's PROGRAM is written by the model and runs in the control plane, so it is a trust
+boundary of its own: `maestro/codegen/pyexec` runs it in a separate interpreter that installs a
+seccomp filter on itself before executing any of it, with no environment and no way to reach the
+filesystem, the network or another process — every effect goes back to the parent over a socket and
+through the same tools, path jail included (`CLAUDE.md`, "A program the model wrote runs
+CONFINED").
+
 **Build as a chain of jobs.** A build is not a resident loop. `build_chain.advance()` runs all local
 work synchronously (tool dispatch, staging, cursor writes) and suspends at the one point that needs
 a GPU: it enqueues a single `llm` job tagged `metadata.stage="build"` and returns. The process is

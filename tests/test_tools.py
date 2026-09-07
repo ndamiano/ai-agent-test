@@ -132,22 +132,28 @@ def test_a_window_ends_on_a_line_boundary(tmp_path):
     assert shown.endswith("\n") and len(shown) <= MAX_READ_CHARS
 
 
-def test_the_note_says_where_to_read_the_rest_and_to_split_the_file(tmp_path):
-    _game(tmp_path, {"big.js": _numbered(400)})
+def test_a_whole_file_comes_back_whole(tmp_path):
+    """The ceiling on a read was a context guard, and a read now lands in a program's variable —
+    only what the program prints costs the window. Left in place it made a partial read look like
+    a whole one, which is worse than a long one: the model reasoned from a fragment without ever
+    seeing the note that said so (measured 2026-09-07)."""
+    body = _numbered(400)
+    _game(tmp_path, {"big.js": body})
     r = build_tools(RunState(tmp_path), "b1")["read_file"](path="big.js")
-    assert "of 400" in r["content"] and "worth splitting" in r["content"]
-    assert f"offset {int(r['lines'].split('-')[1].split('/')[0]) + 1}" in r["content"]
+    assert r["content"] == body and r["lines"] == "1-400/400"
+    assert "read the rest" not in r["content"]
 
 
-def test_offset_reaches_the_tail_a_first_read_could_not_show(tmp_path):
+def test_offset_and_lines_read_one_range_of_a_file(tmp_path):
+    """Reading the whole file is free, but a program that wants one function still asks for it."""
     body = _numbered(400)
     _game(tmp_path, {"big.js": body})
     read = build_tools(RunState(tmp_path), "b1")["read_file"]
-    first = read(path="big.js")
-    nxt = int(first["lines"].split("-")[1].split("/")[0]) + 1
-    rest = read(path="big.js", offset=nxt)
-    assert rest["ok"] and rest["lines"] == f"{nxt}-400/400"
-    assert body.endswith(rest["content"])
+    window = read(path="big.js", offset=100, lines=20)
+    assert window["ok"] and window["lines"] == "100-119/400"
+    assert window["content"].startswith("line 100 ")
+    tail = read(path="big.js", offset=381)
+    assert tail["lines"] == "381-400/400" and body.endswith(tail["content"])
 
 
 def test_offset_past_the_end_is_reported(tmp_path):
@@ -270,3 +276,47 @@ def test_lines_reads_one_function_by_its_range(tmp_path):
     assert r["ok"] and r["lines"] == "53-77/400"
     assert r["content"] == "".join(body.splitlines(keepends=True)[52:77])
     assert "too long to read" not in r["content"]     # a window the model asked for is complete
+
+
+def test_check_syntax_finds_the_file_that_does_not_parse(tmp_path):
+    """It can only ever answer BROKEN or not — a file parses or it does not, and a parse error can
+    only be satisfied by fixing the syntax. Nothing here judges what the code DOES."""
+    _game(tmp_path, {"good.js": "export const a = 1;\n",
+                     "bad.js": "export const = ;\n",
+                     "js/deep.js": "const y = {;\n"})
+    checked = build_tools(RunState(tmp_path), "b1")["check_syntax"]()["checked"]
+    assert checked["good.js"] == "OK"
+    assert checked["bad.js"].startswith("line 1: Unexpected token")
+    assert checked["js/deep.js"].startswith("line 1")
+
+
+def test_check_syntax_reads_a_module_as_a_module(tmp_path):
+    """node 22 sees `export` in a .js, answers "retry as a module" and returns 0 — so a game
+    checked as a script is always clean and the check is worthless."""
+    _game(tmp_path, {"m.js": "export const a = ;\n"})
+    checked = build_tools(RunState(tmp_path), "b1")["check_syntax"]()["checked"]
+    assert checked["m.js"] != "OK"
+
+
+def test_check_syntax_leaves_the_vendored_renderer_alone(tmp_path):
+    """three.js and the helper library are not this game's code, and checking them on every call
+    would cost a second of every turn that asks."""
+    from maestro.codegen.staging import seed_vendor
+    seed_vendor(tmp_path)
+    (tmp_path / "game" / "mine.js").write_text("const a = 1;\n")
+    checked = build_tools(RunState(tmp_path), "b1")["check_syntax"]()["checked"]
+    assert set(checked) == {"mine.js"}
+
+
+def test_check_syntax_names_a_file_that_is_not_there(tmp_path):
+    _game(tmp_path, {})
+    checked = build_tools(RunState(tmp_path), "b1")["check_syntax"](paths=["gone.js"])["checked"]
+    assert checked["gone.js"] == "no such file: gone.js"
+
+
+def test_done_carries_its_summary_back(tmp_path):
+    """The driver reads `done` off the ledger of what the program called; the tool itself only has
+    to answer with the summary it was given."""
+    _game(tmp_path, {})
+    assert build_tools(RunState(tmp_path), "b1")["done"](summary="it plays") == {
+        "ok": True, "summary": "it plays"}

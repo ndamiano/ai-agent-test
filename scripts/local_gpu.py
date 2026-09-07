@@ -51,6 +51,16 @@ COMFY_PYTHON = Path(os.environ.get("COMFY_PYTHON",
                                    "/home/nick/Documents/Comfy/comfy-env/bin/python"))
 COMFY_DIR = Path(os.environ.get("COMFY_DIR", "/home/nick/comfy/mess-with-comfy"))
 SAFETY_MODEL_DIR = os.environ.get("SAFETY_MODEL_DIR", "/home/nick/comfy-models/safety")
+
+
+def _worker_python(queue: str) -> str:
+    """Which interpreter runs a queue's worker. `image` and `video` classify every render before it
+    is saved, and the classifier needs torch and timm — which live in ComfyUI's environment, not
+    the control plane's. Run under the wrong one and every render is HELD with "safety classifier
+    failed to load", which is the seam failing closed exactly as it should and no art at all."""
+    if queue in ("image", "video") and COMFY_PYTHON.exists():
+        return str(COMFY_PYTHON)
+    return sys.executable
 TRELLIS_PYTHON = Path(os.environ.get("TRELLIS_PYTHON",
                                      "/home/nick/cube3d-lab/trellis2-venv/bin/python"))
 TRELLIS_REPO = Path(os.environ.get("TRELLIS_REPO", "/home/nick/cube3d-lab/trellis2"))
@@ -244,7 +254,7 @@ def drain(queue: str, *, keep: bool, ready_timeout: float) -> None:
         token = (_settings().get("workqueue") or {}).get("token") or ""
         worker = _spawn(
             f"{queue}-worker",
-            [sys.executable, "-m", "worker.agent", "--server", "http://localhost:8000",
+            [_worker_python(queue), "-m", "worker.agent", "--server", "http://localhost:8000",
              "--token", token, "--queue", queue,
              "--target", f"http://localhost:{leg['port']}"],
             str(ROOT / "src"),
@@ -352,7 +362,7 @@ def auto(idle_exit: Optional[float], ready_timeout: float) -> None:
         token = (_settings().get("workqueue") or {}).get("token") or ""
         worker = _spawn(
             f"{queue}-worker",
-            [sys.executable, "-m", "worker.agent", "--server", "http://localhost:8000",
+            [_worker_python(queue), "-m", "worker.agent", "--server", "http://localhost:8000",
              "--token", token, "--queue", queue,
              "--target", f"http://localhost:{leg['port']}"],
             str(ROOT / "src"),

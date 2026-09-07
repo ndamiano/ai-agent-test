@@ -25,7 +25,7 @@ def run(tmp_path, monkeypatch):
     monkeypatch.setattr(maestro.state, "resolve_base_path", lambda input_path=None: tmp_path)
     # A window small enough that a couple of file writes crosses it, so a test can drive a real
     # compaction instead of describing one.
-    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 4000)
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 2900)
     user = auth_store.create_user("alice", "pw-pass1234", role="admin", email="alice@example.com")
     run_id = create_run(user.id)
     RunState(run_id).write_spec({"request": "make a game", "title": "Moon Miner"})
@@ -98,7 +98,7 @@ def test_every_request_the_build_sent_replays_from_the_log(run):
     the live transcript that the log still has to account for."""
     build_id = build_chain.kickoff(run)
     jobs = [_land(run, build_id, _reply([_write("index.html", 3000)])),
-            _land(run, build_id, _reply([_write("game.js", 3000)], prompt_tokens=3000)),
+            _land(run, build_id, _reply([_write("game.js", 300)], prompt_tokens=3000)),
             _land(run, build_id, _reply([_write("style.css")]))]
 
     assert [r["kind"] for r in _log(run)] == ["meta", "turn", "turn", "compact", "turn"]

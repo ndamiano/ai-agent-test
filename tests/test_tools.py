@@ -259,3 +259,14 @@ def test_a_path_escape_is_reported_not_raised(tools):
     """The guard still holds; it answers the model instead of killing the completion."""
     r = tools["write_file"](path="../escaped.js", content="x")
     assert r["ok"] is False and "escapes" in r["error"]
+
+
+def test_lines_reads_one_function_by_its_range(tmp_path):
+    """The code map in a compaction note gives every declaration its line range; `lines` is what
+    turns that into a read of the function rather than the file."""
+    body = _numbered(400)
+    _game(tmp_path, {"big.js": body})
+    r = build_tools(RunState(tmp_path), "b1")["read_file"](path="big.js", offset=53, lines=25)
+    assert r["ok"] and r["lines"] == "53-77/400"
+    assert r["content"] == "".join(body.splitlines(keepends=True)[52:77])
+    assert "too long to read" not in r["content"]     # a window the model asked for is complete

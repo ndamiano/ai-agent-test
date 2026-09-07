@@ -63,17 +63,21 @@ partial view and a schema, it fills the schema.
 
 No context-rebuilding, no per-step minimal window. When the prompt leaves the window less room
 than a reply needs, the NEWEST COPY of each file's body wins — every older write or read of the
-same file becomes a stub pointing at the newer one — then, OLDEST ROUND FIRST and only until the
-tail fits, the FILE BODIES are replaced by a stub naming the path and size — the round still says
-what the model wrote, read and edited, and the bytes are on disk — and only if that is not enough
-are the OLDEST WHOLE ROUNDS dropped and the model re-grounded on the current file listing
-(`build_steps.compact`). Rounds are never split — a `tool` message whose assistant `tool_calls` is
-gone is an orphan, and a chat template is entitled to 500 the turn. A stub says where the bytes
-are and never tells the model to read them again: told to, it re-reads the whole project after
-every compaction, the reads refill the window, and the build spends its steps on nothing
-(measured 2026-09-06, two of six prod games). The re-grounding matters more than the trim: the
-dropped rounds are where the model watched itself write the files, so without it the model edits
-code it no longer remembers.
+same file becomes a stub pointing at the newer one — and a round that only LOOKED at files goes
+entirely; then, OLDEST ROUND FIRST and only until the tail fits, the FILE BODIES are replaced by
+a stub naming the path and size — the round still says what the model wrote and edited, and the
+bytes are on disk — and only if that is not enough are the OLDEST WHOLE ROUNDS dropped
+(`build_steps.compact`). Rounds are never split — a `tool` message whose assistant `tool_calls`
+is gone is an orphan, and a chat template is entitled to 500 the turn. Every compaction ends by
+RE-GROUNDING the model on the CODE MAP (`code_map.py`): each file, its imports, every declaration
+with its line range. That is what the model was re-reading for — does render.js export
+syncRunes, what does resolveCombat take — and without it the answer was to read every file after
+every cut, the reads refilled the window, and the build spent 150 of 200 steps on nothing
+(measured 2026-09-06, two of six prod games, then 149 of 176 post-compaction reads of files it
+had already read on the fix that only stubbed better). A stub says where the bytes are and never
+tells the model to read them again. The re-grounding matters more than the trim: the dropped
+rounds are where the model watched itself write the files, so without it the model edits code it
+no longer remembers.
 
 ### A gate may only detect BROKEN, never "bad"
 

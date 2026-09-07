@@ -20,7 +20,7 @@ Rules:
   world.regions and world.regionAt(x, z) — each region is {id, category, x, z, radius} in metres. Place the things the game is about BY REGION, from those numbers.
   The scenery is still rendering when the tool answers and appears on its own; write the game meanwhile.
 - Write real, finished code. No placeholders, no TODOs, no "implement this later".
-- Work in small steps: write a file, then keep going. Re-read a file before you edit it.
+- Work in small steps: write a file, then keep going. Re-read a file before you edit it, and only then: a file you wrote is on disk exactly as you wrote it. read_file takes offset and lines, so read the function you are changing, not the file.
 - The first reply settles only the file layout and the records the files share, in broad strokes; each system is thought through in depth when its own file is written, not before.
 - Put every call that does not depend on another one in the SAME reply. Reading four files is one reply carrying four read_file calls.
 - To change existing code, use edit_file. Never rewrite a whole file to change part of it.

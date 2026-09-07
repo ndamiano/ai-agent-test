@@ -53,8 +53,8 @@ def build_tools(state, build_id: str) -> dict:
                 out.append({"path": str(p.relative_to(root)), "bytes": p.stat().st_size})
         return {"ok": True, "files": out}
 
-    def read_file(path: str = None, offset=None, **_) -> dict:
-        """A window of the file, whole lines, starting at 1-based `offset`.
+    def read_file(path: str = None, offset=None, lines=None, **_) -> dict:
+        """A window of the file, whole lines, starting at 1-based `offset`, at most `lines` long.
 
         The window ends on a line boundary: a cut mid-line is text the model copies into old_text,
         where it matches nothing (measured 2026-07-29: 12 byte-identical failing edits, 248 of 249
@@ -85,6 +85,7 @@ def build_tools(state, build_id: str) -> dict:
                     "error": f"{path} is a binary file ({p.stat().st_size} bytes), not text — "
                              "there is nothing in it to read. The game loads it at runtime by "
                              "its path; nothing about its contents is needed to write that code."}
+        want = int(lines) if lines else None
         lines = p.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
         total = len(lines)
         start = max(int(offset or 1), 1) - 1
@@ -92,7 +93,7 @@ def build_tools(state, build_id: str) -> dict:
             return {"ok": False,
                     "error": f"offset {start + 1} is past the end of {path}: it has {total} lines."}
         window, chars = [], 0
-        for line in lines[start:]:
+        for line in lines[start:start + want if want else total]:
             if window and chars + len(line) > MAX_READ_CHARS:
                 break
             window.append(line)
@@ -104,7 +105,7 @@ def build_tools(state, build_id: str) -> dict:
             content = content[:MAX_READ_CHARS] + (
                 f"\n\n[line {end} is longer than one read and was cut here, mid-line — text ending "
                 f"at that cut is not what the file says, so do not use it as an edit anchor.]")
-        elif end < total:
+        elif end < total and not (want and end - start >= want):
             content += (
                 f"\n\n[showed lines {start + 1}-{end} of {total}; the file is too long to read at "
                 f"once. Read the rest with offset {end + 1}. A file this size is worth splitting — "

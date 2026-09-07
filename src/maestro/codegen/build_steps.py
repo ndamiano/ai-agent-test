@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 from llm_clients.message_builder import MessageBuilder
-from maestro.codegen import asset_use, turn_log
+from maestro.codegen import asset_use, code_map, turn_log
 from maestro.codegen.staging import game_dir
 from maestro.services import parse_args, parse_args_checked
 from maestro.tool_calls import parse_tool_calls
@@ -117,7 +117,10 @@ READ_SCHEMA = {"type": "function", "function": {
                    "properties": {"path": {"type": "string"},
                                   "offset": {"type": "integer", "description":
                                              "First line to show, 1-based. Use it to read past a "
-                                             "read that said the file was too long."}},
+                                             "read that said the file was too long."},
+                                  "lines": {"type": "integer", "description":
+                                            "How many lines to show from offset. Read one "
+                                            "function by its line range instead of the file."}},
                    "required": ["path"]}}}
 WRITE_SCHEMA = {"type": "function", "function": {
     "name": "write_file",
@@ -525,10 +528,15 @@ def _result_key(m: dict) -> Optional[tuple]:
 def _stub_call(tc: dict, why: str) -> Optional[dict]:
     fn = tc.get("function") or {}
     name = fn.get("name")
-    if name not in ("write_file", "edit_file"):
+    if name not in ("write_file", "edit_file", "generate_media"):
         return None
     args = parse_args(fn.get("arguments"))
-    if name == "write_file":
+    if name == "generate_media":
+        if len(fn.get("arguments") or "") < 200:
+            return None
+        args = {"id": args.get("id"), "kind": args.get("kind"),
+                "subject": f"[{why}; the manifest on disk has the rest]"}
+    elif name == "write_file":
         body = args.get("content")
         if not isinstance(body, str) or len(body) < 200:
             return None
@@ -548,6 +556,23 @@ def _stub_result(m: dict, why: str) -> Optional[dict]:
         return None
     span = f" lines {hit.group(2)}" if hit.group(2) else ""
     return {**m, "content": f"[read {hit.group(1)}{span}, {len(hit.group(3))} chars — {why}]"}
+
+
+def _read_only(group: List[dict]) -> bool:
+    """A round that only looked: every call a read or a listing, every result already a stub.
+    Once the map in the compaction note says what each file is, such a round is a list of
+    filenames the model once opened, and keeping it teaches it that opening files is the work."""
+    calls = group[0].get("tool_calls") or []
+    if not calls:
+        return False
+    if any((tc.get("function") or {}).get("name") not in ("read_file", "list_files") for tc in calls):
+        return False
+    return all(not _FILE_RESULT.match(m.get("content") or "") for m in group[1:] if m["role"] == "tool")
+
+
+def drop_read_only_rounds(history: List[dict]) -> List[dict]:
+    groups = rounds(history)
+    return history[:1] + [m for g in groups if not _read_only(g) for m in g]
 
 
 def dedupe_bodies(history: List[dict]) -> List[dict]:
@@ -596,19 +621,19 @@ def trim_bodies(history: List[dict], rounds_to_trim: int) -> List[dict]:
 
 
 def compact(run_dir, cursor, keep_chars: int) -> int:
-    """Stub every superseded file body; then, oldest round first, stub the bodies out of rounds
-    until the tail fits `keep_chars`; only if it still does not fit, drop the OLDEST whole rounds
-    and RE-GROUND on the file list.
+    """Stub every superseded file body and drop the rounds that only looked at files; then,
+    oldest round first, stub the bodies out of rounds until the tail fits `keep_chars`; only if
+    it still does not fit, drop the OLDEST whole rounds. Every compaction ends with a note
+    carrying the CODE MAP — each file, its imports, every declaration with its line range — so
+    the model regains the whole picture without a read, and reads by range when it needs one.
 
-    A transcript is mostly file bodies that are also on disk, and dropping a round loses the
-    model's memory of having written it. Trimmed, the round still says what the model did; the
-    bytes come back on `read_file`. The newest rounds are the last to lose their bodies, because
-    they are what the model is about to edit against. When rounds do go, the re-grounding matters
-    more than the trim: the dropped rounds are where the model watched itself write the files, so
-    after one it is editing code it no longer remembers. Returns the rounds trimmed or dropped, 1
-    when only superseded bodies went, 0 when nothing changed."""
+    A transcript is mostly file bodies that are also on disk, and dropping a round that wrote a
+    file loses the model's memory of having written it. Trimmed, the round still says what the
+    model did; the bytes come back on `read_file`. The newest rounds are the last to lose their
+    bodies, because they are what the model is about to edit against. Returns the rounds trimmed
+    or dropped, 1 when only superseded bodies or read-only rounds went, 0 when nothing changed."""
     size = lambda msgs: sum(len(json.dumps(m)) for m in msgs)
-    history = dedupe_bodies(cursor.history)
+    history = drop_read_only_rounds(dedupe_bodies(cursor.history))
     deduped = history != cursor.history
     groups = rounds(history)
     whole = [size(g) for g in groups]
@@ -630,22 +655,24 @@ def compact(run_dir, cursor, keep_chars: int) -> int:
     if not deduped and not trimmed and not dropped:
         return 0
     kept = [m for g in groups for m in g]
-    note = None
-    if dropped:
-        root = game_dir(run_dir)
-        listing = "\n".join(
-            f"{p.relative_to(root)} ({p.stat().st_size} bytes)"
-            for p in sorted(root.rglob("*")) if p.is_file() and not p.name.startswith("_")) or "(empty)"
-        note = {"role": "user", "content":
-                f"[Earlier steps were dropped to save room; {dropped} of them. You cannot see what "
-                f"you wrote before, so do not assume — read a file before you edit it.]\n\n"
-                f"Files in the project directory right now:\n{listing}"}
-    cursor.history = history[:1] + ([note] if note else []) + kept
+    root = game_dir(run_dir)
+    listing = "\n".join(
+        f"{p.relative_to(root)} ({p.stat().st_size} bytes)"
+        for p in sorted(root.rglob("*"))
+        if p.is_file() and not p.name.startswith("_") and str(p.relative_to(root)).startswith("assets/"))
+    note = {"role": "user", "content":
+            "[Earlier steps were trimmed to save room. Every file is on disk exactly as you last "
+            "wrote or read it. Below is the whole project: each file, what it imports, and every "
+            "declaration with its line range. Read a file only to edit it, and read the lines "
+            "you need with offset and lines rather than the whole file.]\n\n"
+            + (code_map.render(root) or "(no source files yet)")
+            + (f"\n\nArt on disk:\n{listing}" if listing else "")}
+    cursor.history = history[:1] + [note] + kept
     # The changed messages are already in the turn log; the record replays the same trim and drop
     # there too, so the archive shows what was really sent rather than the transcript never re-sent.
     turn_log.append_compact(run_dir, turn=cursor.turn, trimmed=trimmed, dropped=dropped,
-                            note=note["content"] if note else None)
-    cursor.logged = max(1, cursor.logged - removed + (1 if note else 0))
+                            note=note["content"])
+    cursor.logged = max(1, cursor.logged - removed + 1)
     return trimmed + dropped or 1
 
 

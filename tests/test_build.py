@@ -617,11 +617,11 @@ def test_compact_stubs_the_oldest_bodies_only_until_the_tail_fits(tmp_path):
     deduped = build_steps.dedupe_bodies(cursor.history)
     keep = sum(len(json.dumps(m)) for m in deduped[1:]) - 2 * 1400
     assert build_steps.compact(tmp_path, cursor, keep_chars=keep) > 0
-    assert len(cursor.history) == n_before                   # every round is still there
-    assert cursor.history[1]["role"] == "assistant"          # no re-grounding note: nothing dropped
-    assert "read f0.js lines 1-40/40" in cursor.history[4]["content"]
-    assert "read f1.js lines 1-40/40" in cursor.history[8]["content"]
-    assert _bodies(cursor.history) == [12, 16, 20, 24]      # the reads of f2..f5, whole
+    assert len(cursor.history) == n_before + 1               # every round is still there, plus the note
+    assert "whole project" in cursor.history[1]["content"]   # the map leads every compaction
+    assert "read f0.js lines 1-40/40" in cursor.history[5]["content"]
+    assert "read f1.js lines 1-40/40" in cursor.history[9]["content"]
+    assert _bodies(cursor.history) == [13, 17, 21, 25]      # the reads of f2..f5, whole
 
 
 def test_compact_keeps_only_the_newest_copy_of_each_file(tmp_path):
@@ -636,10 +636,12 @@ def test_compact_keeps_only_the_newest_copy_of_each_file(tmp_path):
                   "content": f'<file path="f0.js" lines="1-40/40">\n{"y" * 1500}\n</file>'})
     cursor = _cursor(history=h)
     assert build_steps.compact(tmp_path, cursor, keep_chars=10_000_000) == 1
-    assert _bodies(cursor.history) == [len(h) - 1]           # the newest read alone keeps its bytes
-    write = json.loads(cursor.history[1]["tool_calls"][0]["function"]["arguments"])
+    assert _bodies(cursor.history) == [len(cursor.history) - 1]  # the newest read alone keeps its bytes
+    write = json.loads(cursor.history[2]["tool_calls"][0]["function"]["arguments"])
     assert write["content"] == "[wrote f0.js, 1500 chars — a newer copy is later in this transcript]"
-    assert "a newer copy is later in this transcript" in cursor.history[4]["content"]
+    # The three superseded read rounds are gone entirely: a round that only looked, once its
+    # bodies are stubs, is a list of filenames the map already covers.
+    assert [m["content"][:6] for m in cursor.history if m["role"] == "assistant"] == ["step 0", "again "]
     assert "read it again" not in json.dumps(cursor.history)
 
 
@@ -654,7 +656,7 @@ def test_a_line_window_never_supersedes_the_whole_file(tmp_path):
               "content": f'<file path="f0.js" lines="5-40/40">\n{"y" * 1500}\n</file>'})
     cursor = _cursor(history=h)
     build_steps.compact(tmp_path, cursor, keep_chars=10_000_000)
-    assert _bodies(cursor.history) == [4, 6]                 # the whole read and the window both live
+    assert _bodies(cursor.history) == [5, 7]                 # the whole read and the window both live
 
 
 def test_compact_is_a_noop_when_nothing_is_superseded_and_it_fits(tmp_path):
@@ -762,3 +764,29 @@ def test_compaction_fires_when_the_window_has_less_than_the_room_left(tmp_path, 
     cursor.prompt_tokens = 131_072 - build_steps._COMPACT_ROOM + 1
     build_steps._infer(tmp_path, cursor)
     assert cursor.compacted == 1
+
+
+def test_old_art_calls_keep_their_id_and_kind_and_lose_the_prompt(tmp_path):
+    (tmp_path / "game").mkdir()
+    h = _file_history(n=1)
+    art = json.dumps({"id": "hero", "kind": "actor", "subject": "a knight " * 40,
+                      "anims": [{"name": "walk", "action": "strides"}]})
+    h.insert(1, {"role": "assistant", "content": "", "tool_calls": [
+        {"id": "g", "type": "function", "function": {"name": "generate_media", "arguments": art}}]})
+    h.insert(2, {"role": "tool", "tool_call_id": "g", "content": '{"ok": true, "path": "assets/hero.png"}'})
+    cursor = _cursor(history=h)
+    build_steps.compact(tmp_path, cursor, keep_chars=1000)
+    call = json.loads(cursor.history[2]["tool_calls"][0]["function"]["arguments"])
+    assert call["id"] == "hero" and call["kind"] == "actor" and "anims" not in call
+    assert "manifest on disk" in call["subject"]
+
+
+def test_the_compaction_note_carries_the_code_map(tmp_path):
+    (tmp_path / "game" / "systems").mkdir(parents=True)
+    (tmp_path / "game" / "systems" / "combat.js").write_text(
+        "export function resolveCombat(a, d) {\n  return 1;\n}\n")
+    cursor = _cursor(history=_file_history(n=2))
+    build_steps.compact(tmp_path, cursor, keep_chars=1000)
+    note = cursor.history[1]["content"]
+    assert "systems/combat.js (4 lines)" in note and "  1-3  resolveCombat(a, d)" in note
+    assert "offset and lines" in note

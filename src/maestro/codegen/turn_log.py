@@ -109,13 +109,12 @@ def _compacted(messages: List[Dict], record: Dict) -> List[Dict]:
     stubbed, then the bodies out of the oldest rounds, then the oldest whole rounds gone with the
     re-grounding note in their place, the request kept."""
     from maestro.codegen import build_steps   # module-level would cycle: build_steps writes here
-    messages = build_steps.dedupe_bodies(messages)
+    messages = build_steps.drop_read_only_rounds(build_steps.dedupe_bodies(messages))
     if record["trimmed"]:
         messages = build_steps.trim_bodies(messages, record["trimmed"])
     groups = build_steps.rounds(messages)
     kept = [m for g in groups[record["dropped"]:] for m in g]
-    note = [{"role": "user", "content": record["note"]}] if record["note"] else []
-    return messages[:1] + note + kept
+    return messages[:1] + [{"role": "user", "content": record["note"]}] + kept
 
 
 def _chars_of(messages: List[Dict]) -> int:

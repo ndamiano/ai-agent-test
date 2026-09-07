@@ -58,7 +58,8 @@ src/
                          the WORKER could not deliver, which is neither. Collapsing any two of the
                          three scolds the model for a reply it never sent and burns a turn.
                          Owns the eight tool schemas (`done` is handled here, not in tools.py),
-                         the transcript, compaction, the DONE-NUDGE (`cursor.done_nudged` — asked
+                         the transcript, compaction (`CLAUDE.md`; the note it ends with carries
+                         `code_map`), the DONE-NUDGE (`cursor.done_nudged` — asked
                          once, then the next `done` is taken), and
                          every way a reply TOO BIG TO LAND arrives — all three answered with the one
                          remedy (write it in pieces), because they are one event: the reply cut off
@@ -93,9 +94,15 @@ src/
                          and a `turn` record carries only what that turn ADDED — turn k is
                          `system + tools + concat(added[0..k])`. A `compact` record carries the
                          rounds `build_steps.compact` trimmed to stubs and dropped, and the note
-                         that replaced the dropped ones; the newest-copy-wins pass is a function of
-                         the transcript alone, so a replay shows what was really sent. A FIX appends its own meta and never
-                         truncates.
+                         it ended with; the newest-copy-wins pass and the read-only-round drop are
+                         functions of the transcript alone, so a replay shows what was really
+                         sent. A FIX appends its own meta and never truncates.
+      code_map.py        the project as one message: every source file, what it imports, and each
+                         declaration — exported or private, and the functions one level inside it
+                         — with the line range it occupies. Regex over JavaScript, no parser;
+                         art, `world/` and the vendored renderer are left out. It is what the
+                         compaction note re-grounds the model on, and with `read_file`'s `offset`
+                         and `lines` it turns "read the file" into "read lines 68-120".
       archive.py         the run dir's OFF-BOX copy. tools/s3.py is a minimal SigV4 client over
                          `requests` — a wrong signature is a loud 403 and the payload hash rides
                          the request, so a signing bug cannot silently succeed. A settled finalize

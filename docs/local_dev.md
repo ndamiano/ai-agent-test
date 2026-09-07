@@ -186,14 +186,15 @@ restarted — Node caches the ESM config, and a stale one drops every custom cla
 endpoint — inference rides the queue.
 
 `slots` is how many jobs one llm worker runs at once against its engine (`worker/agent.py
---slots`); an llm pod reads it at create. The scaler counts workers, not slots, so
-`scale_up_depth_per_worker` and `scale_up_max_age_seconds` on the llm queue are per pod and
-scale with it: two slots, twice the depth and twice the wait before a second card is rented.
+--slots`); an llm pod reads it at create. The scaler counts workers, not slots, so the llm
+queue's backlog rule and `scale_up_max_age_seconds` are per pod and scale with it: two slots,
+twice the backlog and twice the wait before a second card is rented.
 
 `n_ctx` is the INPUT budget: when a prompt leaves less than 16K tokens of it, `build_steps.compact`
-stubs every superseded file body, then the bodies out of the oldest rounds until a third of the
-window holds the rest and, only if that is not enough, drops the oldest whole rounds and
-re-grounds the model on the file listing (`CLAUDE.md`). Nothing else trims.
+stubs every superseded file body and drops the rounds that only read, then stubs the bodies out
+of the oldest rounds until a third of the window holds the rest and, only if that is not enough,
+drops the oldest whole rounds; every compaction re-grounds the model on the code map
+(`CLAUDE.md`). Nothing else trims.
 
 The two `_args` strings are appended to an engine's launch line, one per engine: `ninfer_args` by
 `scripts/local_gpu.py` for the 27B on the local 5090 (`--kv-dtype int8` is what lets 131072 fit

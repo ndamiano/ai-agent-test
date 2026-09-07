@@ -82,7 +82,7 @@ source that a completion reloads, advances, and rewrites.
 A landed turn is appended to the run's own `turns.jsonl`, and its jobs row keeps only measurements
 (`db_store.elide_payload` / `elide_result`: model, message count, prompt size, effort, token usage,
 finish reason, tool names, the system prompt's hash and length) — the db holds what a query needs and the run
-dir holds the words. The reply stays whole on the row only until its consumer has read it.
+dir holds the words. The reply stays whole on the row only until its consumer has read it. A job failed without running (abandoned, cancelled, or never claimed) is elided the same way at the moment it fails.
 
 **Assets.** `generate_media` enqueues one `image` job and answers immediately with the path the file
 will appear at. Chained work is named in the job's `metadata.then` (`mesh_from_image`,

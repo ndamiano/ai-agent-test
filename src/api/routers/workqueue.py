@@ -19,7 +19,6 @@ from pydantic import BaseModel
 from config.settings_manager import settings_manager
 from db import store as db_store
 from maestro.codegen import asset_chain, build_chain, design
-from tools.build_events import _emit
 
 router = APIRouter()
 
@@ -171,11 +170,10 @@ def _prepare(job_id: str, result: Optional[Dict]) -> tuple:
     job = db_store.get_job(job_id) or {}
     metadata = job.get("metadata") or {}
     continuation = asset_chain.build_continuation(metadata, result) if metadata else None
-    return blobs, metadata, continuation, job.get("queue")
+    return blobs, metadata, continuation
 
 
-def _land(body: "CompleteBody", continuation: Optional[Dict], queue: Optional[str],
-          consumed: bool) -> Optional[Dict]:
+def _land(body: "CompleteBody", continuation: Optional[Dict], consumed: bool) -> Optional[Dict]:
     """`consumed` says this route hands the reply on (a build turn, a design, an asset chain), so
     the row can drop it now; a job nobody here consumes has a blocking waiter polling for it,
     which elides the row once it has read it."""
@@ -183,9 +181,6 @@ def _land(body: "CompleteBody", continuation: Optional[Dict], queue: Optional[st
                                     body.exec_seconds, body.gpu_type, continuation)
     if outcome is not None and consumed:
         db_store.elide_job_result(body.job_id)
-    if outcome is not None and outcome["game_id"]:
-        _emit("job_done", outcome["game_id"], build_id=outcome["build_id"], job_id=body.job_id,
-              queue=queue, ok=body.error is None, exec_seconds=body.exec_seconds)
     return outcome
 
 
@@ -194,11 +189,9 @@ async def complete(body: CompleteBody, request: Request):
     """Land a result (or failure). ok=false means the lease lapsed and the job was requeued —
     this worker's result was dropped and it should just move on."""
     _require_worker(request)
-    blobs, metadata, continuation, queue = await asyncio.to_thread(
-        _prepare, body.job_id, body.result)
-    # sqlite, not the event loop: the completion txn also admits and inserts the follow-up,
-    # and _emit writes an events row.
-    outcome = await asyncio.to_thread(_land, body, continuation, queue,
+    blobs, metadata, continuation = await asyncio.to_thread(_prepare, body.job_id, body.result)
+    # sqlite, not the event loop: the completion txn also admits and inserts the follow-up.
+    outcome = await asyncio.to_thread(_land, body, continuation,
                                       bool(metadata.get("stage") or metadata.get("then")))
     if outcome is None:
         for blob in blobs:

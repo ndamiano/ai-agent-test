@@ -358,39 +358,44 @@ def enqueue_job(queue: str, payload: Dict, game_id: Optional[str] = None,
                                   batch_id, metadata)
 
 
+def _fail_locked(conn, where: str, params: tuple, error: str) -> int:
+    """Fail every unfinished job matching `where`, leaving each row what a finished row keeps: the
+    elided payload, never the request text. Rows are updated one at a time because the elision
+    runs in Python, and the result is None on every one — a failed job delivered nothing."""
+    rows = conn.execute(f"SELECT id, queue, payload FROM jobs WHERE {where}", params).fetchall()
+    now = time.time()
+    for row in rows:
+        payload = elide_payload(row["queue"], json.loads(row["payload"] or "{}"))
+        conn.execute(
+            "UPDATE jobs SET status = 'failed', payload = ?, error = ?, finished_at = ? "
+            "WHERE id = ?",
+            (json.dumps(payload, ensure_ascii=False), error, now, row["id"]))
+    return len(rows)
+
+
 def abandon_job(job_id: str, error: str) -> bool:
     """Give up on a job whose enqueuer stopped waiting. Releases its reservation — a row left
     pending forever would hold estimate seconds against the game that nothing will ever spend or
     refund. A worker that completes it afterwards is dropped, exactly like a lapsed lease."""
     with _db() as conn:
-        cur = conn.execute(
-            "UPDATE jobs SET status = 'failed', error = ?, finished_at = ? "
-            "WHERE id = ? AND status IN ('pending', 'claimed')",
-            (error, time.time(), job_id))
-    return cur.rowcount == 1
+        n = _fail_locked(conn, "id = ? AND status IN ('pending', 'claimed')", (job_id,), error)
+    return n == 1
 
 
 def abandon_build_jobs(build_id: str, error: str) -> int:
     """Fail a build's unfinished turns. A claimed one is left to its worker's completion, which
     finds the cursor done and stops there."""
     with _db() as conn:
-        cur = conn.execute(
-            "UPDATE jobs SET status = 'failed', error = ?, finished_at = ? "
-            "WHERE build_id = ? AND status = 'pending'",
-            (error, time.time(), build_id))
-    return cur.rowcount
+        return _fail_locked(conn, "build_id = ? AND status = 'pending'", (build_id,), error)
 
 
 def cancel_pending_build_turn(build_id: str, error: str) -> int:
     """Fail the build's queued llm TURN and nothing else — a paused build keeps the art it already
     asked for, and that rides the same build_id. A claimed turn is left to its worker."""
     with _db() as conn:
-        cur = conn.execute(
-            "UPDATE jobs SET status = 'failed', error = ?, finished_at = ? "
-            "WHERE build_id = ? AND status = 'pending' AND queue = 'llm' "
-            "AND json_extract(metadata, '$.stage') = 'build'",
-            (error, time.time(), build_id))
-    return cur.rowcount
+        return _fail_locked(
+            conn, "build_id = ? AND status = 'pending' AND queue = 'llm' "
+            "AND json_extract(metadata, '$.stage') = 'build'", (build_id,), error)
 
 
 def abandon_pending_batch_jobs(game_id: str, error: str) -> int:
@@ -399,11 +404,9 @@ def abandon_pending_batch_jobs(game_id: str, error: str) -> int:
     asset renders rather than dying. Claimed jobs are left alone (their GPU time is already being
     paid for); a batch failed whole is finalized by the reaper's batches_awaiting_finalize sweep."""
     with _db() as conn:
-        cur = conn.execute(
-            "UPDATE jobs SET status = 'failed', error = ?, finished_at = ? "
-            "WHERE game_id = ? AND batch_id IS NOT NULL AND status = 'pending'",
-            (error, time.time(), game_id))
-    return cur.rowcount
+        return _fail_locked(
+            conn, "game_id = ? AND batch_id IS NOT NULL AND status = 'pending'", (game_id,),
+            error)
 
 
 def queue_has_work(queue: str) -> bool:
@@ -692,12 +695,8 @@ def fail_stale_pending(max_age_seconds: float) -> List[Dict]:
         rows = conn.execute(
             "SELECT id, queue, batch_id, game_id FROM jobs "
             "WHERE status = 'pending' AND created_at < ?", (cutoff,)).fetchall()
-        if rows:
-            conn.execute(
-                "UPDATE jobs SET status = 'failed', error = ?, finished_at = ? "
-                "WHERE status = 'pending' AND created_at < ?",
-                (f"pending longer than {max_age_seconds:.0f}s with no worker", time.time(),
-                 cutoff))
+        _fail_locked(conn, "status = 'pending' AND created_at < ?", (cutoff,),
+                     f"pending longer than {max_age_seconds:.0f}s with no worker")
     return [dict(r) for r in rows]
 
 

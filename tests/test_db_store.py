@@ -1,5 +1,6 @@
 """Platform db — games ownership/lifecycle, the charge contract, builds, and the event log."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -212,3 +213,52 @@ def test_an_art_row_keeps_its_prompt_and_render_record_and_drops_the_blobs():
     assert job["payload"] == {"prompt": "a red dragon", "mode": "img2img"}
     assert job["result"] == {"model": "sdxl", "images": [
         {"file": "/blobs/x.png", "safety": {"scores": {"NSFW": 0.1}}}]}
+
+
+def _enqueue_llm_turn(build_id="b1", stage="build"):
+    body = {"model": "qwen", "messages": [{"role": "user", "content": "Make a space game " * 40}]}
+    return store.enqueue_job("llm", {"body": body}, game_id="g1", build_id=build_id,
+                             metadata={"stage": stage, "run_id": "g1", "build_id": build_id})
+
+
+def _payload_of(job_id):
+    return store.get_job(job_id)["payload"]
+
+
+def test_every_failed_path_leaves_measurements_not_words():
+    store.create_game("g1", "u1")
+    store.charge_game("g1", 10, 144_000)
+    measured = {"model": "qwen", "n_messages": 1, "prompt_chars": 720, "reasoning": None,
+                "max_tokens": None}
+
+    abandoned = _enqueue_llm_turn()
+    assert store.abandon_job(abandoned, "timed out") is True
+    assert _payload_of(abandoned) == measured
+
+    by_build = _enqueue_llm_turn(build_id="b2")
+    assert store.abandon_build_jobs("b2", "stopped") == 1
+    assert _payload_of(by_build) == measured
+
+    cancelled = _enqueue_llm_turn(build_id="b3")
+    assert store.cancel_pending_build_turn("b3", "paused") == 1
+    assert _payload_of(cancelled) == measured
+
+    stale = _enqueue_llm_turn(build_id="b4")
+    assert [r["id"] for r in store.fail_stale_pending(-1.0)] == [stale]
+    assert _payload_of(stale) == measured
+
+    for job_id in (abandoned, by_build, cancelled, stale):
+        row = store.get_job(job_id)
+        assert row["status"] == "failed" and row["error"]
+        assert "space game" not in str(row)
+
+
+def test_a_failed_batch_render_drops_its_blob():
+    store.create_game("g1", "u1")
+    store.charge_game("g1", 10, 144_000)
+    job_id = store.enqueue_job("video", {"kind": "anim", "image_b64": "A" * 5000,
+                                         "anims": {"walk": 4}, "dirs": ["south"]},
+                               game_id="g1", build_id="b1", batch_id="batch1")
+    assert store.abandon_pending_batch_jobs("g1", "budget") == 1
+    assert _payload_of(job_id) == {"kind": "anim", "anims": ["walk"], "dirs": ["south"]}
+

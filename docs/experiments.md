@@ -2012,3 +2012,46 @@ holds the shape. Neither the fenced encoding nor a persistent namespace is built
 no bound name in either build, retyping a schedule it had computed two turns earlier, and a
 persistent namespace would also defeat the static pre-check by leaving names bound across programs.
 
+
+## 2026-09-08 — the game's sound is the lib's, said once in build.txt
+
+`lib/audio.js` shipped 2026-08-22 and games kept writing WebAudio beside it. Scored over every
+finished game built since (`imports lib/audio.js` against `new AudioContext` in the game's own
+files, the lib's own source excluded):
+
+| corpus | n | own WebAudio | imports the lib |
+|---|---|---|---|
+| since the lib shipped | 93 | 65 (70%) | 40 (43%) |
+| since the lib line last changed (2026-09-04) | 13 | 9 (69%) | 6 (46%) |
+
+Thirteen games did both. The rate does not move across the two windows, so it is the standing
+behaviour and not a drift of the prompt.
+
+The treatment is two changes: `audio.js` gains `sound`, `noise`, `seq` and `loop` — a game that
+needs an engine rising with speed can no longer be told to use eight fixed effects — and one line
+of `build.txt` says the game's sound IS the lib and no game makes its own AudioContext.
+
+Four asks (arcade shooter, platformer, racing, rhythm), one build each:
+
+| ask | run | imports the lib | own WebAudio | lib calls |
+|---|---|---|---|---|
+| shooter | `26ee08765ca5` | yes | 0 | 10 |
+| platformer | `08da5d27dec3` | yes | 0 | 17 |
+| racing | `d5a839254fae` | yes | 0 | 9 |
+| rhythm | `7f7fef4772fa` | yes | 0 | 9 |
+
+4/4, every one with no AudioContext of its own; p ≈ 0.3⁴ ≈ 0.008 against the 70% base rate. The
+control arm is the corpus: a matched control build of the shooter ask on HEAD (`f71adaa6d516`)
+hand-rolled a `sfx.js` with two AudioContexts, and four more control builds were dropped once the
+93-game base rate made them redundant — an arm of four cannot say what the corpus already says.
+
+Two builds of a control arm ran before it was dropped, and the second is the one worth keeping:
+on the platformer ask it spent 79 minutes and never finished, one turn running the 131K window dry
+(`finish=context_capacity`, 54,841 tokens generated, no tool call) after hand-simulating its own
+code for three turns and transcribing a whole file into the transcript. The harness discarded the
+dead turn and nudged for smaller writes, which is why it cost 6.7 minutes rather than the window.
+Treatment built the same ask in 24m31s.
+
+NOT measured: whether the sound is any GOOD. Both halves of the metric are use, not quality — a
+game that hand-rolls beautiful audio scores zero here and a game that imports the lib to make noise
+scores well. That judgement is a person playing it.

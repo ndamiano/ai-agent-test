@@ -9,7 +9,9 @@ runtime/
   vendor/three.module.js  vendored three.js (MIT, self-contained) + GLTFLoader — copied into every
                          game folder at seed, so a 3D game imports a renderer with no network fetch.
   vendor/lib/*.js        the helper library, copied to <game>/lib/ at seed: input.js (WASD and
-                         arrows aliased, mouse, touch), audio.js (WebAudio synth, no files),
+                         arrows aliased, mouse, touch), audio.js (WebAudio synth, no files: eight
+                         named effects, and `sound`/`noise`/`seq`/`loop` for the ones a game
+                         invents — a footstep, an engine that rises with speed, an alarm),
                          canvas.js (the fixed, scaling canvas with a camera), lights.js (sun +
                          sky + exposure for a three.js scene that is not a world), sprites.js
                          (draws a generate_media actor with anims — one sheet PNG plus its manifest — by

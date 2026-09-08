@@ -195,7 +195,8 @@ endpoint — inference rides the queue.
 queue's `min_jobs_per_pod` is per pod and scales with it: two slots, twice the backlog before a
 second card is rented.
 
-`n_ctx` is the INPUT budget: when a prompt leaves less than 16K tokens of it, `build_steps.compact`
+`n_ctx` is the INPUT budget: when the prompt ABOUT TO BE SENT — the last one the server counted
+plus the rounds added since — leaves less than 16K tokens of it, `build_steps.compact`
 stubs every superseded file body and drops the rounds that only read, then stubs the bodies out
 of the oldest rounds until a third of the window holds the rest and, only if that is not enough,
 drops the oldest whole rounds; every compaction re-grounds the model on the code map

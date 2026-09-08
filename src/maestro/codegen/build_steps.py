@@ -40,6 +40,9 @@ _REDRIVE_GIVE_UP = 8
 # this fraction of the window afterwards.
 _COMPACT_ROOM = 16_000
 _COMPACT_KEEP = 0.33
+# A server refusal of the PROMPT rather than the reply. Nothing the model wrote is at fault, so
+# the answer is to trim the transcript and send it again.
+_PROMPT_REFUSED = ("context_length_exceeded", "max_context", "max_tokens must be positive")
 # Consecutive turns with no tool call before the build gives up. Each nudge differs: repeating one
 # verbatim reproduces the reply that earned it.
 _NO_CALL_GIVE_UP = 4
@@ -140,6 +143,18 @@ def step(spec, run_dir, tools, cursor, result, error: Optional[str] = None) -> O
         return _infer(run_dir, cursor)
 
     if error:
+        if any(m in error for m in _PROMPT_REFUSED):
+            # The server refused the PROMPT for its size. Telling the model its reply was unreadable
+            # would be false AND would make the next prompt bigger — measured 2026-09-08, run
+            # 90a89ba593ee: one round jumped the window, the estimate never crossed the compaction
+            # trigger, and the build re-sent a prompt that grew 124 tokens an attempt until it died.
+            cursor.turn += 1
+            before = cursor.compacted
+            cursor.prompt_tokens = _n_ctx()      # forces the trim the estimate missed
+            nxt = _infer(run_dir, cursor, report="the prompt outgrew the window; trimmed it")
+            if cursor.compacted == before:
+                return Done("stalled: the prompt is over the window and nothing is left to trim")
+            return nxt
         # The reply never reached us: an oversized tool call comes back as a 500 from the inference
         # server's OWN argument parser, and the model that wrote it hears nothing. Told only that it
         # said nothing, it resends the same oversized call and the build dies four turns later
@@ -357,9 +372,19 @@ def _apply(tools, cursor, tc, run_dir) -> bool:
     return cursor.finished
 
 
+def _estimate(cursor) -> int:
+    """Tokens the next prompt will cost. The last prompt the server COUNTED plus the rounds added
+    since, because re-estimating a whole near-full transcript at 3 chars a token overshoots; the
+    whole thing only until the server has counted one."""
+    chars = lambda ms: sum(len(json.dumps(m)) for m in ms)
+    if cursor.prompt_tokens:
+        return cursor.prompt_tokens + chars(cursor.history[cursor.logged:]) // 3
+    return (len(cursor.system) + chars(cursor.history)) // 3
+
+
 def _infer(run_dir, cursor, report: Optional[str] = None) -> Infer:
     ctx = _n_ctx()
-    if cursor.prompt_tokens > ctx - _COMPACT_ROOM:
+    if _estimate(cursor) > ctx - _COMPACT_ROOM:
         if compact(run_dir, cursor, int(ctx * _COMPACT_KEEP) * 4):
             cursor.compacted += 1
             cursor.prompt_tokens = 0   # unknown until the server reports the trimmed prompt back
@@ -372,13 +397,8 @@ def _infer(run_dir, cursor, report: Optional[str] = None) -> Infer:
         report += f" (compacted {cursor.compacted}×)"
     cursor.actions = []
     # The server admits a turn only if prompt + max_tokens fits the window: the cap is whatever the
-    # window has left after the prompt. The prompt is the last one the server counted plus this
-    # turn's round; counting the whole transcript at 3 chars a token instead would overshoot a
-    # near-full window and hand the server a cap below zero.
-    chars = lambda ms: sum(len(json.dumps(m)) for m in ms)
-    est = (cursor.prompt_tokens + chars(cursor.history[cursor.logged:]) // 3
-           if cursor.prompt_tokens else chars(msgs) // 3)
-    cursor.out_cap = ctx - est
+    # window has left after the prompt.
+    cursor.out_cap = ctx - _estimate(cursor)
     return Infer(msgs, SCHEMAS, cursor.out_cap, report=report)
 
 

@@ -830,6 +830,7 @@ def test_compaction_fires_when_the_window_has_less_than_the_room_left(tmp_path, 
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     cursor.history = _file_history()
+    cursor.logged = len(cursor.history)      # every round below is one the server already counted
     cursor.prompt_tokens = 131_072 - build_steps._COMPACT_ROOM - 1
     build_steps._infer(tmp_path, cursor)
     assert cursor.compacted == 0
@@ -884,3 +885,70 @@ def test_the_feed_line_folds_failures_too(tmp_path, tools):
         "for i in range(22):\n"
         '    edit_file(path=f"gone{i}.js", old_text="a", new_text="b")')))
     assert out.report == "edited 22 files — all failed"
+
+
+def _fat_history(rounds=40, body=6000):
+    h = [{"role": "user", "content": "make a game"}]
+    for i in range(rounds):
+        h.append({"role": "assistant", "content": f"step {i}",
+                  "tool_calls": [_program(f'write_file(path="f{i}.js", content={"z" * body!r})', i)]})
+        h.append({"role": "tool", "tool_call_id": f"c{i}", "content": "wrote f%d.js" % i})
+    return h
+
+
+def test_compaction_fires_on_the_round_that_jumps_the_window(tmp_path, tools, monkeypatch):
+    """The trigger reads the prompt about to be SENT, not the last one the server counted. A single
+    round big enough to cross the window lands between two counts, and reading only the stale count
+    left the transcript untrimmed while the server refused it."""
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    cursor.history = _fat_history()
+    cursor.logged = 1
+    cursor.prompt_tokens = 100_000          # comfortably under the trigger on its own
+    build_steps._infer(tmp_path, cursor)    # ...but the rounds since add well over the room left
+    assert cursor.compacted == 1
+
+
+def test_a_prompt_over_the_window_is_trimmed_and_re_sent(tmp_path, tools, monkeypatch):
+    """Measured 2026-09-08 (run 90a89ba593ee): the server refused the PROMPT for its size and the
+    driver answered as though the REPLY was unreadable — a note that was false and that made the
+    next prompt bigger, three identical refusals apart. A prompt-side refusal compacts instead."""
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    cursor.history = _fat_history()
+    cursor.logged = 1
+    out = build_steps.step({}, tmp_path, tools, cursor, None,
+                           error='Status 400: {"error":{"code":"context_length_exceeded",'
+                                 '"message":"prepared prompt has 131453 tokens, exceeding Engine '
+                                 'max_context 131072"}}')
+    assert cursor.compacted == 1
+    assert isinstance(out, build_steps.Infer)
+    assert not any("could not read your last reply" in str(m.get("content"))
+                   for m in cursor.history)
+
+
+def test_the_build_gives_up_when_the_prompt_cannot_be_trimmed(tmp_path, tools, monkeypatch):
+    """Nothing left to trim and the prompt still over: the build stops rather than re-sending a
+    prompt the server will refuse forever."""
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    out = build_steps.step({}, tmp_path, tools, cursor, None,
+                           error='Status 400: max_tokens must be positive')
+    assert isinstance(out, build_steps.Done)
+    assert "nothing is left to trim" in out.report
+
+
+def test_the_cap_stays_positive_when_the_window_is_full(tmp_path, tools, monkeypatch):
+    """The cap is what the window has left, and a full window is what compaction is for: after the
+    trim there is room for a reply again."""
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    cursor.history = _fat_history()
+    cursor.logged = 1
+    cursor.prompt_tokens = 130_000
+    build_steps._infer(tmp_path, cursor)
+    assert cursor.out_cap > 0

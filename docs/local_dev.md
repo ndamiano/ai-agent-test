@@ -38,7 +38,12 @@ four queues, starts (model + worker) whichever has pending work — favoring the
 holds so a momentary empty doesn't thrash it, except that a queue whose oldest job has waited
 ten minutes takes the card, because the control plane fails a job nobody claims in thirty and a
 build's turns can keep the llm queue non-empty for an hour — and stops what it started on
-SIGINT/SIGTERM. Run it
+SIGINT/SIGTERM. Handing the card over waits up to `HANDOFF_SECONDS` for the worker to finish the
+job it holds, because that generation is already paid for and a killed turn re-pays its prefill
+when the job is re-driven. A server already on the port is USED rather than refused — it belongs to
+whoever started it, and auto never stops it — so another ComfyUI on 8188 no longer costs auto the
+queue, or the card it was holding. The engine for an llm leg is the one built for the model
+variant in settings (`ninfer-<variant>` beside `ninfer/`), which `NINFER_BIN` overrides. Run it
 in one terminal alongside `python run.py`; `--idle-exit SECONDS` stops and exits once nothing is
 pending anywhere for that long (default: never). The single-leg (`llm`/`image`/`mesh`/`video`) and
 `all` modes still exist for draining one queue by hand.

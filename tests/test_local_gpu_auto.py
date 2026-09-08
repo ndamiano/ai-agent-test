@@ -107,3 +107,44 @@ def test_ninfer_artifact_is_the_nvfp4_build_of_the_model_id(monkeypatch, tmp_pat
         local_gpu._ninfer_artifact()
     (tmp_path / "qwen3_8_27b_nvfp4.ninfer").write_bytes(b"x")
     assert local_gpu._ninfer_artifact() == tmp_path / "qwen3_8_27b_nvfp4.ninfer"
+
+
+def test_the_engine_is_the_one_built_for_the_model_variant(monkeypatch, tmp_path):
+    """A quasar artifact under the plain build dies at launch with `tensor descriptor does not
+    match target contract`, and auto then has no card to hand anyone."""
+    monkeypatch.delenv("NINFER_BIN", raising=False)
+    default = tmp_path / "ninfer" / "build" / "apps" / "ninfer-serve"
+    quasar = tmp_path / "ninfer-quasar" / "build" / "apps" / "ninfer-serve"
+    quasar.parent.mkdir(parents=True)
+    quasar.write_text("")
+    monkeypatch.setattr(local_gpu, "NINFER_DEFAULT", default)
+    monkeypatch.setattr(local_gpu, "_model_id", lambda: "qwen3.8_27b_quasar")
+    assert local_gpu._ninfer_bin() == quasar
+    monkeypatch.setattr(local_gpu, "_model_id", lambda: "qwen3.8_27b")
+    assert local_gpu._ninfer_bin() == default          # no engine of its own: the plain one
+
+
+def test_ninfer_bin_env_wins(monkeypatch, tmp_path):
+    monkeypatch.setenv("NINFER_BIN", str(tmp_path / "mine"))
+    monkeypatch.setattr(local_gpu, "_model_id", lambda: "qwen3.8_27b_quasar")
+    assert local_gpu._ninfer_bin() == tmp_path / "mine"
+
+
+def test_a_handed_over_worker_is_given_time_to_finish_its_job(monkeypatch):
+    """The job in flight is GPU seconds already paid for; killing it re-pays the whole prefill when
+    the job is re-driven. The server may go promptly — nothing is mid-flight in it once the worker
+    has stopped."""
+    graces = {}
+    monkeypatch.setattr(local_gpu, "_stop",
+                        lambda name, proc, grace=25: graces.__setitem__(name.split("-")[-1], grace))
+    local_gpu.hand_over("llm", object(), object())
+    assert graces == {"worker": local_gpu.HANDOFF_SECONDS, "server": 25}
+    assert local_gpu.HANDOFF_SECONDS > 120        # longer than a build turn
+
+
+def test_a_server_auto_did_not_start_is_never_stopped(monkeypatch):
+    """auto reuses a server already on the port, and that one belongs to whoever started it."""
+    stopped = []
+    monkeypatch.setattr(local_gpu, "_stop", lambda name, proc, grace=25: stopped.append(name))
+    local_gpu.hand_over("image", None, object())
+    assert stopped == ["image-worker"]

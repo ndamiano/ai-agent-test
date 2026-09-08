@@ -44,8 +44,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 LOGS = Path(os.environ.get("MAESTRO_LOCAL_LOGS", "/tmp/maestro-local"))
 
-NINFER = Path(os.environ.get("NINFER_BIN",
-                             "/home/nick/Documents/ninfer/build/apps/ninfer-serve"))
+NINFER_DEFAULT = Path("/home/nick/Documents/ninfer/build/apps/ninfer-serve")
 NINFER_MODELS = Path(os.environ.get("NINFER_MODELS", "/var/lib/models/ninfer"))
 COMFY_PYTHON = Path(os.environ.get("COMFY_PYTHON",
                                    "/home/nick/Documents/Comfy/comfy-env/bin/python"))
@@ -77,6 +76,9 @@ PRIORITY = {"llm": 0, "image": 1, "mesh": 2, "video": 3}  # tie-break when nothi
 # first: one card, a build whose turns re-fill the llm queue as fast as it empties, and five
 # sheets waited 30 minutes behind it for a worker that never came (2026-09-04, two of five lost).
 STARVE_SECONDS = 600
+# How long a worker may keep the card to finish the job in flight when the card is handed over.
+# Longer than a build turn: the alternative is throwing that turn away.
+HANDOFF_SECONDS = 300
 
 
 def _settings() -> dict:
@@ -85,6 +87,19 @@ def _settings() -> dict:
 
 def _model_id() -> str:
     return (_settings().get("llm") or {}).get("model") or "qwen3.8_27b"
+
+
+def _ninfer_bin() -> Path:
+    """The engine built for the model VARIANT the settings ask for. The artifacts on this box are
+    `<model>_<variant>` and the engine beside each is `ninfer-<variant>`; an engine built for
+    another variant refuses the weights outright — a quasar artifact under the plain build answers
+    `tensor descriptor does not match target contract: text/token_embedding` and dies at launch.
+    NINFER_BIN overrides; a variant with no engine of its own falls back to the plain one."""
+    if os.environ.get("NINFER_BIN"):
+        return Path(os.environ["NINFER_BIN"])
+    variant = _model_id().rsplit("_", 1)[-1]
+    sibling = NINFER_DEFAULT.parents[2].with_name(f"ninfer-{variant}") / "build/apps/ninfer-serve"
+    return sibling if sibling.exists() else NINFER_DEFAULT
 
 
 def _ninfer_artifact() -> Path:
@@ -104,7 +119,7 @@ def _leg(queue: str) -> dict:
         return {
             "port": 8090,
             "ready": "http://127.0.0.1:8090/v1/models",
-            "argv": [str(NINFER), str(_ninfer_artifact()), "--model-id", _model_id(),
+            "argv": [str(_ninfer_bin()), str(_ninfer_artifact()), "--model-id", _model_id(),
                      "--host", "127.0.0.1", "--port", "8090",
                      "--max-context", str((_settings().get("llm") or {}).get("n_ctx", 98304)),
                      "--spec", "mtp", "--draft-tokens", "3", "--lm-head-draft",
@@ -187,7 +202,7 @@ def _spawn(name: str, argv: list, cwd, env: dict) -> subprocess.Popen:
                             env={**os.environ, **env}, start_new_session=True)
 
 
-def _stop(name: str, process: subprocess.Popen) -> None:
+def _stop(name: str, process: subprocess.Popen, grace: float = 25) -> None:
     if process.poll() is not None:
         return
     print(f"[{name}] stopping", flush=True)
@@ -198,9 +213,21 @@ def _stop(name: str, process: subprocess.Popen) -> None:
     except ProcessLookupError:
         return
     try:
-        process.wait(timeout=25)
+        process.wait(timeout=grace)
     except subprocess.TimeoutExpired:
         os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+
+
+def hand_over(held: Optional[str], server, worker) -> None:
+    """Give the card up: the worker first, with time to finish the job it holds, then the server.
+    A worker signalled mid-job finishes that job and exits, so waiting for it keeps GPU seconds
+    that are already paid for; killing it throws the whole generation away and re-pays its prefill
+    when the job is re-driven (measured 2026-09-08: an llm turn cancelled at 27 s and 1,537 tokens
+    on a switch to the video queue). Nothing stops a server auto did not start."""
+    if worker is not None:
+        _stop(f"{held}-worker", worker, grace=HANDOFF_SECONDS)
+    if server is not None:
+        _stop(f"{held}-server", server)
 
 
 def _await_ready(name: str, queue: str, url: str, process: subprocess.Popen, timeout: float) -> None:
@@ -342,23 +369,22 @@ def auto(idle_exit: Optional[float], ready_timeout: float) -> None:
 
     def _stop_current():
         nonlocal server, worker, held
-        if worker is not None:
-            _stop(f"{held}-worker", worker)
-            worker = None
-        if server is not None:
-            _stop(f"{held}-server", server)
-            server = None
+        hand_over(held, server, worker)
+        worker = server = None
         held = None
 
     def _start(queue: str):
         nonlocal server, worker, held
         leg = _leg(queue)
         if _up(leg["ready"]):
-            raise SystemExit(
-                f"[{queue}] something is already serving port {leg['port']}. Stop it first."
-            )
-        server = _spawn(f"{queue}-server", leg["argv"], leg["cwd"], leg["env"])
-        _await_ready(f"{queue}-server", queue, leg["ready"], server, ready_timeout)
+            # Someone else's server on the port is the server to use, not a reason to stop: auto
+            # would otherwise abandon a queue it cannot start and exit, and the card it was holding
+            # goes with it. It stays THEIRS — nothing here stops what it did not start.
+            print(f"[{queue}] using the server already on port {leg['port']}", flush=True)
+            server = None
+        else:
+            server = _spawn(f"{queue}-server", leg["argv"], leg["cwd"], leg["env"])
+            _await_ready(f"{queue}-server", queue, leg["ready"], server, ready_timeout)
         token = (_settings().get("workqueue") or {}).get("token") or ""
         worker = _spawn(
             f"{queue}-worker",

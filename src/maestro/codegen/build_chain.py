@@ -298,7 +298,11 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
     """`ok` is whether the GAME is playable; `attempt` is how the build ended, and they differ for
     one stopped by hand over a game that already ran."""
     held = artifact_screen.screen_artifact(rs.run_dir) if ok else None
-    cursor.phase = "done"
+    # A gated build is not FINISHED yet, and saying it is shows a person a built game that cuts
+    # back to mending seconds later. It stages — the gate opens the staged game — but the status,
+    # the event and the phase wait for `_settle`.
+    gated = ok and held is None and attempt is None
+    cursor.phase = "checking" if gated else "done"
     cursor.ok = ok and held is None
     build_state.save(rs.run_dir, cursor)
     if held is not None:
@@ -316,22 +320,40 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
     if ok:
         stage_for_play(rs.run_dir, run_id)
         snapshots.take(rs.run_dir, "built")
-    db_store.set_status(run_id, "built" if ok else "failed")
     if cursor.build_id:
         db_store.build_finished(cursor.build_id, attempt or ("succeeded" if ok else "failed"),
                                 steps=cursor.step)
-    art = asset_use.audit(rs.run_dir)
-    if art["unreferenced"] or art["missing"]:
-        logger.warning("build %s art: %d asked for and never loaded, %d loaded and never asked for",
-                       run_id, len(art["unreferenced"]), len(art["missing"]))
     logger.info("build %s finalized: ok=%s steps=%d", run_id, ok, cursor.step)
-    _emit("build_done", run_id, build_id=cursor.build_id, ok=ok, steps=cursor.step,
-          art_unreferenced=art["unreferenced"], art_missing=art["missing"])
-    if ok and attempt is None:
+    if gated:
         # Post-finalize runs AFTER the lock this finalize holds is released — a kickoff blocks on
         # the same lock, so running it inline here would deadlock. A build stopped by hand gets
         # no gate: the human ended it, and an auto-build would restart what they stopped.
         threading.Thread(target=_post_finalize, args=(run_id, cursor.build_id), daemon=True).start()
+        return
+    _announce(run_id, rs, cursor, ok)
+
+
+def _announce(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool) -> None:
+    """The end of the whole chain, said once: the run's status, the art audit and `build_done`."""
+    db_store.set_status(run_id, "built" if ok else "failed")
+    art = asset_use.audit(rs.run_dir)
+    if art["unreferenced"] or art["missing"]:
+        logger.warning("build %s art: %d asked for and never loaded, %d loaded and never asked for",
+                       run_id, len(art["unreferenced"]), len(art["missing"]))
+    _emit("build_done", run_id, build_id=cursor.build_id, ok=ok, steps=cursor.step,
+          art_unreferenced=art["unreferenced"], art_missing=art["missing"])
+
+
+def _settle(run_id: str) -> None:
+    """No gate kicked a fix, so this build IS the end of the chain. A cursor no longer `checking`
+    belongs to a fix build that started in the meantime, and that build announces its own end."""
+    rs = RunState(run_id)
+    cursor = build_state.load(rs.run_dir)
+    if cursor is None or cursor.phase != "checking":
+        return
+    cursor.phase = "done"
+    build_state.save(rs.run_dir, cursor)
+    _announce(run_id, rs, cursor, bool(cursor.ok))
 
 
 def _post_finalize(run_id: str, build_id: str) -> None:
@@ -339,8 +361,19 @@ def _post_finalize(run_id: str, build_id: str) -> None:
     here, so only a SETTLED chain (no fix kicked by either gate) is archived — the bucket holds
     finished games rather than one snapshot per intermediate."""
     from maestro.codegen import archive
-    if not error_gate.after_build(run_id, build_id) and not play_gate.after_build(run_id, build_id):
-        archive.archive(run_id)
+    try:
+        kicked = (error_gate.after_build(run_id, build_id)
+                  or play_gate.after_build(run_id, build_id))
+    except Exception:
+        # A gate that raises must not leave the run `checking` forever — the page would show a
+        # build that never ends and the CLI would never return.
+        logger.exception("build %s: a gate raised; settling the run where it stands", run_id)
+        _settle(run_id)
+        raise
+    if kicked:
+        return          # the fix build announces the end of the chain when IT settles
+    _settle(run_id)
+    archive.archive(run_id)
 
 
 def _enqueue_turn(run_id: str, cursor: BuildCursor, inf: "build_steps.Infer") -> None:

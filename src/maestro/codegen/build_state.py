@@ -25,7 +25,7 @@ DEFAULT_MAX_STEPS = 200
 class BuildCursor:
     build_id: str
     kind: str = "build"                           # "build" | "fix" | "change"
-    phase: str = "build"                          # "build" | "done"
+    phase: str = "build"                          # "build" | "checking" (a gate is running) | "done"
     step: int = 0
     max_steps: int = DEFAULT_MAX_STEPS
     paused: bool = False

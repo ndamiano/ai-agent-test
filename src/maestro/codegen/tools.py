@@ -6,12 +6,17 @@ And every failure is REPORTED to the model rather than guessed at — see `_repo
 """
 
 import os
+import re
 from pathlib import Path
 
 from maestro.codegen.assets import DEFAULT_KIND, read_manifest, request_media
 from maestro.codegen.staging import RUNTIME_DIR, game_dir
 
 _VENDOR_FILES = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
+
+# Every local file one game file names: an import, a <script src>, a <link href>, an image path.
+_REF = re.compile(r"""(?:from|import)\s*\(?\s*['"]([^'"\s]+)['"]|(?:src|href)\s*=\s*["']([^"'\s]+)["']""")
+_REF_SKIP = ("http://", "https://", "data:", "blob:", "//", "#", "mailto:")
 
 # A read lands in a PROGRAM'S variable, not in the transcript — only what the program prints costs
 # the window — so there is no reason to cut one short. A ceiling here was a context guard, and
@@ -45,6 +50,23 @@ def _safe(root: Path, path: str) -> Path:
         raise ValueError(f"path escapes the project directory: {path!r}")
     return p
 
+
+
+def _dead_refs(path: Path, text: str, root: Path, pending) -> list:
+    """Local paths this file names that resolve to nothing. A dead `./lib/audio.js` written from a
+    subfolder is a module that never loads and a game that never starts, and neither parser sees
+    it: the file itself is valid JavaScript and a browser reports the 404 on the console rather
+    than as an uncaught exception. Art still queued for rendering is not missing."""
+    out = []
+    for a, b in _REF.findall(text):
+        ref = (a or b).split("?")[0].split("#")[0]
+        if not ref or ref.startswith(_REF_SKIP) or "${" in ref or "." not in Path(ref).name:
+            continue
+        target = (path.parent / ref).resolve()
+        rel = os.path.relpath(target, root.resolve())
+        if rel not in pending and not target.exists():
+            out.append(ref)
+    return out
 
 def build_tools(state, build_id: str) -> dict:
     root = game_dir(state.run_dir)
@@ -173,24 +195,34 @@ def build_tools(state, build_id: str) -> dict:
                        int(seed) if seed is not None else None)
 
     def check_syntax(paths=None, **_) -> dict:
-        """Does the game's JavaScript parse? The error gate's own parser, run HERE — the program
-        that asks is confined and cannot start anything itself.
+        """Does the game's JavaScript parse, and does every file it loads exist? The error gate's
+        own parser, run HERE — the program that asks is confined and cannot start anything itself.
 
-        It only ever answers BROKEN or not: a file parses or it does not, and a parse error can
-        only be satisfied by fixing the syntax. Nothing here judges what the code DOES."""
+        It only ever answers BROKEN or not: a file parses or it does not, a path resolves or it
+        does not, and either can only be satisfied by fixing it. Nothing here judges what the code
+        DOES."""
         from maestro.codegen.error_gate import _node_message
         if paths is None:
             paths = [str(p.relative_to(root)) for p in sorted(root.rglob("*.js"))
                      if p.name not in _VENDOR_FILES and p.parent != root / "lib"]
         elif isinstance(paths, str):
             paths = [paths]
+        entry = root / "index.html"
+        if entry.exists() and "index.html" not in paths:
+            paths = [*paths, "index.html"]
+        pending = {e["file"] for e in read_manifest(state.run_dir) if e.get("file")}
         out = {}
         for rel in paths:
             p = _safe(root, rel)
             if not p.exists():
                 out[rel] = f"no such file: {rel}"
                 continue
-            out[rel] = _node_message(p.read_text(encoding="utf-8", errors="replace")) or "OK"
+            text = p.read_text(encoding="utf-8", errors="replace")
+            msg = "" if p.suffix == ".html" else (_node_message(text) or "")
+            dead = _dead_refs(p, text, root, pending)
+            if dead:
+                msg = (msg + " " if msg else "") + "loads a file that is not there: " + ", ".join(dead)
+            out[rel] = msg or "OK"
         return {"ok": True, "checked": out}
 
     def done(summary=None, **_) -> dict:

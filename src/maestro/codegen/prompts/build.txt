@@ -8,7 +8,7 @@ You act by calling the `python` tool with ONE Python program per reply. Whatever
     edit_file(path, old_text, new_text)          old_text must appear exactly once
     generate_media(id, kind, subject, style, details=None) -> the path the art will appear at
     compose_world(description, seed=None) -> the world's size and regions
-    check_syntax(paths=None) -> {path: "OK" or the parse error}, every game file by default
+    check_syntax(paths=None) -> {path: "OK" or what is wrong}, every game file by default
     done(summary)
 
 Write whatever Python you need around them: loops, variables, helpers, print(). A call that fails RETURNS its error as a string starting "ERROR:" and the program keeps going, so look at what a call gave back when it matters. An uncaught exception ends the program there and you get the traceback; everything before it still happened.

@@ -308,6 +308,41 @@ def test_check_syntax_leaves_the_vendored_renderer_alone(tmp_path):
     assert set(checked) == {"mine.js"}
 
 
+def test_check_syntax_names_the_file_a_game_loads_but_does_not_have(tmp_path):
+    """A dead path is BROKEN the same way a parse error is: `./lib/audio.js` written from a
+    subfolder is a module that never loads, and neither node nor the error gate's chromium
+    reports it as an exception."""
+    _game(tmp_path, {"js/main.js": "import { sfx } from './lib/audio.js';\nsfx('hit');\n",
+                     "index.html": '<script type="module" src="js/main.js"></script>'})
+    (tmp_path / "game" / "lib").mkdir()
+    (tmp_path / "game" / "lib" / "audio.js").write_text("export const sfx = () => {};\n")
+    checked = build_tools(RunState(tmp_path), "b1")["check_syntax"]()["checked"]
+    assert "loads a file that is not there: ./lib/audio.js" in checked["js/main.js"]
+    assert checked["index.html"] == "OK"
+
+
+def test_check_syntax_leaves_a_reference_that_resolves_alone(tmp_path):
+    _game(tmp_path, {"js/main.js": "import { sfx } from '../lib/audio.js';\n",
+                     "index.html": '<script type="module" src="js/main.js"></script>'})
+    (tmp_path / "game" / "lib").mkdir()
+    (tmp_path / "game" / "lib" / "audio.js").write_text("export const sfx = () => {};\n")
+    checked = build_tools(RunState(tmp_path), "b1")["check_syntax"]()["checked"]
+    assert checked == {"js/main.js": "OK", "index.html": "OK"}
+
+
+def test_check_syntax_does_not_call_queued_art_missing(tmp_path):
+    """Art is enqueued and lands later; a path the build was GIVEN is not a broken reference."""
+    import json
+
+    from maestro.codegen.assets import manifest_path
+    _game(tmp_path, {"game.js": "const img = 'assets/hero.webp';\nnew Image().src = img;\n",
+                     "index.html": '<img src="assets/hero.webp"><img src="assets/gone.webp">'})
+    manifest_path(tmp_path).write_text(json.dumps(
+        {"images": [{"id": "hero", "prompt": "a hero", "file": "assets/hero.webp"}]}))
+    checked = build_tools(RunState(tmp_path), "b1")["check_syntax"]()["checked"]
+    assert checked["index.html"] == "loads a file that is not there: assets/gone.webp"
+
+
 def test_check_syntax_names_a_file_that_is_not_there(tmp_path):
     _game(tmp_path, {})
     checked = build_tools(RunState(tmp_path), "b1")["check_syntax"](paths=["gone.js"])["checked"]

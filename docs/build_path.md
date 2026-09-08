@@ -160,7 +160,12 @@ src/
                          the ceiling was a context guard, and a read lands in a variable, not the
                          window. `check_syntax` is the error gate's own module parser per file —
                          node reads `export` in a `.js` as a CommonJS failure and answers "retry as
-                         a module" with status 0, so a game checked as a script is always clean.
+                         a module" with status 0, so a game checked as a script is always clean —
+                         and it resolves every local path a file names, index.html included, so a
+                         `./lib/audio.js` written from a subfolder is reported rather than shipped:
+                         the file parses, and a browser reports the missing module on the console
+                         instead of as the uncaught exception the error gate watches for. Art still
+                         queued for rendering is not a missing file.
                          `done` does nothing but carry its summary: the driver reads it off the
                          ledger.
                          compose_world is worldgen's build face: one 3D world per game, refused

@@ -204,8 +204,8 @@ second card is rented.
 plus the rounds added since — leaves less than 16K tokens of it, `build_steps.compact`
 stubs every superseded file body and drops the rounds that only read, then stubs the bodies out
 of the oldest rounds until a third of the window holds the rest and, only if that is not enough,
-drops the oldest whole rounds; every compaction re-grounds the model on the code map
-(`CLAUDE.md`). Nothing else trims.
+drops the oldest whole rounds; every compaction re-grounds the model on the code map and on which
+files it has already read unchanged (`CLAUDE.md`). Nothing else trims.
 
 The two `_args` strings are appended to an engine's launch line, one per engine: `ninfer_args` by
 `scripts/local_gpu.py` for the 27B on the local 5090 (`--kv-dtype int8` is what lets 131072 fit

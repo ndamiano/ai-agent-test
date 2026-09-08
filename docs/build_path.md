@@ -110,6 +110,11 @@ src/
                          it ended with; the newest-copy-wins pass and the read-only-round drop are
                          functions of the transcript alone, so a replay shows what was really
                          sent. A FIX appends its own meta and never truncates.
+      file_state.py      what the build has READ and whether it still says the same thing: every
+                         read records the whole file's digest, and a compaction's note lists the
+                         files that are byte for byte what the model was shown. Rendered at the
+                         cut, never per turn — a per-turn block changes the prompt prefix and
+                         costs more in lost cache than the read it saves.
       code_map.py        the project as one message: every source file, what it imports, and each
                          declaration — exported or private, and the functions one level inside it
                          — with the line range it occupies. Regex over JavaScript, no parser;

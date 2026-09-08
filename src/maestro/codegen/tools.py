@@ -9,6 +9,7 @@ import os
 import re
 from pathlib import Path
 
+from maestro.codegen import file_state
 from maestro.codegen.assets import DEFAULT_KIND, read_manifest, request_media
 from maestro.codegen.staging import RUNTIME_DIR, game_dir
 
@@ -136,6 +137,9 @@ def build_tools(state, build_id: str) -> dict:
             content += (
                 f"\n\n[showed lines {start + 1}-{end} of {total}; read the rest with offset "
                 f"{end + 1}.]")
+        # Against the WHOLE file, not the window: what a later compaction needs to say is whether
+        # the file changed under the model, not how much of it it chose to look at.
+        file_state.record_read(state.run_dir, str(p.relative_to(root.resolve())), p.read_bytes())
         return {"ok": True, "path": path, "content": content, "lines": f"{start + 1}-{end}/{total}"}
 
     def write_file(path=None, content=None, **_) -> dict:

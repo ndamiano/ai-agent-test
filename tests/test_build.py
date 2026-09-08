@@ -952,3 +952,38 @@ def test_the_cap_stays_positive_when_the_window_is_full(tmp_path, tools, monkeyp
     cursor.prompt_tokens = 130_000
     build_steps._infer(tmp_path, cursor)
     assert cursor.out_cap > 0
+
+
+def test_the_compaction_note_says_what_is_already_read_and_unchanged(tmp_path, tools, monkeypatch):
+    """The whole point of the block: the model is cut back to a code map and then goes and reads
+    the same files again (measured 2026-09-08: 90 of 95 post-compaction reads)."""
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
+    (tmp_path / "game" / "main.js").write_text("const a = 1;\n", encoding="utf-8")
+    tools["read_file"](path="main.js")
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    cursor.history = _file_history()
+    build_steps.compact(tmp_path, cursor, keep_chars=1200)
+    note = cursor.history[1]["content"]
+    assert "already read these files and they have NOT changed" in note
+    assert "main.js" in note
+
+
+def test_dedup_alone_can_be_enough_and_the_older_bodies_stay(tmp_path, tools, monkeypatch):
+    """A superseded body costs the model nothing to lose — the newest copy is still there. A
+    trimmed round costs it the memory of its own work, so when dedup recovers a third of the
+    transcript the rounds keep their bodies."""
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
+    cursor = _cursor()
+    body = "z" * 9000
+    cursor.history = [{"role": "user", "content": "make a game"}]
+    for i in range(4):                       # the same file written four times over: three go
+        cursor.history.append({"role": "assistant", "content": f"step {i}",
+                               "tool_calls": [_program(
+                                   f'write_file(path="a.js", content={body!r})', i)]})
+        cursor.history.append({"role": "tool", "tool_call_id": f"c{i}", "content": "ok"})
+    keep = sum(len(json.dumps(m)) for m in cursor.history) // 2
+    assert build_steps.compact(tmp_path, cursor, keep_chars=keep) > 0
+    kept = json.dumps(cursor.history)
+    assert kept.count(body) == 1             # only the newest copy of the file survives
+    assert "step 0" in kept                  # ...and the round that wrote it is still readable

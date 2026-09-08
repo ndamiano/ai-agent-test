@@ -110,6 +110,21 @@ tells the model to read them again. The re-grounding matters more than the trim:
 rounds are where the model watched itself write the files, so without it the model edits code it
 no longer remembers.
 
+The map alone does not stop the re-reading. Measured 2026-09-08 on a build with ten compactions:
+90 of 95 post-compaction reads were of files ALREADY read, and a quarter of the reads were ranged.
+A map says what the project contains; it does not say that reading a file again returns what the
+model was already shown. The same failure is open against another harness of the same shape
+(openai/codex#16839: three files read 53, 24 and 17 times, ~90% of one session's reads), and no
+surveyed harness says the useful half — Cline tracks file state to say "these CHANGED, re-read
+them", and nobody says the inverse.
+
+So the note also carries the FILE STATE (`file_state.py`): every file the build has read, and
+whether it is byte for byte what was read. It costs ~66 tokens beside the map's ~2,000, and it is
+rendered at the CUT, never per turn — a block that changes every turn sits in the prompt prefix and
+invalidates the cache under it, which costs more than the read it saves. WHETHER IT WORKS IS NOT
+YET MEASURED: the arm is block on/off at 131K against the post-compaction re-read rate, and until
+that runs this paragraph describes an intent, not a law.
+
 ### A gate may only detect BROKEN, never "bad"
 
 A constraint the model builds to satisfy is only safe when satisfying it IS the goal. "Must not

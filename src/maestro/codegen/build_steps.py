@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 from llm_clients.message_builder import MessageBuilder
-from maestro.codegen import asset_use, code_map, turn_log
+from maestro.codegen import asset_use, code_map, file_state, turn_log
 from maestro.codegen.pyexec import runner
 from maestro.codegen.staging import game_dir
 from maestro.services import parse_args, parse_args_checked
@@ -40,6 +40,8 @@ _REDRIVE_GIVE_UP = 8
 # this fraction of the window afterwards.
 _COMPACT_ROOM = 16_000
 _COMPACT_KEEP = 0.33
+# Recovered by dedup alone, as a fraction of the transcript, that makes trimming unnecessary.
+_DEDUP_ENOUGH = 0.30
 # A server refusal of the PROMPT rather than the reply. Nothing the model wrote is at fault, so
 # the answer is to trim the transcript and send it again.
 _PROMPT_REFUSED = ("context_length_exceeded", "max_context", "max_tokens must be positive")
@@ -585,8 +587,16 @@ def compact(run_dir, cursor, keep_chars: int) -> int:
     bodies, because they are what the model is about to edit against. Returns the rounds trimmed
     or dropped, 1 when only superseded bodies or read-only rounds went, 0 when nothing changed."""
     size = lambda msgs: sum(len(json.dumps(m)) for m in msgs)
+    was = size(cursor.history)
     history = drop_read_only_rounds(dedupe_bodies(cursor.history))
     deduped = history != cursor.history
+    # Superseded bodies and read-only rounds cost the model NOTHING to lose — the newest copy of
+    # every file is still there and the rounds that went looked at files without changing any. When
+    # that alone recovers a third of the transcript, the older rounds keep their bodies: a round
+    # trimmed is a round the model can no longer read its own work out of. (Cline orders its
+    # per-file dedup ahead of truncation on the same rule, at 30%.)
+    if deduped and size(history) <= was * (1 - _DEDUP_ENOUGH):
+        keep_chars = max(keep_chars, size(history))
     groups = rounds(history)
     whole = [size(g) for g in groups]
     stubbed = [size(g) for g in rounds(trim_bodies(history, len(groups)))]
@@ -612,12 +622,14 @@ def compact(run_dir, cursor, keep_chars: int) -> int:
         f"{p.relative_to(root)} ({p.stat().st_size} bytes)"
         for p in sorted(root.rglob("*"))
         if p.is_file() and not p.name.startswith("_") and str(p.relative_to(root)).startswith("assets/"))
+    state = file_state.render(run_dir, root)
     note = {"role": "user", "content":
             "[Earlier steps were trimmed to save room. Every file is on disk exactly as you last "
             "wrote or read it. Below is the whole project: each file, what it imports, and every "
             "declaration with its line range. Read a file only to edit it, and read the lines "
             "you need with offset and lines rather than the whole file.]\n\n"
             + (code_map.render(root) or "(no source files yet)")
+            + (f"\n\n{state}" if state else "")
             + (f"\n\nArt on disk:\n{listing}" if listing else "")}
     cursor.history = history[:1] + [note] + kept
     # The changed messages are already in the turn log; the record replays the same trim and drop

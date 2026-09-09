@@ -76,12 +76,13 @@ src/
                          the transcript, compaction (`CLAUDE.md`; the note it ends with carries
                          `code_map`), the DONE-NUDGE (`cursor.done_nudged` — asked
                          once, then the next `done` is taken), and
-                         every way a reply TOO BIG TO LAND arrives — all three answered with the one
-                         remedy (write it in pieces), because they are one event: the reply cut off
-                         before any tool call, the call whose ARGUMENTS stop mid-write (unreadable,
-                         so nothing ran — reported as the truncation it is, never as the missing
-                         `path` it parses to), and the 500 the inference server's own tool-call
-                         parser returns for an oversized call. Measured 2026-08-01: one 64 KB
+                         every way a reply TOO BIG TO LAND arrives. A reply cut off before any tool
+                         call is DISCARDED and the turn re-sent, carrying nothing into the
+                         transcript; the other two are answered with the one remedy (write it in
+                         pieces) because the model can act on them: the call whose ARGUMENTS stop
+                         mid-write (unreadable, so nothing ran — reported as the truncation it is,
+                         never as the missing `path` it parses to), and the 500 the inference
+                         server's own tool-call parser returns for an oversized call. Measured 2026-08-01: one 64 KB
                          write_file reported as `KeyError: 'path'`, resent identically, four server
                          500s scored as silence, a dead build at step 28. A failing call resent with
                          identical arguments is COUNTED and the count told back; what to do instead

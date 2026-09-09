@@ -274,13 +274,30 @@ def test_a_long_done_summary_is_cut_on_a_word_boundary(tmp_path, tools):
     assert cursor.summary.rstrip("…").split()[-1] in ("built", "the", "thing")
 
 
-def test_truncated_reply_is_told_nothing_was_saved(tmp_path, tools):
+def test_a_truncated_reply_is_thrown_away_and_the_turn_sent_again(tmp_path, tools):
+    """A reply that ran out of room is an inference failure, not a transcript one: the same prompt
+    resampled produces a normal turn (measured 2 failures in 36 replays of six such positions), and
+    telling the model it was cut off makes the next turn 7x bigger. So nothing is kept from it."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
-    build_steps.step({}, tmp_path, tools, cursor,
-                     _reply(content="const x = ",
-                            usage={"completion_tokens": cursor.out_cap}))
-    assert "cut off" in cursor.history[-1]["content"]
+    before = [dict(m) for m in cursor.history]
+    outcome = build_steps.step({}, tmp_path, tools, cursor,
+                               _reply(content="const x = ",
+                                      usage={"completion_tokens": cursor.out_cap}))
+    assert isinstance(outcome, build_steps.Infer)
+    assert cursor.history == before, "the cut-off reply must leave no trace in the transcript"
+    assert not any("cut off" in str(m.get("content", "")) for m in cursor.history)
+
+
+def test_the_build_gives_up_after_repeated_cut_offs(tmp_path, tools):
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    for _ in range(build_steps._NO_CALL_GIVE_UP):
+        outcome = build_steps.step({}, tmp_path, tools, cursor,
+                                   _reply(content="const x = ",
+                                          usage={"completion_tokens": cursor.out_cap}))
+    assert isinstance(outcome, build_steps.Done)
+    assert "cut off" in outcome.report
 
 
 def _raw_reply(raw_args):
@@ -810,18 +827,45 @@ def test_a_misnamed_argument_is_named_back(tmp_path, tools):
     assert "needs the argument 'path'" in said and "file" in said
 
 
-def test_the_output_cap_is_whatever_the_window_has_left(tmp_path, tools, monkeypatch):
+def test_the_output_cap_is_the_ceiling_until_a_turn_overruns_it(tmp_path, tools, monkeypatch):
+    """p99 of turns that produced a tool call is 22,138 tokens, so the first attempt is capped there
+    rather than at the whole window — what a runaway costs is what the cap bounds. A turn that
+    genuinely needs more overruns, and the retry is given everything the window has left."""
     monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
-    first = cursor.out_cap
+    assert cursor.out_cap == build_steps._OUT_CAP
+
+    outcome = build_steps.step({}, tmp_path, tools, cursor,
+                               _reply(content="const x = ",
+                                      usage={"completion_tokens": cursor.out_cap}))
+    assert isinstance(outcome, build_steps.Infer)
+    assert cursor.out_cap > build_steps._OUT_CAP, "the retry gets the whole window"
+
+
+def test_a_turn_that_merely_called_no_tool_does_not_earn_the_whole_window(tmp_path, tools,
+                                                                          monkeypatch):
+    """Only an overrun asks for more room. The ordinary no-tool-call nudge shares the same streak
+    counter, and keying the ceiling off that would hand the whole window to turns that never
+    needed it."""
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _reply(content="thinking out loud, no call", usage={"completion_tokens": 40}))
+    assert cursor.out_cap == build_steps._OUT_CAP
+
+
+def test_the_cap_never_exceeds_what_the_window_has_left(tmp_path, tools, monkeypatch):
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
     cursor.logged = len(cursor.history)
     build_steps.step({}, tmp_path, tools, cursor,
                      _reply(code=f'write_file(path="a.js", content={"z" * 3000!r})',
                             usage={"prompt_tokens": 110_000}))
     # The last counted prompt plus this round (a 3K write and its result), never the whole
     # transcript re-estimated: a transcript of 110K tokens is well over 330K chars.
-    assert first > 100_000
     assert 131_072 - 110_000 - 1200 < cursor.out_cap < 131_072 - 110_000 - 1000
 
 

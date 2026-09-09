@@ -8,6 +8,12 @@ staged=$(git diff --cached --name-only --diff-filter=ACMR)
 # (maestro/codegen/snapshots.py) would commit into THIS index instead of theirs.
 for v in $(compgen -e GIT_); do unset "$v"; done
 
+# Comments first: it is the cheap check, and a 40 s suite before an answerable question is 40 s
+# spent either way.
+py_audit="$root/venv/bin/python"
+[ -x "$py_audit" ] || py_audit=python3
+"$py_audit" "$root/scripts/githooks/comment-audit.py"
+
 if grep -qE '^frontend/' <<<"$staged"; then
     echo "pre-commit: frontend eslint, typecheck, tests"
     (cd "$root/frontend" && npx eslint . && npx tsc -b --noEmit && npm test -- --run >/dev/null)

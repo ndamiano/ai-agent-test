@@ -55,10 +55,14 @@ writing code.
 **CI locally** — `scripts/ci.sh` runs every job in `.github/workflows/ci.yml` (pytest, ruff,
 eslint, tsc, vitest, vite build) and prints one verdict per step. Run it before a push.
 
-**Pre-commit** — `git config core.hooksPath scripts/githooks`, once per clone. The hook is
-`ci.sh` scoped to what a commit stages: eslint + typecheck + vitest for `frontend/`, ruff + the
-backend suite for Python. It deselects `-m browser` — the dozen tests that launch a real headless
-chromium — and CI runs those. `--no-verify` skips it.
+**Pre-commit** — `git config core.hooksPath scripts/githooks`, once per clone. Git honours ONE
+hook path, so everything a commit is checked against lives in that directory. It runs the comment
+audit (`comment-audit.py`: every comment line the commit adds, listed to answer for itself against
+the standard in `CLAUDE.md`; a terminal answers y/N, a non-interactive commit is blocked and
+re-run with `COMMENTS_REVIEWED=1`), then `ci.sh` scoped to what the commit stages: eslint +
+typecheck + vitest for `frontend/`, ruff + the backend suite for Python. It deselects `-m browser`
+— the dozen tests that launch a real headless chromium — and CI runs those. `--no-verify` skips
+the lot.
 
 **Tests** — `cd src && python -m pytest ../tests/ -q -n auto` (pytest-xdist; the suite is
 process-parallel, 36 s serial against 9 s here), frontend

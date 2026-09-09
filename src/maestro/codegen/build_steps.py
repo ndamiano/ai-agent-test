@@ -48,10 +48,8 @@ _PROMPT_REFUSED = ("context_length_exceeded", "max_context", "max_tokens must be
 # Consecutive turns with no tool call before the build gives up. Each nudge differs: repeating one
 # verbatim reproduces the reply that earned it.
 _NO_CALL_GIVE_UP = 4
-# The first attempt's output ceiling. p99 of turns that produced a tool call is 22,138 tokens and
-# p100 is 42,932, so this cuts off 4 turns in 945 — each of which retries with the whole window.
-# Flash-Next, which prod serves, asks for far less: p99 11,051 and a longest turn of 17,212, so
-# nothing it has ever written reaches this.
+# Above p99 of the turns that produced a tool call on either model (22,138 on the 27B, 11,051 on
+# Flash-Next), and far below what a runaway spends.
 _OUT_CAP = 30_000
 _NUDGES = [
     "Keep going. Call the python tool with a program, or call done() in one if the game is "
@@ -192,15 +190,9 @@ def step(spec, run_dir, tools, cursor, result, error: Optional[str] = None) -> O
         calls = parse_tool_calls(content, SCHEMAS)
     cursor.turn += 1
 
-    # A reply that ran out of output tokens saved NOTHING, and it is a failure of the INFERENCE, not
-    # of the transcript: the same prompt resampled produces a normal turn. Measured 2026-09-08 over
-    # the six positions where one build ran the window dry — replayed, they fail 2 times in 36, and
-    # the worst turn in the corpus (105,867 tokens, no call) resamples to a median of 1,838. Telling
-    # the model it was cut off makes the NEXT turn worse: with that exchange in context the same
-    # position generates 14,160 tokens against 1,934 without it.
-    #
-    # So the turn is thrown away whole — no reply, no note that it happened — and the same prompt is
-    # sent again. Nothing is salvaged from a reply that ran out of room.
+    # Resampling the same prompt produces a normal turn, and saying the reply was cut off is what
+    # carries the failure forward: that exchange in context costs 14,160 tokens against 1,934
+    # without it.
     if not calls and (usage.get("completion_tokens") or 0) >= cursor.out_cap - 32:
         cursor.no_call_streak += 1
         if cursor.no_call_streak >= _NO_CALL_GIVE_UP:
@@ -407,10 +399,8 @@ def _infer(run_dir, cursor, report: Optional[str] = None, *, full_window: bool =
     if cursor.compacted:
         report += f" (compacted {cursor.compacted}×)"
     cursor.actions = []
-    # The server admits a turn only if prompt + max_tokens fits the window, so the ceiling can never
-    # exceed what the window has left. A turn that needs more than _OUT_CAP says so by overrunning,
-    # and only an OVERRUN earns the whole window — a turn that merely called no tool did not ask for
-    # more room, and shares the streak counter with one that did.
+    # The server admits a turn only if prompt + max_tokens fits the window. Overrunning is how a
+    # turn asks for the rest of it — not the streak, which a turn that merely called no tool shares.
     room = ctx - _estimate(cursor)
     cursor.out_cap = room if full_window else min(_OUT_CAP, room)
     return Infer(msgs, SCHEMAS, cursor.out_cap, report=report)

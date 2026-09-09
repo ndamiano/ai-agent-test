@@ -361,16 +361,11 @@ What does help:
    on mechanical turns — and the model writes the whole game inside its think before the first
    tool call, so the cap must hold a whole think plus the answer: at 16K every opening turn ended
    at the cap with nothing; at 50K a turn that wanted 68K re-thought from zero on every retry, five
-   minutes each. So the cap is 30K on the FIRST attempt and `n_ctx − prompt` on the retry: p99 of
-   the 945 turns that produced a tool call is 22,138 tokens, so the ceiling cuts off 4 of them and
-   bounds what a runaway costs, and the turn that genuinely wants 47K says so by overrunning and
-   gets the whole window next. Flash-Next asks for far less than the 27B — p99 11,051, longest turn
-   17,212 — so the ceiling is one number for both. A REPLY THAT RAN OUT OF ROOM IS THROWN AWAY
-   WHOLE and the same prompt sent again — it is a failure of the inference, not of the transcript. Replayed from the
-   six positions where one build ran the window dry, the same prompts fail 2 times in 36, and the
-   worst turn in the corpus (105,867 tokens, no tool call) resamples to a median of 1,838 across
-   six tries. Telling the model it was cut off is what makes the next turn worse: with that
-   exchange in context the same position generates 14,160 tokens against 1,934 without it.
+   minutes each. So the cap is 30K on the first attempt and `n_ctx − prompt` on the retry — above
+   p99 of the turns that produce a tool call on either model, and a bound on what a runaway costs.
+   A REPLY THAT RAN OUT OF ROOM IS THROWN AWAY WHOLE and the same prompt sent again: it is a
+   failure of the inference, not of the transcript, and telling the model it was cut off is what
+   makes the next turn worse (`docs/experiments.md`).
    Effort is `llm.reasoning`, forwarded as `reasoning_effort`;
    `none` DISABLES thinking on ninfer, and ninfer has no thinking budget, so the cap is the only
    bound. The llama.cpp path keeps `enable_thinking=false` — it has no budget either and was never

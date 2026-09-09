@@ -48,8 +48,6 @@ _PROMPT_REFUSED = ("context_length_exceeded", "max_context", "max_tokens must be
 # Consecutive turns with no tool call before the build gives up. Each nudge differs: repeating one
 # verbatim reproduces the reply that earned it.
 _NO_CALL_GIVE_UP = 4
-# Above p99 of the turns that produced a tool call on either model (22,138 on the 27B, 11,051 on
-# Flash-Next), and far below what a runaway spends.
 _OUT_CAP = 30_000
 _NUDGES = [
     "Keep going. Call the python tool with a program, or call done() in one if the game is "
@@ -190,9 +188,6 @@ def step(spec, run_dir, tools, cursor, result, error: Optional[str] = None) -> O
         calls = parse_tool_calls(content, SCHEMAS)
     cursor.turn += 1
 
-    # Resampling the same prompt produces a normal turn, and saying the reply was cut off is what
-    # carries the failure forward: that exchange in context costs 14,160 tokens against 1,934
-    # without it.
     if not calls and (usage.get("completion_tokens") or 0) >= cursor.out_cap - 32:
         cursor.no_call_streak += 1
         if cursor.no_call_streak >= _NO_CALL_GIVE_UP:
@@ -399,8 +394,8 @@ def _infer(run_dir, cursor, report: Optional[str] = None, *, full_window: bool =
     if cursor.compacted:
         report += f" (compacted {cursor.compacted}×)"
     cursor.actions = []
-    # The server admits a turn only if prompt + max_tokens fits the window. Overrunning is how a
-    # turn asks for the rest of it — not the streak, which a turn that merely called no tool shares.
+    # Overrunning is how a turn asks for the rest of the window — not the streak, which a turn that
+    # merely called no tool shares.
     room = ctx - _estimate(cursor)
     cursor.out_cap = room if full_window else min(_OUT_CAP, room)
     return Infer(msgs, SCHEMAS, cursor.out_cap, report=report)

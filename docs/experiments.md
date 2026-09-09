@@ -2055,3 +2055,63 @@ Treatment built the same ask in 24m31s.
 NOT measured: whether the sound is any GOOD. Both halves of the metric are use, not quality — a
 game that hand-rolls beautiful audio scores zero here and a game that imports the lib to make noise
 scores well. That judgement is a person playing it.
+
+## 2026-09-08 — a turn that runs out of room (local 5090, qwen3.8_27b quasar via ninfer, 131K window)
+
+**Before.** A turn whose reply hit the output cap without emitting a tool call was told so — an
+empty assistant message and a user message saying nothing was saved, write the file in smaller
+pieces — and asked again with the whole window as its cap.
+
+**Why we ran it.** Cap-outs were visible in the logs, and an accounting of where a build's
+generated tokens go put them at 17.3% of the program era locally, from 38 turns. That number came
+out of chasing reads first: post-compaction re-reads are the bigger line, but five interventions
+against them moved nothing, so the next target was the turns that produce no tool call at all —
+zero-output waste, where the model spends minutes and the build gets nothing.
+
+**How.** The turn re-runner (`~/Documents/Labs/replay`) rebuilds the transcript a build really sent
+at a chosen turn and asks the model what it would do from there, k times. The six positions where
+one build (`8c824b3e2976`) ran the window dry were replayed 6 times each, and the worst turn in the
+corpus (`90a89ba593ee` turn 14, 105,867 tokens, no tool call) 6 times.
+
+**Result.** The failure does not live in the transcript. Those six positions fail 2 times in 36
+when replayed, and turn 14 resamples to a median of 1,838 generated tokens with a maximum of 4,343
+— a 57× outlier against its own prompt. The telling is what carries it: at one position, with the
+cut-off exchange in context the model generated 14,160 tokens against 1,934 with it stripped (n=4
+each), which is consistent with the recorded build failing five more times after its first nudge
+while clean replays of those same positions failed twice in 36. Capping alone is not the answer
+either — an 8K ceiling, below p90 of legitimate turns, truncated 5 of 8 samples into total failure.
+
+**What changed, and why.** The reply is discarded whole and the same prompt sent again: it is a
+failure of the inference, and nothing the model wrote is worth keeping or reporting. The first
+attempt is capped at 30K, the retry gets the window. 30K sits above p99 of the turns that produced
+a tool call on both models — 22,138 on the 27B, 11,051 on Flash-Next, whose longest turn ever
+recorded is 17,212 — so prod never reaches it, and locally it truncates 4 turns in 945, each of
+which retries with everything the window has left. What it buys is a bound: a runaway costs 30K
+instead of 105K, and a build cannot spend six turns being told it failed. It does NOT fix the
+reason a turn runs away, which remains unexplained — this is a bound on the damage, not a cure.
+
+## 2026-09-08 — the compaction note cannot stop a re-read (local 5090, qwen3.8_27b quasar via ninfer)
+
+**Before.** Compaction ends by re-grounding the model on the code map, and `file_state.py` adds a
+block naming every file the build has read and whether it is still byte for byte what was read.
+Whether that block worked had never been measured.
+
+**Why we ran it.** 90 of 95 post-compaction reads in a prod build were of files already read. The
+build arm staged for it (block on/off, two asks, four builds) was abandoned when its widest ask —
+a 3D open-world RPG, 62 steps, 82 minutes — finished with ZERO compactions at 131K, which would
+have made both arms byte-identical.
+
+**Result.** Replayed instead, over six real compaction points at 18 samples an arm: 8/18 turns
+re-read with the block, 9/17 without. Four other attacks on the same turn moved it no further — a
+rule ("must NOT be read again") instead of a fact, the code map deleted entirely, the map alone
+with all prose stripped, and the file bodies pasted into the note. Nor did delivering those same
+bodies as a completed `read_file` round, which produced the most reads of any arm (19 against a
+baseline 16). Handing the model the exact bytes does not stop it fetching them.
+
+**What changed.** Nothing yet. The block stays until it is deleted deliberately; what this rules
+out is fixing the re-read by writing something better in the note. The reads themselves are not
+cheap — 31% of generated tokens locally and 52% on prod, where 77% of reads are of files already
+read — and on prod they are concentrated in gate fixes and changes, which start from an empty
+transcript and must read the game back. That is a cold-start problem, not a compaction one, and
+none of these arms touched it. Every measurement here is on the 27B; prod's model reads more and
+repeats more, and has not been probed.

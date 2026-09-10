@@ -225,7 +225,7 @@ What the art volume holds (`scripts/provision_volume.sh` is the authority):
 |---|---|---|
 | image | `checkpoints/DreamShaperXL_Turbo_v2_1` (tiles, scene-chain terrain), `diffusion_models/qwen_image_2512_fp8_e4m3fn` (sprites, scenes, anim stills, mesh subjects), `diffusion_models/qwen_image_edit_2511_fp8mixed` (the scene embed) + the `text_encoders/qwen_2.5_vl_7b_fp8_scaled` and `vae/qwen_image_vae` both Qwen graphs share, `RMBG/BiRefNet` (the matte) | 58 |
 | video | `diffusion_models/minimax_h3_fl2va_pruned_int8_convrot` (image-to-video), `text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq`, `vae/minimax_h3_video_vae_fp16` — the anim sheets | 42 |
-| mesh | `trellis2-weights` + `encoders/` (dinov3 mirror, BiRefNet) + the `hf-cache` pre-seed | 21 |
+| mesh | `trellis2-weights` + `encoders/` (dinov3 mirror, BiRefNet) + the `hf-cache` pre-seed, and `kimodo/Kimodo-SOMA-RP-v1.1` (the motion model behind an anim's sheet — `CHECKPOINT_DIR` names this folder, so nothing resolves a hub name at run time) | 22 |
 | image (safety) | `comfy/models/safety/` — the NSFW classifier | 0.02 |
 
 An image checkpoint is named by a workflow in `src/config/workflows/`, so a weight that leaves

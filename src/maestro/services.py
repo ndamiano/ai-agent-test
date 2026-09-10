@@ -39,6 +39,12 @@ def parse_args_checked(raw) -> Tuple[Dict, bool]:
     try:
         parsed = json.loads(raw or "{}")
     except json.JSONDecodeError:
-        logger.warning("unparseable tool args: %r", raw)
-        return {}, False
+        # A complete object with something after it is a whole call the model MEANT — observed
+        # 2026-09-10 on DeepSeek Flash, which appended text past the closing brace. Take the
+        # object; only a leading fragment that never closes is unreadable.
+        try:
+            parsed, _ = json.JSONDecoder().raw_decode(raw)
+        except json.JSONDecodeError:
+            logger.warning("unparseable tool args: %r", raw)
+            return {}, False
     return (parsed, True) if isinstance(parsed, dict) else ({}, False)

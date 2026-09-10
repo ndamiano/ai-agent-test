@@ -87,6 +87,8 @@ class Response:
 
 
 def _to_response(result: dict) -> Response:
+    from maestro.services import parse_args_checked
+
     if "error" in result and "choices" not in result:
         raise RuntimeError(f"llm queue call failed: {result['error']}")
     message = result["choices"][0]["message"]
@@ -94,7 +96,10 @@ def _to_response(result: dict) -> Response:
         ToolCall(
             id=tc["id"],
             name=tc["function"]["name"],
-            arguments=json.loads(tc["function"]["arguments"] or "{}"),
+            # Arguments the harness cannot read reach the tool as {}, which fails its binding and
+            # answers the model with the error — the loop's own way back. A raise here would take
+            # the whole world stage down with one malformed call.
+            arguments=parse_args_checked(tc["function"]["arguments"])[0],
         )
         for tc in message.get("tool_calls") or []
     ]

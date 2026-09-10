@@ -45,3 +45,15 @@ def test_no_arguments_and_unreadable_arguments_are_told_apart():
     assert parse_args_checked('```json\n{"a": 1}\n```') == ({"a": 1}, True)
     assert parse_args_checked('{"path":"story.js","content":"const S = {\\n  ') == ({}, False)
     assert parse_args_checked("[1, 2, 3]") == ({}, False)
+
+
+def test_a_complete_object_with_trailing_text_is_the_call_the_model_meant():
+    """DeepSeek Flash, 2026-09-10: arguments came back as a valid object followed by prose, and
+    `json.loads` refusing the whole thing took a world build down with it."""
+    args, ok = parse_args_checked('{"path": "a.js"} and then some words')
+    assert ok and args == {"path": "a.js"}
+
+
+def test_a_fragment_that_never_closes_is_still_unreadable():
+    args, ok = parse_args_checked('{"path": "a.js"')
+    assert not ok and args == {}

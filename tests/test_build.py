@@ -1031,3 +1031,26 @@ def test_dedup_alone_can_be_enough_and_the_older_bodies_stay(tmp_path, tools, mo
     kept = json.dumps(cursor.history)
     assert kept.count(body) == 1             # only the newest copy of the file survives
     assert "step 0" in kept                  # ...and the round that wrote it is still readable
+
+
+def test_a_transcript_over_the_window_never_asks_for_a_negative_reply(tmp_path, tools, monkeypatch):
+    """Measured 2026-09-10 against DeepSeek Flash: a prompt the trim could not get under the window
+    sent `max_tokens: -408`, which the server rejects as a malformed BODY — and a malformed body
+    reads as "your reply was unparseable", which is false and makes the next prompt bigger."""
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
+    monkeypatch.setattr(build_steps, "compact", lambda *a, **k: False)   # nothing left to trim
+    cursor = _cursor()
+    cursor.prompt_tokens = 200_000                                       # the window, overrun
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    assert cursor.out_cap >= build_steps._MIN_OUT
+
+
+def test_a_full_window_retry_is_positive_too(tmp_path, tools, monkeypatch):
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
+    monkeypatch.setattr(build_steps, "compact", lambda *a, **k: False)
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    cursor.prompt_tokens = 200_000
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _reply(content="const x = ", usage={"completion_tokens": cursor.out_cap}))
+    assert cursor.out_cap >= build_steps._MIN_OUT

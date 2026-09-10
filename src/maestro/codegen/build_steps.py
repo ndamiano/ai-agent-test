@@ -49,6 +49,11 @@ _PROMPT_REFUSED = ("context_length_exceeded", "max_context", "max_tokens must be
 # verbatim reproduces the reply that earned it.
 _NO_CALL_GIVE_UP = 4
 _OUT_CAP = 30_000
+# A reply needs room to exist. When the estimate says the transcript has eaten the window, the
+# answer is to trim again, never to ask for a non-positive number of tokens: engines report that
+# as a malformed BODY, which reads as "your reply was unparseable" and makes the next prompt
+# bigger (2026-09-10, DeepSeek Flash: `max_tokens: invalid value: integer -408`).
+_MIN_OUT = 2_000
 _NUDGES = [
     "Keep going. Call the python tool with a program, or call done() in one if the game is "
     "finished.",
@@ -380,12 +385,21 @@ def _estimate(cursor) -> int:
     return (len(cursor.system) + chars(cursor.history)) // 3
 
 
+def _compact(run_dir, cursor, ctx: int) -> None:
+    if compact(run_dir, cursor, int(ctx * _COMPACT_KEEP) * 4):
+        cursor.compacted += 1
+        cursor.prompt_tokens = 0   # unknown until the server reports the trimmed prompt back
+
+
 def _infer(run_dir, cursor, report: Optional[str] = None, *, full_window: bool = False) -> Infer:
     ctx = _n_ctx()
     if _estimate(cursor) > ctx - _COMPACT_ROOM:
-        if compact(run_dir, cursor, int(ctx * _COMPACT_KEEP) * 4):
-            cursor.compacted += 1
-            cursor.prompt_tokens = 0   # unknown until the server reports the trimmed prompt back
+        _compact(run_dir, cursor, ctx)
+    if ctx - _estimate(cursor) < _MIN_OUT:
+        # The trim above ran on an estimate and did not get under the window — the same miss the
+        # server's own refusal forces a second pass for.
+        cursor.prompt_tokens = ctx
+        _compact(run_dir, cursor, ctx)
     msgs = MessageBuilder(cursor.system).extend(cursor.history).build()
     # No actions means the turn called no tool: either the opening turn (the prompt has just been
     # sent and nothing has happened yet) or one the nudge is answering.
@@ -396,7 +410,7 @@ def _infer(run_dir, cursor, report: Optional[str] = None, *, full_window: bool =
     cursor.actions = []
     # Overrunning is how a turn asks for the rest of the window — not the streak, which a turn that
     # merely called no tool shares.
-    room = ctx - _estimate(cursor)
+    room = max(_MIN_OUT, ctx - _estimate(cursor))
     cursor.out_cap = room if full_window else min(_OUT_CAP, room)
     return Infer(msgs, SCHEMAS, cursor.out_cap, report=report)
 

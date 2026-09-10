@@ -233,11 +233,12 @@ def build_tools(state, build_id: str) -> dict:
     def compose_world(description: Description, seed: Optional[int] = None, **_) -> dict:
         # One world per game: a second one would replace the ground under a game already
         # written against the first one's metres and regions.
-        from maestro.worldgen.compose import compose, world_dir
-        if (world_dir(root) / "world.json").exists():
+        from maestro.worldgen.compose import coming, compose
+        if coming(state.run_dir):
             return {"ok": False,
-                    "error": "this game already has its world — read world/world.json for its "
-                             "size and regions instead of building another."}
+                    "error": "this game's world is already on its way to world/world.json — "
+                             "load it from there. Its size and regions are on the world the "
+                             "loader hands back, read in the game at runtime."}
         return compose(root, state.run_dir, state.run_id, build_id, description,
                        int(seed) if seed is not None else None)
 

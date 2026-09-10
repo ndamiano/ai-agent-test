@@ -2,9 +2,16 @@
 
 The pipeline itself is stubbed — a world costs an hour of GPU — but everything downstream of it
 is real: the same `write_job` a build would call, the real publish, the real thread.
+
+The tool answers AT ONCE. It used to block through `construct`, about fifteen minutes, inside a
+program whose whole wall-clock budget is 120 seconds — so the call could only ever be killed:
+the world landed, the program that asked for it died, and nothing was written to load it
+(2026-09-10, run 8988a28a746e — 34 MB of world staged into a game that referenced it nowhere).
 """
 import json
+import re
 import threading
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -90,45 +97,64 @@ def _compose(run, pipeline, **kw):
     return tools["compose_world"](description="a meadow by the sea", **kw)
 
 
-def test_the_tool_answers_with_the_size_and_the_regions(run, pipeline):
-    """The model places gameplay by region the turn it hears back, so the answer has to carry the
-    metres it places from."""
+def test_the_tool_answers_with_the_path_and_nothing_it_cannot_know(run, pipeline):
+    """The size and the regions are chosen by a plan that has not run yet, and the game reads
+    them off the loaded world at runtime anyway. All the tool can promise is where to load."""
     res = _compose(run, pipeline)
     assert res["ok"] and res["world"] == "world/world.json"
-    assert res["size_m"] == 40.0
-    assert res["regions"] == [{"id": "meadow", "category": "grassland",
-                               "centre_m": [20.0, 20.0], "radius_m": 20.0}]
+    assert "size_m" not in res and "regions" not in res
 
 
-def test_the_ground_is_loadable_when_the_tool_returns(run, pipeline):
+def test_something_loadable_is_there_the_moment_the_tool_answers(run, pipeline):
     """Everything world.json names is beside it, by a path relative to it — the game fetches
-    nothing outside its own folder."""
+    nothing outside its own folder, and never a file that has not landed."""
     _compose(run, pipeline)
     world = run.run_dir / "game" / "world"
-    job = json.loads((world / "world.json").read_text())
-    paths = [job["heightmap"], *job["weight_textures"],
-             *(p for r in job["regions"] for p in (r["albedo"], r["normal"]))]
-    for relative in paths:
-        assert not relative.startswith((".", "/"))
-        assert (world / relative).is_file()
+    for _ in range(2):                     # the placeholder first, the built ground after
+        job = json.loads((world / "world.json").read_text())
+        paths = [job["heightmap"], *job["weight_textures"],
+                 *(p for r in job["regions"] for p in (r["albedo"], r["normal"]))]
+        assert job["regions"], "the terrain shader sizes its arrays by the region count"
+        for relative in paths:
+            assert not relative.startswith((".", "/"))
+            assert (world / relative).is_file()
+        assert pipeline.done.wait(10)
+
+
+def test_the_placeholder_carries_every_field_the_loader_reads(run, pipeline):
+    """`runtime/vendor/world.js` is the contract. A field it indexes and the placeholder omits is
+    a game that throws on load — which is the whole reason the placeholder exists."""
+    loader = (Path(__file__).resolve().parents[1] / "runtime" / "vendor" / "world.js").read_text()
+    world_compose._placeholder(run.run_dir / "game")
+    job = json.loads((run.run_dir / "game" / "world" / "world.json").read_text())
+
+    for key in sorted(set(re.findall(r"job\.([a-z_]+)", loader))):
+        assert key in job, f"the loader reads job.{key}; the placeholder has no such field"
+    region = job["regions"][0]
+    for key in sorted(set(re.findall(r"\br\.([a-z_]+)", loader))):
+        if key in ("x", "z", "radius") or key.startswith("variant_"):
+            continue          # World() derives the first three; the variants are optional
+        assert key in region, f"the loader reads r.{key}; the placeholder region has not got it"
+    heights = (run.run_dir / "game" / "world" / job["heightmap"]).read_bytes()
+    assert len(heights) == job["resolution"] ** 2 * 4 and set(heights) == {0}, "flat ground"
 
 
 def test_the_intermediates_stay_out_of_the_game(run, pipeline):
     _compose(run, pipeline)
+    assert pipeline.done.wait(10)
     assert (run.run_dir / "world_build" / "heightmap.npy").is_file()
     game = run.run_dir / "game"
     assert not (game / "world" / "heightmap.npy").exists()
     assert not (game / "world_build").exists()
 
 
-def test_the_first_leg_is_synchronous_and_the_rest_are_not(run, pipeline):
-    """The tool waits for the ground and nothing more: the build writes the game while the
-    scenery renders."""
+def test_no_leg_is_synchronous_and_the_ground_is_the_first(run, pipeline):
+    """The build writes the game while the whole world renders — the ground included, since a
+    program cannot outlive the fifteen minutes that one takes."""
     _compose(run, pipeline)
-    assert pipeline.calls[0]["stop_after"] == "construct"
     assert pipeline.done.wait(10)
-    assert [(c["start_at"], c["stop_after"]) for c in pipeline.calls[1:]] == list(
-        world_compose.LEGS)
+    assert [(c["start_at"], c["stop_after"]) for c in pipeline.calls] == list(world_compose.LEGS)
+    assert pipeline.calls[0]["stop_after"] == "construct", "the ground lands first, and publishes"
 
 
 def test_the_run_scope_reaches_the_thread(run, pipeline):
@@ -170,7 +196,12 @@ def test_a_failed_leg_leaves_the_published_world_standing(run, pipeline, monkeyp
     monkeypatch.setattr("maestro.worldgen.build.build_world", explode)
     res = _compose(run, pipeline)
     assert res["ok"]
-    assert (run.run_dir / "game" / "world" / "world.json").is_file()
+    for _ in range(100):
+        job = json.loads((run.run_dir / "game" / "world" / "world.json").read_text())
+        if job["size_m"] == PLAN["world"]["size_m"]:
+            break                              # the built ground replaced the placeholder
+        threading.Event().wait(0.05)
+    assert job["size_m"] == PLAN["world"]["size_m"], "the leg that succeeded still stands"
 
 
 def test_world_json_is_replaced_by_rename(run, pipeline, monkeypatch):
@@ -181,8 +212,9 @@ def test_world_json_is_replaced_by_rename(run, pipeline, monkeypatch):
     monkeypatch.setattr(world_compose.os, "replace",
                         lambda src, dst: (renamed.append(str(dst)), real_replace(src, dst))[1])
     _compose(run, pipeline)
+    assert pipeline.done.wait(10)
     world = run.run_dir / "game" / "world"
-    assert renamed[-1] == str(world / "world.json")
+    assert renamed[-1] == str(world / "world.json"), "world.json is renamed last, after its files"
     assert not list(world.rglob("*.tmp"))
 
 
@@ -190,6 +222,7 @@ def test_a_second_world_is_refused(run, pipeline):
     _compose(run, pipeline)
     again = _compose(run, pipeline)
     assert again["ok"] is False and "world/world.json" in again["error"]
+    assert len(pipeline.calls) <= len(world_compose.LEGS), "no second pipeline was started"
 
 
 def test_a_description_is_required(run, pipeline):

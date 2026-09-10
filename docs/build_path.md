@@ -178,7 +178,14 @@ src/
                          ledger.
                          compose_world is worldgen's build face: one 3D world per game, refused
                          a second time because the game is already written against the first
-                         one's metres and regions. A path is resolved and must land inside the
+                         one's metres and regions. It ANSWERS AT ONCE with the path the world
+                         will appear at and builds behind the call, the way generate_media does,
+                         because a program's wall-clock budget is 120 s and a world's ground
+                         alone takes about fifteen minutes — a tool that waited could only be
+                         killed mid-call, and the code to load the world never written (measured
+                         2026-09-10). A placeholder flat world is written before the answer, so
+                         `loadWorld` works the moment the model writes it; each of the four legs
+                         publishes over it by rename. A path is resolved and must land inside the
                          game folder. Every failure is REPORTED to the model as text (a missing
                          argument names itself, and says what the call DID send) and never guessed
                          at: substituting a default for a missing `path` sent every write in a run

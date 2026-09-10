@@ -2115,3 +2115,31 @@ read — and on prod they are concentrated in gate fixes and changes, which star
 transcript and must read the game back. That is a cold-start problem, not a compaction one, and
 none of these arms touched it. Every measurement here is on the 27B; prod's model reads more and
 repeats more, and has not been probed.
+
+## 2026-09-10 — compose_world could never have worked from inside a program
+
+**What broke.** A build asked for a 3D world unprompted for the first time (DeepSeek Flash, local
+box). The world was built in full — 900 m of terrain, six regions, ten instance kinds, meshes — and
+staged into the game at 34 MB. The game referenced it NOWHERE. The race rendered a bare ground plane
+and a skybox.
+
+**Why.** `pyexec.runner.TIMEOUT_SECONDS` is 120 s and the deadline covers time spent inside tools.
+`compose_world` blocked through the `construct` stage — about fifteen minutes — to return the world's
+size and regions. So the program that called it was killed every time, by construction: the world
+landed, the program died, and the turn that would have written the loader went with it. The model
+read `world/world.json` two turns later, then 27 compactions buried it and the rewrite pass at steps
+73–100 re-authored every file without it.
+
+Billing was correct throughout, which is what makes it a real loss: all 334 jobs carried the game's
+`game_id`, so the run paid for 1,246 s of image and 159 s of mesh work — about 23 minutes of GPU —
+for a world it was structurally prevented from using.
+
+**What changed.** The tool now answers immediately with the path, like `generate_media`, and every
+stage runs behind it in four publishing legs. Nothing was lost by answering early: `world.sizeM` and
+`world.regions` are read off the loaded world in the browser, which is where a game was always going
+to get them. A placeholder flat world — one region, zero heights, valid in every field
+`runtime/vendor/world.js` indexes — is written before the answer, so `loadWorld` succeeds the moment
+the model writes it and the built ground replaces it by rename.
+
+**Not measured.** Whether a build now wires the world. That is the next arm, and it is the whole
+question: this run is the only evidence either way, and in it the model never got the chance.

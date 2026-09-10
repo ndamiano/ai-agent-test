@@ -65,6 +65,16 @@ _NEGATIVE_MESH = ("blurry, low detail, cropped, cut off, partial object, multipl
 # keep the full opaque frame the sampler drew.
 MATTED_KINDS = ("sprite", "mesh", "anim")
 
+# An ANIM's still is not a sprite: it is meshed, and the mesh is rigged. Voxelisation welds
+# whatever touches, so the pose has to hold the limbs clear of the body — measured, the plain
+# sprite prompt came back cropped at the waist 8 times in 10, and a standing pose's arms fused to
+# the coat at every height. A T-pose costs nothing and separates them.
+ANIM_STILL_FRAMING = (
+    " Standing in a T-pose with both arms stretched straight out horizontally to the sides at "
+    "shoulder height, palms down, legs straight and shoulder-width apart. Full body from head to "
+    "feet, both feet visible and planted on the ground, and space around the figure on every "
+    "side. Plain flat white background, flat even lighting, no cast shadow.")
+
 # MiniMax-H3 image-to-video. A clip's length snaps to 17k+5 frames at 24 fps; a pinned clip
 # (first frame = last frame) closes on itself, and 22 frames is one stride, one swing or one
 # full turn in place — the sheet keeps 8 of them at 12 fps. Measured 2026-09-04 on a 5090: ~8 s

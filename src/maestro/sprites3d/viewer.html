@@ -1,0 +1,43 @@
+<!doctype html><meta charset="utf-8"><title>sprite render</title>
+<style>html,body{margin:0;background:transparent}canvas{display:block}</style>
+<script type="importmap">{"imports":{"three":"./three.module.js"}}</script>
+<script type="module">
+// The renderer the sheet is cut from: orthographic so a sprite has no perspective, transparent so
+// the matte is the alpha the game composites, and lit from the camera so no facing is ever black.
+import * as THREE from 'three';
+import { GLTFLoader } from './GLTFLoader.js';
+const S = 256;
+const scene = new THREE.Scene();
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true, preserveDrawingBuffer:true});
+renderer.setSize(S,S); renderer.setClearColor(0x000000,0);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff,0x8899aa,2.0));
+const key=new THREE.DirectionalLight(0xffffff,2.2); key.position.set(2,4,3); scene.add(key);
+const rim=new THREE.DirectionalLight(0xffffff,0.8); rim.position.set(-2,1,-3); scene.add(rim);
+let camera, mixer, centre=new THREE.Vector3(), size=1;
+const glb = new URLSearchParams(location.search).get('glb') || 'anim.glb';
+new GLTFLoader().load(glb, g => {
+  scene.add(g.scene);
+  let skin=null; g.scene.traverse(o=>{ if(o.isSkinnedMesh) skin=o; });
+  // Box3.setFromObject on a SkinnedMesh returns the wrong bounds; the bind-pose geometry is right
+  skin.geometry.computeBoundingBox();
+  const box = skin.geometry.boundingBox.clone().applyMatrix4(skin.matrixWorld);
+  box.getCenter(centre); size = Math.max(...box.getSize(new THREE.Vector3()).toArray());
+  const h = size*0.60;
+  camera = new THREE.OrthographicCamera(-h,h,h,-h,0.01,100);
+  if (g.animations.length){
+    mixer = new THREE.AnimationMixer(g.scene);
+    mixer.clipAction(g.animations[0]).play();
+    window.__duration = g.animations[0].duration;
+  }
+  window.__ready = true;
+});
+window.__at = t => { if (mixer) mixer.setTime(t); };
+window.__view = az => {
+  const d = size*2;
+  camera.position.set(centre.x+Math.sin(az)*d, centre.y+size*0.04, centre.z+Math.cos(az)*d);
+  camera.lookAt(centre); camera.updateProjectionMatrix();
+  renderer.render(scene,camera);
+};
+</script>

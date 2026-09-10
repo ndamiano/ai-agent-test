@@ -26,6 +26,16 @@ if [ -n "$probe" ]; then
     dd if="$probe" of=/dev/null bs=64M count=16 2>&1 | tail -1 | sed 's/^/[probe] volume seq read: /'
 fi
 
+# The sheet server shares this pod: a sheet is always rendered from a mesh made here, so the glb
+# stays on the box. Both bind loopback — a reachable inference server is an unauthenticated GPU.
+if [ -n "${SPRITE_PYTHON:-}" ]; then
+    "$SPRITE_PYTHON" /opt/maestro/src/tools/sprite_server.py \
+        --host 127.0.0.1 --port "${SPRITE_PORT:-8190}" \
+        ${KIMODO_TPOSE_BVH:+--ref-bvh "$KIMODO_TPOSE_BVH"} &
+    sprite_pid=$!
+    trap 'kill -TERM "$sprite_pid" 2>/dev/null || true' EXIT
+fi
+
 python /opt/maestro/src/tools/trellis_server.py \
     --repo "$TRELLIS_REPO" --weights "$TRELLIS_WEIGHTS" \
     --host 127.0.0.1 --port "$TRELLIS_PORT" &

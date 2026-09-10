@@ -282,12 +282,23 @@ KNIGHT_ANIMS = [{"name": "walk", "action": "walks in place, legs alternating"},
                 {"name": "attack", "action": "swings the sword once"}]
 
 
-def test_an_anim_answers_with_a_png_path_and_chains_the_video_worker(run_dir):
+def test_an_anim_answers_with_a_png_path_and_chains_a_mesh(run_dir):
+    """The sheet is rendered from a mesh of the thing, so the still's job is to be meshed."""
     out = request_media(RUN, run_dir, "b1", "knight", "a knight", STYLE, kind="actor", details={"anims": KNIGHT_ANIMS, "facings": 4})
     assert out["path"] == "assets/knight.png"
     md = _image_jobs()[0]["metadata"]
     assert md["kind"] == "anim"
-    assert md["then"] == {"enqueue": "anim_from_image", "finalize": "assets"}
+    assert md["then"] == {"enqueue": "mesh_for_sheet", "finalize": "assets"}
+
+
+def test_an_anims_still_is_a_t_pose(run_dir):
+    """A standing pose's arms fuse to the body when the mesh is voxelised, and the sprite's own
+    view is irrelevant because the sheet shoots every facing from a camera."""
+    request_media(RUN, run_dir, "b1", "knight", "a knight", STYLE, kind="actor",
+                  details={"anims": KNIGHT_ANIMS, "facings": 4, "view": "side"})
+    prompt = read_manifest(run_dir)[0]["prompt"]
+    assert "T-pose" in prompt
+    assert "side view" not in prompt
 
 
 def test_an_anim_placeholder_writes_both_the_png_and_the_manifest(run_dir):

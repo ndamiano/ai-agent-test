@@ -86,7 +86,52 @@ def _anim_from_image(md: Dict, result: Dict) -> Optional[Dict]:
                                         "finalize": md["then"]["finalize"]}}}
 
 
-CONTINUATIONS = {"mesh_from_image": _mesh_from_image, "anim_from_image": _anim_from_image}
+def _mesh_for_sheet(md: Dict, result: Dict) -> Optional[Dict]:
+    """An anim's T-posed still, on its way to becoming a mesh the sheet is RENDERED from."""
+    job = _mesh_from_image(md, result)
+    if job is None:
+        return None
+    job["metadata"]["then"] = {"enqueue": "sheet_from_mesh",
+                               "finalize": md["then"]["finalize"]}
+    return job
+
+
+def _sheet_from_mesh(md: Dict, result: Dict) -> Optional[Dict]:
+    """The mesh a sheet is rendered from: rigged, animated by the verbs the build named, and shot
+    from four camera angles. A silhouette that is not a humanoid never gets here — the worker says
+    so and the still goes back to the drawn path instead."""
+    glb = (result or {}).get("glb_file")
+    if not glb:
+        return None
+    return {"queue": "mesh",
+            "payload": {"kind": "sprite_sheet",
+                        "glb_b64": base64.b64encode(Path(glb).read_bytes()).decode("ascii"),
+                        "anims": md["anims"], "facings": md["facings"]},
+            "metadata": {**md, "then": {"operations": ["save_anim"],
+                                        "enqueue": "anim_from_still",
+                                        "finalize": md["then"]["finalize"]}}}
+
+
+def _anim_from_still(md: Dict, result: Dict) -> Optional[Dict]:
+    """The drawn path, for a thing no humanoid skeleton fits. The still is already on disk from
+    the mesh leg, so nothing is re-rendered."""
+    if not (result or {}).get("fallback"):
+        return None
+    src = asset_path(md["run_id"], md["asset_id"], "src.png")
+    if not src.exists():
+        return None
+    logger.info("assets %s: %s is not a humanoid — drawing the sheet instead",
+                md["run_id"], md["asset_id"])
+    return {"queue": "video",
+            "payload": build_anim_payload(base64.b64encode(src.read_bytes()).decode("ascii"),
+                                          md["anims"], md["facings"]),
+            "metadata": {**md, "then": {"operations": ["save_anim"],
+                                        "finalize": md["then"]["finalize"]}}}
+
+
+CONTINUATIONS = {"mesh_from_image": _mesh_from_image, "anim_from_image": _anim_from_image,
+                 "mesh_for_sheet": _mesh_for_sheet, "sheet_from_mesh": _sheet_from_mesh,
+                 "anim_from_still": _anim_from_still}
 
 
 def _record_defect(md: Dict, dst: Path) -> None:

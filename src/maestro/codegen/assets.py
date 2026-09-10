@@ -37,7 +37,8 @@ from PIL import Image
 from db import store as db_store
 from maestro.codegen.staging import game_dir
 from maestro.state import RunState
-from tools.comfyui_tools import build_anim_payload, MATTED_KINDS, build_image_payload
+from tools.comfyui_tools import (ANIM_STILL_FRAMING, build_anim_payload, MATTED_KINDS,
+                                 build_image_payload)
 from tools.execution_context import run_scope
 
 logger = logging.getLogger(__name__)
@@ -60,8 +61,14 @@ def render_kind(kind: str, details: Optional[Dict]) -> str:
 
 def compose_prompt(subject: str, style: str, details: Optional[Dict]) -> str:
     """The prose the samplers see: style, then subject, then the view when one is given. One
-    place, so where the style sits and how the view is phrased are ours to measure."""
+    place, so where the style sits and how the view is phrased are ours to measure.
+
+    An ANIM's still is the mesh's input rather than the sprite itself, so it takes the T-pose
+    framing instead of the game's view: `view` says how the game DRAWS the thing, and the sheet
+    supplies every facing from camera angles anyway."""
     parts = [style.strip().rstrip("."), subject.strip().rstrip(".")]
+    if render_kind("actor", details) == "anim" and (details or {}).get("anims"):
+        return ". ".join(parts) + "." + ANIM_STILL_FRAMING
     view = ((details or {}).get("view") or "").strip().rstrip(".")
     if view:
         parts[1] += f", {view} view"
@@ -326,7 +333,10 @@ def _then_for(kind: str, finalize: str = "assets") -> Dict:
     if kind == "mesh":
         return {"enqueue": "mesh_from_image", "finalize": finalize}
     if kind == "anim":
-        return {"enqueue": "anim_from_image", "finalize": finalize}
+        # A sheet is RENDERED from a mesh of the thing, because a video model asked to animate a
+        # still it must also end on answers by not moving (measured: 14 of 16 clips in a shipped
+        # sheet were stills). The drawn path is still there for whatever no skeleton fits.
+        return {"enqueue": "mesh_for_sheet", "finalize": finalize}
     op = "save_sprite" if kind in MATTED_KINDS else "save_flat"
     return {"operations": [op], "finalize": finalize}
 

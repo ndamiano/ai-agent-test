@@ -107,6 +107,16 @@ snapshot_download("microsoft/TRELLIS.2-4B", local_dir=f"{VOL}/trellis2-weights")
 # decision. So: pull open-licensed equivalents into plain dirs on the volume (camenduru mirror =
 # same dinov3 weights, public; ZhengPeng7/BiRefNet = the permissive rembg the home box uses) and
 # rewrite the configs to those paths. Paths are the POD's mount point (/workspace) verbatim.
+# The motion model a sprite sheet is animated from. Its skeleton's standard T-pose clip ships
+# inside the package, and the retarget needs one: without it the delta carries the raw offset
+# skeleton and double-rotates an already-T-posed rig. No text encoder is pulled — the verb
+# library's embeddings are baked into the image (maestro/sprites3d/verb_embeddings.npz), so no
+# language model runs on a pod.
+# The folder is named for the model's DISPLAY name because that is what CHECKPOINT_DIR looks up;
+# a differently named folder sends the loader to Hugging Face, which a pod must never reach.
+print("downloading   kimodo motion weights (~1.1 GB)")
+snapshot_download("nvidia/Kimodo-SOMA-RP-v1.1", local_dir=f"{VOL}/kimodo/Kimodo-SOMA-RP-v1.1")
+
 print("downloading   encoders (dinov3 mirror + BiRefNet)")
 snapshot_download("camenduru/dinov3-vitl16-pretrain-lvd1689m",
                   local_dir=f"{VOL}/encoders/dinov3-vitl16")

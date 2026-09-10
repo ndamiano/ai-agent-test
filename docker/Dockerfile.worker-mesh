@@ -1,5 +1,9 @@
-# The mesh-queue GPU worker: TRELLIS.2 (tools/trellis_server.py) + the pull-side agent, one
-# container.
+# The mesh-queue GPU worker: TRELLIS.2 (tools/trellis_server.py), the sprite-sheet server
+# (tools/sprite_server.py) and the pull-side agent, one container.
+#
+# The two servers share a pod because a sheet is always rendered from a mesh made here: the glb
+# never leaves the box and no second pod boots. They never run at once — a mesh finishes before
+# its sheet begins — and measured together on one card they peak at 5.7 GiB.
 #
 # Base matches the home-verified TRELLIS stack exactly (torch 2.9.1+cu128, triton 3.5.1). The
 # CUDA extensions are compiled in a devel stage against TORCH_CUDA_ARCH_LIST=12.0 (Blackwell,
@@ -75,7 +79,26 @@ RUN pip install --no-cache-dir --no-deps /wheels/*.whl \
         plyfile scipy moderngl \
     && rm -rf /wheels
 
+# Kimodo generates the motion a sheet is rendered from, in its own venv: it pins
+# transformers==5.1.0 where TRELLIS needs 5.13, and `--system-site-packages` keeps them sharing
+# ONE torch instead of shipping a second two-gigabyte copy.
+ARG KIMODO_SHA=1aece8c124d73d255ceff5086d983b844c9f4e94
+# kimodo builds a small CMake extension. `--no-build-isolation` is load-bearing: pip's build
+# overlay shadows the image's cmake with one that answers `cmake --version` with exit 1, and the
+# build dies claiming CMake is not installed while `cmake --version` works everywhere else.
+RUN apt-get update && apt-get install -y --no-install-recommends git build-essential \
+    && python -m venv --system-site-packages /opt/kimodo-venv \
+    && /opt/kimodo-venv/bin/pip install --no-cache-dir "setuptools>=61" \
+    && /opt/kimodo-venv/bin/pip install --no-cache-dir --no-build-isolation \
+        "kimodo @ git+https://github.com/nv-tlabs/kimodo@${KIMODO_SHA}" \
+    && /opt/kimodo-venv/bin/pip install --no-cache-dir playwright pygltflib pillow \
+    && /opt/kimodo-venv/bin/playwright install --with-deps chromium \
+    && apt-get purge -y git build-essential && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY src/worker /opt/maestro/src/worker
+COPY src/maestro/sprites3d /opt/maestro/src/maestro/sprites3d
+COPY src/tools/sprite_server.py /opt/maestro/src/tools/sprite_server.py
 COPY src/tools/trellis_server.py /opt/maestro/src/tools/trellis_server.py
 COPY scripts/worker-mesh-entrypoint.sh /opt/maestro/entrypoint.sh
 RUN chmod +x /opt/maestro/entrypoint.sh
@@ -84,7 +107,8 @@ RUN chmod +x /opt/maestro/entrypoint.sh
 # inference server is an unauthenticated GPU.
 # Hard-offline: after provisioning, a pod NEVER talks to HuggingFace (their gating decisions
 # must not be able to break us). Configs reference local /workspace paths; these flags make any
-# stray hub-name lookup fail fast instead of calling out.
+# stray hub-name lookup fail fast instead of calling out. The motion model is found the same way:
+# CHECKPOINT_DIR names a plain directory of checkpoint folders, so no hub name is ever resolved.
 ENV PYTHONPATH=/opt/maestro/src \
     PYTHONUNBUFFERED=1 \
     TRELLIS_PORT=8189 \
@@ -93,7 +117,10 @@ ENV PYTHONPATH=/opt/maestro/src \
     HF_HOME=/workspace/hf-cache \
     HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1 \
-    TRITON_CACHE_DIR=/workspace/triton-cache
+    TRITON_CACHE_DIR=/workspace/triton-cache \
+    SPRITE_PYTHON=/opt/kimodo-venv/bin/python \
+    SPRITE_PORT=8190 \
+    CHECKPOINT_DIR=/workspace/kimodo
 
 # flex_gemm persists its autotune picks (ON by default) — but to ~/.flex_gemm, which is container
 # disk that dies with the pod, so every boot re-benchmarked every sparse-conv config: measured
@@ -102,7 +129,12 @@ ENV PYTHONPATH=/opt/maestro/src \
 # device name, so the 5090/fallback-card split handles itself).
 ENV FLEX_GEMM_AUTOTUNE_CACHE_PATH=/workspace/flex-gemm-autotune.json
 
-# Build-time smoke: the exact interpreter the server runs under can import the CUDA stack.
-RUN python -c "import torch, triton"
+# Build-time smoke: the exact interpreter each server runs under can import what it needs. The
+# sheet path is checked without a GPU — a mesh's silhouette is measured and skinned in numpy, and
+# the glb is read and written by pygltflib, so only the motion model needs the card.
+RUN python -c "import torch, triton" \
+    && /opt/kimodo-venv/bin/python -c "import torch, kimodo, pygltflib, playwright" \
+    && PYTHONPATH=/opt/maestro/src /opt/kimodo-venv/bin/python -c \
+        "from maestro.sprites3d import rig, retarget, sheet, verbs; verbs.Table()"
 
 ENTRYPOINT ["/opt/maestro/entrypoint.sh"]

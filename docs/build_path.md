@@ -232,11 +232,18 @@ src/
                          TRELLIS lifts a stylized cut-out far better than a photo or an anime
                          sprite, `docs/experiments.md` 2026-09-03) and lands normalized to 1 unit at its longest side, which the
                          tool's answer states: placement code cannot discover scale any other
-                         way, and an untold model shipped a knee-high lighthouse. An anim chains
-                         image → the `video` queue's `anim_sheet` job (`tools/comfyui_tools.build_anim_payload`,
-                         `worker/anim_sheet.py`), which turns the matted sprite render into one
-                         directional sheet via MiniMax-H3 image-to-video — see the anim ledger
-                         entry below and `docs/experiments.md` 2026-09-04. Rendering every
+                         way, and an untold model shipped a knee-high lighthouse. An anim chains image →
+                         `mesh` → the same pod's `sprite_sheet` job (`tools/sprite_server.py`,
+                         `maestro/sprites3d/`), which RENDERS the sheet: the still is a T-pose so
+                         voxelisation cannot weld the limbs to the body, the mesh is rigged from a
+                         canonical humanoid measured onto that pose, a motion model animates the
+                         skeleton from the verb the build's `action` prose names, and four camera
+                         angles are shot per animation. A video model conditioned on the still as
+                         both first AND last frame answers a one-shot by not moving — 14 of 16
+                         clips in a shipped sheet were stills — so the drawn path
+                         (`build_anim_payload`, `worker/anim_sheet.py`) is what a silhouette no
+                         humanoid skeleton fits falls back to, and its cyclic clips were always
+                         the ones that worked. See `docs/experiments.md` 2026-09-04. Rendering every
                          kind through one item-icon path matted a game's floor tiles down to a
                          handful of planks — it said "tile" in every prompt and nothing could
                          hear it. A refused compute budget is answered as "draw this one with

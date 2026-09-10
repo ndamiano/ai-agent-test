@@ -10,6 +10,7 @@ Handlers return (result, error): exactly one is non-None.
 
 import base64
 import logging
+import os
 import time
 import urllib.parse
 import uuid
@@ -239,9 +240,27 @@ def trellis_mesh(agent, payload):
     return None, f"TRELLIS failed: {last}"
 
 
+def sprite_sheet(agent, payload):
+    """One mesh → one sprite sheet, rendered rather than drawn.
+
+    The sheet is made on the SAME pod that just made the mesh, by a second server beside the
+    TRELLIS one: a glb the size of ten megabytes never leaves the box, and no pod boots for it.
+    A silhouette no humanoid skeleton fits comes back as a `fallback`, not an error — the caller
+    draws that sheet with the video model instead."""
+    url = os.environ.get("SPRITE_URL") or agent.target.rsplit(":", 1)[0] + ":8190"
+    try:
+        r = _post(agent, f"{url}/sheet", json=payload, timeout=1800)
+    except Exception as e:                                          # noqa: BLE001
+        return None, f"sprite server unreachable: {e}"
+    if r.status_code != 200:
+        return None, f"Status {r.status_code}: {r.text[:2000]}"
+    return r.json(), None
+
+
 HANDLERS = {
     "llm": llm,
     "comfy_image": comfy_image,
     "trellis_mesh": trellis_mesh,
     "anim_sheet": anim_sheet,
+    "sprite_sheet": sprite_sheet,
 }

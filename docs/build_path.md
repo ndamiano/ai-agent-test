@@ -198,7 +198,11 @@ src/
                          the 249th the cut). A window that stops short says where the rest is and
                          that a file this size is worth splitting.
       staging.py         where a game lives (runs/<id>/game/) and how it reaches the browser: copy
-                         the folder to runtime/games/<run_id>/. No bundle, no transform.
+                         the folder to runtime/games/<run_id>/. No bundle, no transform. The copy
+                         is built BESIDE the live one and swapped in by rename: the live one is
+                         what someone is playing, and deleting it first 404s every request during
+                         the copy and — when a render lands mid-delete — fails half-way, leaving
+                         the played game with some of its art gone (2026-09-10: 31 of 55 assets).
                          `has_authored_files` discounts the seed, so it says whether a BUILD wrote
                          anything — which is what offers the from-scratch button. Also the SEED
                          (seed_vendor): the game folder starts holding the vendored renderer and

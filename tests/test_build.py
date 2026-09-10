@@ -1054,3 +1054,62 @@ def test_a_full_window_retry_is_positive_too(tmp_path, tools, monkeypatch):
     build_steps.step({}, tmp_path, tools, cursor,
                      _reply(content="const x = ", usage={"completion_tokens": cursor.out_cap}))
     assert cursor.out_cap >= build_steps._MIN_OUT
+
+
+def test_staging_never_leaves_the_played_game_half_deleted(tmp_path, monkeypatch):
+    """Measured 2026-09-10: a render landing while `stage_for_play` was deleting the live copy
+    failed it with `Directory not empty: 'assets'` — after it had already removed 31 of the game's
+    55 assets, from the copy someone was playing."""
+    from maestro.codegen import staging
+    monkeypatch.setattr(staging, "RUNTIME_DIR", tmp_path / "runtime")
+    gd = tmp_path / "game"
+    (gd / "assets").mkdir(parents=True)
+    (gd / "index.html").write_text("v1")
+    for i in range(5):
+        (gd / "assets" / f"a{i}.png").write_text("art")
+    staging.stage_for_play(tmp_path, "abc123")
+    staged = tmp_path / "runtime" / "games" / "abc123"
+
+    real_copytree = staging.shutil.copytree
+
+    def land_a_render_mid_copy(src, dst, *a, **kw):
+        out = real_copytree(src, dst, *a, **kw)
+        (staged / "assets" / "late.png").write_text("landed while we copied")
+        return out
+
+    monkeypatch.setattr(staging.shutil, "copytree", land_a_render_mid_copy)
+    (gd / "index.html").write_text("v2")
+    staging.stage_for_play(tmp_path, "abc123")
+
+    assert (staged / "index.html").read_text() == "v2"
+    assert sorted(p.name for p in (staged / "assets").iterdir()) == \
+        [f"a{i}.png" for i in range(5)], "the new copy is whole, not a partial delete"
+
+
+def test_staging_swaps_in_and_leaves_nothing_behind(tmp_path, monkeypatch):
+    from maestro.codegen import staging
+    monkeypatch.setattr(staging, "RUNTIME_DIR", tmp_path / "runtime")
+    gd = tmp_path / "game"
+    gd.mkdir()
+    (gd / "index.html").write_text("one")
+    staging.stage_for_play(tmp_path, "abc123")
+    (gd / "index.html").write_text("two")
+    staging.stage_for_play(tmp_path, "abc123")
+    games = tmp_path / "runtime" / "games"
+    assert (games / "abc123" / "index.html").read_text() == "two"
+    assert [p.name for p in games.iterdir()] == ["abc123"], "no staging or stale folder is left"
+
+
+def test_a_crashed_staging_does_not_block_the_next_one(tmp_path, monkeypatch):
+    """A leftover working folder from a killed process is owed nothing."""
+    from maestro.codegen import staging
+    monkeypatch.setattr(staging, "RUNTIME_DIR", tmp_path / "runtime")
+    games = tmp_path / "runtime" / "games"
+    (games / "_abc123.staging" / "junk").mkdir(parents=True)
+    (games / "_abc123.stale").mkdir(parents=True)
+    gd = tmp_path / "game"
+    gd.mkdir()
+    (gd / "index.html").write_text("fresh")
+    staging.stage_for_play(tmp_path, "abc123")
+    assert (games / "abc123" / "index.html").read_text() == "fresh"
+    assert [p.name for p in games.iterdir()] == ["abc123"]

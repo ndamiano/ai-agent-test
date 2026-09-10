@@ -6,6 +6,7 @@ it started. There is no build step and no transform: staging copies the folder t
 `runtime/games/<slug>/`, which is what `/play` serves.
 """
 
+import os
 import re
 import shutil
 from pathlib import Path
@@ -80,9 +81,24 @@ def staged_title(slug: str) -> Optional[str]:
 
 
 def stage_for_play(run_dir, slug: str) -> str:
-    """Publish the game folder, replacing any previous staging of the same run."""
-    dst = RUNTIME_DIR / "games" / slug
+    """Publish the game folder, replacing any previous staging of the same run.
+
+    The new copy is BUILT BESIDE the live one and swapped in by rename, because the live one is
+    what someone is playing: deleting it first means every request during the copy 404s, and a
+    render landing mid-delete fails the whole staging half-way through, leaving the played game
+    with some of its art gone (measured 2026-09-10: `OSError: Directory not empty: 'assets'`, 31
+    of 55 assets deleted from a staged game). A rename is atomic, so a player sees the old game
+    or the new one and never the gap between them."""
+    games = RUNTIME_DIR / "games"
+    games.mkdir(parents=True, exist_ok=True)
+    dst = games / slug
+    fresh = games / f"_{slug}.staging"
+    stale = games / f"_{slug}.stale"
+    for leftover in (fresh, stale):                 # a previous crash owes us nothing
+        shutil.rmtree(leftover, ignore_errors=True)
+    shutil.copytree(game_dir(run_dir), fresh, ignore=shutil.ignore_patterns("_*"))
     if dst.exists():
-        shutil.rmtree(dst)
-    shutil.copytree(game_dir(run_dir), dst, ignore=shutil.ignore_patterns("_*"))
+        os.replace(dst, stale)
+    os.replace(fresh, dst)
+    shutil.rmtree(stale, ignore_errors=True)
     return f"games/{slug}/{ENTRY}"

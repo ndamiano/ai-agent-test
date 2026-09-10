@@ -35,6 +35,12 @@ def run_dir(tmp_path):
     return d
 
 
+@pytest.fixture
+def media(run_dir):
+    """The tool itself: what a call must send is checked against its signature, not in here."""
+    return build_tools(RunState(RUN), "b1")["generate_media"]
+
+
 def _image_jobs():
     with store._db() as conn:
         rows = conn.execute("SELECT * FROM jobs WHERE queue = 'image' ORDER BY id").fetchall()
@@ -202,20 +208,35 @@ def test_an_already_rendered_asset_is_not_paid_for_again(run_dir):
 
 
 @pytest.mark.parametrize("bad", ["", "../escape", "a b", "x" * 65, "a/b"])
-def test_an_id_that_cannot_name_a_file_is_refused(run_dir, bad):
-    out = request_media(RUN, run_dir, "b1", bad, "a goblin", STYLE)
+def test_an_id_that_cannot_name_a_file_is_refused(media, bad):
+    out = media(id=bad, subject="a goblin", style=STYLE)
     assert out["ok"] is False and "id" in out["error"]
     assert _image_jobs() == []
 
 
-def test_a_missing_prompt_is_refused(run_dir):
-    out = request_media(RUN, run_dir, "b1", "goblin", "   ", STYLE)
+def test_a_missing_prompt_is_refused(media):
+    out = media(id="goblin", subject="   ", style=STYLE)
     assert out["ok"] is False and "subject" in out["error"]
 
 
-def test_an_unknown_kind_is_refused(run_dir):
-    out = request_media(RUN, run_dir, "b1", "goblin", "a goblin", STYLE, kind="video")
+def test_an_omitted_argument_is_named_back(media):
+    """An absent argument has to read as one, not as a malformed value of something else."""
+    out = media(id="goblin", style=STYLE)
+    assert out["ok"] is False
+    assert "needs the argument 'subject'" in out["error"] and "id, style" in out["error"]
+    assert _image_jobs() == []
+
+
+def test_an_unknown_kind_is_refused(media):
+    out = media(id="goblin", subject="a goblin", style=STYLE, kind="video")
     assert out["ok"] is False and "video" in out["error"]
+
+
+def test_an_explicitly_empty_kind_is_the_default(media):
+    """A program that computes its kind and gets nothing has still asked for a sprite; the
+    signature default only ever fires when the argument is absent."""
+    assert media(id="goblin", subject="a goblin", style=STYLE, kind=None)["ok"] is True
+    assert _image_jobs()[0]["metadata"]["kind"] == "sprite"
 
 
 def test_a_blocked_prompt_tells_the_model_to_draw_it_instead(run_dir, monkeypatch):
@@ -329,10 +350,10 @@ def test_an_anim_with_no_source_render_still_starts_at_the_image(run_dir):
     assert len(_jobs("image")) == 2 and _jobs("video") == []
 
 
-def test_kind_video_is_still_an_unknown_kind(run_dir):
+def test_kind_video_is_still_an_unknown_kind(media):
     """anim is the new kind; video (the queue it lands on, not something a game asks for) must
     stay refused."""
-    out = request_media(RUN, run_dir, "b1", "knight", "a knight", STYLE, kind="video")
+    out = media(id="knight", subject="a knight", style=STYLE, kind="video")
     assert out["ok"] is False and "video" in out["error"]
 
 
@@ -404,13 +425,13 @@ def test_anims_on_another_kind_are_kept_and_it_renders_still(run_dir):
     assert read_manifest(run_dir)[0]["details"]["anims"][0]["name"] == "boil"
 
 
-def test_details_must_be_an_object(run_dir):
-    out = request_media(RUN, run_dir, "b1", "ben", "a man", STYLE, kind="actor", details="biped")
+def test_details_must_be_an_object(media):
+    out = media(id="ben", subject="a man", style=STYLE, kind="actor", details="biped")
     assert out["ok"] is False and "details" in out["error"]
     assert _image_jobs() == []
 
 
-def test_a_missing_style_is_refused(run_dir):
-    out = request_media(RUN, run_dir, "b1", "ben", "a man", "  ")
+def test_a_missing_style_is_refused(media):
+    out = media(id="ben", subject="a man", style="  ")
     assert out["ok"] is False and "style" in out["error"]
     assert _image_jobs() == []

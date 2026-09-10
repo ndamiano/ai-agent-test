@@ -208,7 +208,7 @@ def _pending(run_id: str, run_dir, entries: List[Dict]) -> List[Dict]:
 
 
 # An id names a file and is handed back to the asset routes, so it carries only what both accept.
-_MEDIA_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+MEDIA_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def _record(run_dir, entry: Dict) -> None:
@@ -297,7 +297,7 @@ def _details_problem(details) -> Optional[str]:
         return ("anims is a list of {name, action}, one per animation — like "
                 "[{\"name\": \"drive\", \"action\": \"the wheels spin and the body rocks\"}]")
     for a in anims:
-        if not isinstance(a, dict) or not _MEDIA_ID.match(str(a.get("name") or "")) \
+        if not isinstance(a, dict) or not MEDIA_ID.match(str(a.get("name") or "")) \
                 or not str(a.get("action") or "").strip():
             return "every anim entry needs a short name (letters, digits, - or _) and an action"
     if len({a["name"] for a in anims}) != len(anims):
@@ -333,23 +333,7 @@ def _then_for(kind: str, finalize: str = "assets") -> Dict:
 
 def request_media(run_id: str, run_dir, build_id: str, asset_id: str, subject: str, style: str,
                   kind: str = DEFAULT_KIND, details: Optional[Dict] = None) -> Dict:
-    """ONE asset. Enqueues the render and answers with the path the file will appear at, so the
-    model can write code against it on the same turn. `subject` and `style` are the prose,
-    `details` the facts prose cannot carry — body plan, view, animations ([{name, action}]) and
-    how many ways it faces (`facings`: 4 or 1); the manifest keeps all of it, so a top-up or a
-    regenerate re-renders the same way.
-
-    Every refusal is REPORTED: a build that cannot have art must be told to draw one rather than
-    left waiting for a file that is never coming."""
-    if not _MEDIA_ID.match(asset_id or ""):
-        return {"ok": False, "error": "id must be 1-64 characters of letters, digits, - or _"}
-    if not (subject or "").strip():
-        return {"ok": False, "error": "subject is required: describe what to draw"}
-    if not (style or "").strip():
-        return {"ok": False, "error": "style is required: the game's one style phrase"}
-    if kind not in KINDS:
-        return {"ok": False,
-                "error": f"kind must be one of {', '.join(KINDS)} — not {kind!r}"}
+    """Enqueues one render and returns the file path that will eventually be filled."""
     problem = _details_problem(details)
     if problem:
         return {"ok": False, "error": problem}

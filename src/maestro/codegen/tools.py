@@ -3,14 +3,20 @@ compose_world.
 
 Two invariants. A path is resolved and must land inside the game folder, so no write can escape it.
 And every failure is REPORTED to the model rather than guessed at — see `_reported`.
+
+What an argument must BE is declared on the tool's signature, so a body only ever runs on a call
+that already satisfies it.
 """
 
 import os
 import re
 from pathlib import Path
+from typing import Annotated, Any, List, Literal, Optional, Union
+
+from pydantic import AfterValidator, ValidationError, validate_call
 
 from maestro.codegen import file_state
-from maestro.codegen.assets import DEFAULT_KIND, read_manifest, request_media
+from maestro.codegen.assets import DEFAULT_KIND, KINDS, MEDIA_ID, read_manifest, request_media
 from maestro.codegen.staging import RUNTIME_DIR, game_dir
 
 _VENDOR_FILES = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
@@ -19,11 +25,6 @@ _VENDOR_FILES = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
 _REF = re.compile(r"""(?:from|import)\s*\(?\s*['"]([^'"\s]+)['"]|(?:src|href)\s*=\s*["']([^"'\s]+)["']""")
 _REF_SKIP = ("http://", "https://", "data:", "blob:", "//", "#", "mailto:")
 
-# A read lands in a PROGRAM'S variable, not in the transcript — only what the program prints costs
-# the window — so there is no reason to cut one short. A ceiling here was a context guard, and
-# under a program it guards nothing while making a partial read look like a whole one: the model
-# discards the truncation note it never printed and then reasons from a fragment (measured
-# 2026-09-07: counted occurrences over 43% of a file and read the zeroes as missing edits).
 MAX_READ_CHARS = 8_000_000
 
 
@@ -41,11 +42,30 @@ DOUBLE_ESCAPED = ("Your text is escaped twice — it carries backslash sequences
                   "once for JSON.")
 
 
+def _nonblank(what: str, how: str):
+    def check(v: str) -> str:
+        if not v.strip():
+            raise ValueError(f"{what} is required: {how}")
+        return v
+    return check
+
+
+def _asset_id(v: str) -> str:
+    if not MEDIA_ID.match(v):
+        raise ValueError("id must be 1-64 characters of letters, digits, - or _")
+    return v
+
+
+GamePath = Annotated[str, AfterValidator(_nonblank("path", "the file to act on"))]
+AssetId = Annotated[str, AfterValidator(_asset_id)]
+Subject = Annotated[str, AfterValidator(_nonblank("subject", "describe what to draw"))]
+Style = Annotated[str, AfterValidator(_nonblank("style", "the game's one style phrase"))]
+Description = Annotated[str, AfterValidator(_nonblank("description", "the world to build"))]
+Kind = Literal[KINDS]
+
+
 def _safe(root: Path, path: str) -> Path:
-    """A path inside the game folder. Resolved, so `../` can never escape. A missing path raises
-    KeyError('path') so the reported error names the argument that was left out."""
-    if not path:
-        raise KeyError("path")
+    """A path inside the game folder. Resolved, so `../` can never escape."""
     p = (root / path).resolve()
     if not str(p).startswith(str(root.resolve()) + os.sep):
         raise ValueError(f"path escapes the project directory: {path!r}")
@@ -69,6 +89,29 @@ def _dead_refs(path: Path, text: str, root: Path, pending) -> list:
             out.append(ref)
     return out
 
+def _argument_problem(name: str, kw: dict, e: ValidationError) -> str:
+    """What the call got wrong, in one sentence. A missing argument also lists what WAS sent,
+    because the model gets here by sending the right value under the wrong name (measured in prod:
+    a read sent as `file`) and cannot otherwise see which name it used."""
+    # `missing_argument` is what a signature with **kwargs reports; `missing` is the plain form.
+    missing = [str(err["loc"][0]) for err in e.errors()
+               if err["type"] in ("missing", "missing_argument") and err["loc"]]
+    if missing:
+        sent = ", ".join(sorted(kw)) or "no arguments"
+        names = ", ".join(repr(m) for m in missing)
+        word = "argument" if len(missing) == 1 else "arguments"
+        return f"{name} needs the {word} {names}; this call sent {sent}."
+    return f"{name}: " + "; ".join(_said(err) for err in e.errors())
+
+
+def _said(err: dict) -> str:
+    # A rule written here raises ValueError, and its message already names its own argument.
+    if err["type"] == "value_error":
+        return err["msg"].removeprefix("Value error, ")
+    loc = ".".join(str(x) for x in err["loc"]) or "arguments"
+    return f"{loc}: {err['msg']} (got {err['input']!r})"
+
+
 def build_tools(state, build_id: str) -> dict:
     root = game_dir(state.run_dir)
 
@@ -81,7 +124,9 @@ def build_tools(state, build_id: str) -> dict:
                 out.append({"path": str(p.relative_to(root)), "bytes": p.stat().st_size})
         return {"ok": True, "files": out}
 
-    def read_file(path: str = None, offset=None, lines=None, **_) -> dict:
+    @validate_call
+    def read_file(path: GamePath, offset: Optional[int] = None, lines: Optional[int] = None,
+                  **_) -> dict:
         """A window of the file, whole lines, starting at 1-based `offset`, at most `lines` long.
 
         The window ends on a line boundary: a cut mid-line is text the model copies into old_text,
@@ -142,26 +187,22 @@ def build_tools(state, build_id: str) -> dict:
         file_state.record_read(state.run_dir, str(p.relative_to(root.resolve())), p.read_bytes())
         return {"ok": True, "path": path, "content": content, "lines": f"{start + 1}-{end}/{total}"}
 
-    def write_file(path=None, content=None, **_) -> dict:
+    @validate_call
+    def write_file(path: GamePath, content: str, **_) -> dict:
         p = _safe(root, path)
-        if content is None:
-            raise KeyError("content")
         if "\n" not in content and "\\n" in content:
             return {"ok": False, "error": DOUBLE_ESCAPED}
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
         return {"ok": True, "path": path, "chars": len(content)}
 
-    def edit_file(path: str = None, old_text=None, new_text=None, **_) -> dict:
+    # new_text is required, never defaulted: an omitted one would silently DELETE the matched
+    # region, and deleting is legitimate only when the model sends "" and means it.
+    @validate_call
+    def edit_file(path: GamePath, old_text: str, new_text: str, **_) -> dict:
         p = _safe(root, path)
         if not p.exists():
             return {"ok": False, "error": f"no such file: {path}"}
-        if old_text is None:
-            raise KeyError("old_text")
-        if new_text is None:
-            # An omitted new_text would silently DELETE the matched region. Deleting is legitimate,
-            # but only when the model sends "" and means it.
-            raise KeyError("new_text")
         old, new = old_text, new_text
         if old == new:
             return {"ok": False, "error": "old_text and new_text are identical, so this edit "
@@ -180,17 +221,19 @@ def build_tools(state, build_id: str) -> dict:
         p.write_text(body.replace(old, new), encoding="utf-8")
         return {"ok": True, "path": path, "chars": len(new)}
 
-    def generate_media(id=None, kind=DEFAULT_KIND, subject=None, style=None, details=None,
-                       **_) -> dict:
+    # The order here is free: a program's positional call is mapped to names by `pyexec.child`
+    # before it is sent, and every tool is dispatched by keyword.
+    @validate_call
+    def generate_media(id: AssetId, subject: Subject, style: Style, kind: Optional[Kind] = None,
+                       details: Any = None, **_) -> dict:
         return request_media(state.run_id, state.run_dir, build_id, id, subject, style,
                              kind or DEFAULT_KIND, details)
 
-    def compose_world(description=None, seed=None, **_) -> dict:
+    @validate_call
+    def compose_world(description: Description, seed: Optional[int] = None, **_) -> dict:
         # One world per game: a second one would replace the ground under a game already
         # written against the first one's metres and regions.
         from maestro.worldgen.compose import compose, world_dir
-        if not description:
-            raise KeyError("description")
         if (world_dir(root) / "world.json").exists():
             return {"ok": False,
                     "error": "this game already has its world — read world/world.json for its "
@@ -198,7 +241,8 @@ def build_tools(state, build_id: str) -> dict:
         return compose(root, state.run_dir, state.run_id, build_id, description,
                        int(seed) if seed is not None else None)
 
-    def check_syntax(paths=None, **_) -> dict:
+    @validate_call
+    def check_syntax(paths: Optional[Union[str, List[str]]] = None, **_) -> dict:
         """Does the game's JavaScript parse, and does every file it loads exist? The error gate's
         own parser, run HERE — the program that asks is confined and cannot start anything itself.
 
@@ -237,14 +281,15 @@ def build_tools(state, build_id: str) -> dict:
 
     def _reported(fn):
         """A tool result is a BOUNDARY: anything the call raises comes back as text the model can
-        act on. Never substitute a default for a bad argument — the report is what lets it retry."""
+        act on. Never substitute a default for a bad argument — the report is what lets it retry.
+
+        Every problem in one call is reported together: a model that learns one bad argument per
+        turn spends a turn on each."""
         def call(**kw):
             try:
                 return fn(**kw)
-            except KeyError as e:
-                sent = ", ".join(sorted(kw)) or "no arguments"
-                return {"ok": False, "error": f"{fn.__name__} needs the argument {e.args[0]!r}; "
-                                              f"this call sent {sent}."}
+            except ValidationError as e:
+                return {"ok": False, "error": _argument_problem(fn.__name__, kw, e)}
             except Exception as e:
                 return {"ok": False, "error": f"{type(e).__name__}: {e}"}
         return call

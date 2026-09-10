@@ -254,10 +254,10 @@ def test_an_explicit_empty_new_text_still_deletes(tools, tmp_path):
 
 
 def test_a_wrong_type_is_reported_not_coerced(tools, tmp_path):
-    """Coercing an object body into JSON was a guess at intent. The harness reported the TypeError
-    and the model resent a string; that is the whole recovery mechanism."""
+    """Coercing an object body into JSON was a guess at intent. The harness reported the type it
+    wanted and the model resent a string; that is the whole recovery mechanism."""
     r = tools["write_file"](path="assets.json", content={"images": []})
-    assert r["ok"] is False and "TypeError" in r["error"]
+    assert r["ok"] is False and "content" in r["error"] and "string" in r["error"]
     assert not (tmp_path / "game" / "assets.json").exists()
 
 

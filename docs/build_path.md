@@ -180,8 +180,11 @@ src/
                          a second time because the game is already written against the first
                          one's metres and regions. A path is resolved and must land inside the
                          game folder. Every failure is REPORTED to the model as text (a missing
-                         argument names itself) and never guessed at: substituting a default for a
-                         missing `path` sent every write in a run to one file.
+                         argument names itself, and says what the call DID send) and never guessed
+                         at: substituting a default for a missing `path` sent every write in a run
+                         to one file. What an argument must BE is declared on the signature, so
+                         every problem in one call is reported together — a model that learns one
+                         bad argument per turn spends a turn on each.
                          `read_file` on a missing path the manifest lists as requested answers
                          PENDING — keep the path, do not re-ask — never "no such file": the
                          error reading as a failed ask made a build re-request its whole set

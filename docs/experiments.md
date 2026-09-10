@@ -2143,3 +2143,32 @@ the model writes it and the built ground replaces it by rename.
 
 **Not measured.** Whether a build now wires the world. That is the next arm, and it is the whole
 question: this run is the only evidence either way, and in it the model never got the chance.
+
+## 2026-09-10 — the compaction that never compacted (local box, DeepSeek Flash, 131K window)
+
+**What we found.** A 214-turn build compacted 30 times. Every one of them recorded `trimmed: 0`:
+the tier that replaces file bodies with stubs never ran, and all 30 went straight to the last
+resort, dropping 88 whole rounds — the rounds where the model watched itself write the files it
+was still editing.
+
+**Why.** `_written_in` matched `write_file(path=<literal>, content=<literal>)` and nothing else.
+Every one of the build's 24 writes was `write_file('js/sim.js', head + partC + partD)` — path
+positional, body behind a name, because a 40 KB file does not fit in one reply and is written in
+labelled sections. Two independent misses, so nothing was ever stubbable. `build.txt` documents the
+signature positionally, so the model was following our own documentation out of view of our own
+compactor.
+
+**What changed.** NOTHING YET — compaction is being worked on as its own pass, so the diagnosis is
+what this entry is for. What a fix has to cover: positional arguments as well as keyword ones, and a
+body reached through the shapes a model writes one in — the literal in the call, a name bound once
+to a literal, those added together — while a name assigned twice or built in a loop stays whole,
+which is the case the doctrine was written for. Measured against the transcript that exposed it,
+that much would make 14 programs stubbable and recover 138 KB, 21% of all program bytes, and they
+are the big authoring turns.
+
+**Why it stayed hidden.** Every compaction test wrote its fixture in the keyword form. The tests
+encoded our idiom rather than the model's, so they passed while the mechanism did nothing — so the
+fix needs fixtures taken from a real transcript, not from how we would have written the call.
+
+**Not measured.** What a build looks like with the tier actually working. The next run raised the
+window from 131,072 to 400,000 instead and never compacted at all, so the tier has still never run.

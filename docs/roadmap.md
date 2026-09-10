@@ -62,7 +62,7 @@ do X" checks, no automated round that fixes what a previous round already got ri
 The open question is not how to build a better judge. It is what a play-critic would have to answer
 before one is worth building again.
 
-### Stage 3 — Cheap enough that making games is casual — **PARTLY LANDED**
+### Stage 3 — Cheap enough that making games is casual — **MET, AND THE WASTE IS NAMED**
 
 **Bar:** a measured cost per game that supports a price a person spends without thinking, with the
 margin coming from utilization rather than from charging more.
@@ -70,11 +70,14 @@ margin coming from utilization rather than from charging more.
 The mechanism exists: exec-second metering debited to the owning game, a compute budget that admits
 or refuses jobs, and a queue-driven autoscaler. Builds run concurrently rather than serializing.
 
-What is missing is the number: cost per finished game **off rented pods, at the current caps**,
-with the failure rate alongside it. Nothing measured on the owner's box stands in for it — cold
-start and the serving stack are in the pod's seconds and not in a workstation's.
+The number exists too: **$1.81 a game one-shot**, range $0.87–3.10, $2.28 with the fixes and change
+notes the owner sent — six prod games costed from RunPod's per-pod bill split across the jobs each
+pod ran (`docs/experiments.md`, 2026-09-06). Six of six delivered. That supports a casual price.
 
-Cheap to do, and it blocks every paid stage.
+The waste is not where a platform expects it. Boot overhead is small and the llm queue is already
+79% busy; art is 23% of a game. The one line worth attacking is the **step cap** — a build that
+runs to 200 steps costs about what a finished game costs and ships nothing, and it hit two of six.
+What those builds spent their steps on is a product-track question, not a delivery one.
 
 ---
 
@@ -92,8 +95,8 @@ open, and there is a public front door with demo games behind it.
 
 **Bar:** people want it, and real COGS/failure data exists.
 
-**Open:** the economics measurement (stage 3), and enough product-track progress that showing it to
-people is worth their time. The second half is the real blocker.
+**Open:** enough product-track progress that showing it to people is worth their time. The
+economics half is answered — $1.81 a game, six of six delivered (stage 3).
 
 ### Public beta, paid — first dollar — **BLOCKED on product stage 2**
 

@@ -1,4 +1,4 @@
-"""Estimated GPU seconds per queue — the admission-control input.
+"""Estimated GPU seconds per queue — the admission-control input — and the price of a job.
 
 A job's true cost is only known when a worker completes it, but the budget gate has to decide
 BEFORE the job runs. So each queue carries a flat estimate: enqueue RESERVES that estimate against
@@ -10,17 +10,17 @@ it completes from running a grant into the ground unseen.
 Tune these against the jobs table's real exec_seconds; they are a hill-climbable policy constant,
 not a measurement.
 
-The DEBIT is weighted by the card: a grant is denominated in 5090-seconds, and a second on a
-pricier card costs more of them (`billing.gpu_rates`, each card's hourly price over the 5090's).
-The estimate is not weighted — the card is unknown at enqueue.
+Budgets are micros (millionths of a dollar). A job costs its exec_seconds at the hourly rate of
+the pod that ran it (`workers.usd_per_hour`, RunPod's own price, stamped at create). The card is
+unknown at enqueue, so a reservation is priced at the fallback rate.
 """
-import logging
-
-from config.settings_manager import settings_manager
-
-logger = logging.getLogger(__name__)
+import math
+from typing import Optional
 
 DEFAULT_SECONDS = 60.0
+
+# A worker with no rate on record (a home box, or a pod the scaler has not priced yet) bills here.
+FALLBACK_USD_PER_HOUR = 0.99
 
 # Tuned 2026-09-07 against jobs.exec_seconds since 09-01 (n=1579/203/29): mean 14/17/106,
 # p50 5/13/65, p90 34/33/240. Each covers about three quarters of its queue's jobs — a
@@ -38,22 +38,17 @@ def estimate_seconds(queue: str) -> float:
     return QUEUE_SECONDS.get(queue, DEFAULT_SECONDS)
 
 
-def cheapest_seconds() -> float:
+def job_micros(exec_seconds: float, usd_per_hour: Optional[float]) -> int:
+    # round, not ceil, on the rate: 2.09 × 10⁶ is 2089999.9999999998 in floats.
+    rate_micros = round((usd_per_hour or FALLBACK_USD_PER_HOUR) * 1_000_000)
+    return math.ceil(exec_seconds * rate_micros / 3600)
+
+
+def reserve_micros(queue: str) -> int:
+    return job_micros(estimate_seconds(queue), None)
+
+
+def cheapest_micros() -> int:
     """What a game needs left to afford even one job. Below this, enqueue refuses everything, so
     admitting the run at all would only buy it a thrash against its step cap."""
-    return min(QUEUE_SECONDS.values())
-
-
-_unrated: set = set()
-
-
-def gpu_rate(gpu_type) -> float:
-    """5090-seconds debited per second on this card. An unknown card bills at 1.0 and is logged
-    once, so a new card under-bills loudly rather than refusing work."""
-    rates = settings_manager.get_settings()["billing"]["gpu_rates"]
-    if gpu_type in rates:
-        return float(rates[gpu_type])
-    if gpu_type not in _unrated:
-        _unrated.add(gpu_type)
-        logger.warning("no billing.gpu_rates entry for gpu_type %r — debiting at 1.0", gpu_type)
-    return 1.0
+    return min(reserve_micros(q) for q in QUEUE_SECONDS)

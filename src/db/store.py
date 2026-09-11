@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from config.settings_manager import settings_manager
-from db.estimates import estimate_seconds, gpu_rate
+from db.estimates import estimate_seconds, job_micros, reserve_micros
 from tools.version import maestro_rev
 
 logger = logging.getLogger(__name__)
@@ -31,9 +31,9 @@ class InsufficientCompute(Exception):
     """A game's compute grant can't cover another job of this size. Carries the numbers so the
     caller can tell the user how short they are."""
 
-    def __init__(self, game_id: str, remaining: float, needed: float):
-        super().__init__(f"game {game_id} has {remaining:.0f}s of compute left, "
-                         f"needs {needed:.0f}s")
+    def __init__(self, game_id: str, remaining: int, needed: int):
+        super().__init__(f"game {game_id} has ${remaining / 1e6:.4f} of compute left, "
+                         f"needs ${needed / 1e6:.4f}")
         self.game_id = game_id
         self.remaining = remaining
         self.needed = needed
@@ -52,8 +52,8 @@ CREATE TABLE IF NOT EXISTS games (
     mode            TEXT NOT NULL DEFAULT '',
     status          TEXT NOT NULL DEFAULT 'draft',
     credits_spent   INTEGER NOT NULL DEFAULT 0,
-    seconds_granted REAL NOT NULL DEFAULT 0,
-    seconds_used    REAL NOT NULL DEFAULT 0,
+    granted_micros  INTEGER NOT NULL DEFAULT 0,
+    spent_micros    INTEGER NOT NULL DEFAULT 0,
     created_at      REAL NOT NULL,
     updated_at      REAL NOT NULL
 );
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS builds (
     kind         TEXT NOT NULL DEFAULT 'build',
     status       TEXT NOT NULL DEFAULT 'queued',
     steps        INTEGER,
-    seconds_used REAL NOT NULL DEFAULT 0,
+    spent_micros INTEGER NOT NULL DEFAULT 0,
     queued_at    REAL NOT NULL,
     started_at   REAL,
     finished_at  REAL,
@@ -85,9 +85,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     worker_id        TEXT,
     model            TEXT,
     gpu_type         TEXT,
-    est_seconds      REAL NOT NULL DEFAULT 0,
+    reserved_micros  INTEGER NOT NULL DEFAULT 0,
     exec_seconds     REAL,
-    billed_seconds   REAL,
+    billed_micros    INTEGER,
     lease_expires_at REAL,
     metadata         TEXT,
     batch_id         TEXT,
@@ -244,12 +244,13 @@ def set_status(game_id: str, status: str) -> None:
                      (status, time.time(), game_id))
 
 
-def charge_game(game_id: str, credits: int, seconds: float) -> None:
+def charge_game(game_id: str, credits: int, micros: int) -> None:
+    """Grant `micros` (millionths of a dollar) of compute for `credits`."""
     with _db() as conn:
         conn.execute(
             "UPDATE games SET credits_spent = credits_spent + ?, "
-            "seconds_granted = seconds_granted + ?, updated_at = ? WHERE id = ?",
-            (credits, seconds, time.time(), game_id),
+            "granted_micros = granted_micros + ?, updated_at = ? WHERE id = ?",
+            (credits, micros, time.time(), game_id),
         )
 
 
@@ -262,21 +263,21 @@ def is_charged(game_id: str) -> bool:
     return bool(row and row["credits_spent"] > 0)
 
 
-def _remaining_locked(conn, game_id: str) -> float:
+def _remaining_locked(conn, game_id: str) -> int:
     row = conn.execute(
-        "SELECT seconds_granted, seconds_used FROM games WHERE id = ?", (game_id,)).fetchone()
+        "SELECT granted_micros, spent_micros FROM games WHERE id = ?", (game_id,)).fetchone()
     if row is None:
-        return 0.0
+        return 0
     reserved = conn.execute(
-        "SELECT COALESCE(SUM(est_seconds), 0) AS s FROM jobs "
+        "SELECT COALESCE(SUM(reserved_micros), 0) AS s FROM jobs "
         "WHERE game_id = ? AND status IN ('pending', 'claimed')", (game_id,)).fetchone()["s"]
-    return row["seconds_granted"] - row["seconds_used"] - reserved
+    return int(row["granted_micros"] - row["spent_micros"] - reserved)
 
 
-def compute_remaining(game_id: str) -> float:
+def compute_remaining(game_id: str) -> int:
     """The game's grant minus its measured spend minus the ESTIMATES of everything it already has
     in flight. Reservations are what make this a budget rather than a rear-view mirror: a build
-    enqueues far faster than workers complete, so seconds_used alone reads near-zero right up to
+    enqueues far faster than workers complete, so spent_micros alone reads near-zero right up to
     the moment a hundred queued jobs land."""
     with _db() as conn:
         return _remaining_locked(conn, game_id)
@@ -336,12 +337,12 @@ def _insert_job_locked(conn, queue: str, payload: Dict, game_id: Optional[str],
     """Admit + insert one job on a connection that ALREADY holds the write lock. Raises
     InsufficientCompute. Shared by enqueue_job and the continuation a completion lands, so both
     reserve against the same headroom under the same lock."""
-    est = estimate_seconds(queue)
+    reserved = reserve_micros(queue)
     job_id = uuid.uuid4().hex[:16]
     if game_id is not None:
         remaining = _remaining_locked(conn, game_id)
-        if remaining < est:
-            raise InsufficientCompute(game_id, remaining, est)
+        if remaining < reserved:
+            raise InsufficientCompute(game_id, remaining, reserved)
         if build_id is None:
             # A job that belongs to a game belongs to a build: cost and history join on the build.
             raise ValueError(f"job on game {game_id!r} has no build_id")
@@ -350,9 +351,9 @@ def _insert_job_locked(conn, queue: str, payload: Dict, game_id: Optional[str],
             raise BuildEnded(f"build {build_id} of game {game_id} was stopped")
     conn.execute(
         "INSERT INTO jobs (id, queue, game_id, build_id, status, payload, model, "
-        "est_seconds, batch_id, metadata, created_at) "
+        "reserved_micros, batch_id, metadata, created_at) "
         "VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)",
-        (job_id, queue, game_id, build_id, json.dumps(payload, ensure_ascii=False), model, est,
+        (job_id, queue, game_id, build_id, json.dumps(payload, ensure_ascii=False), model, reserved,
          batch_id, json.dumps(metadata, ensure_ascii=False) if metadata else None, time.time()),
     )
     return job_id
@@ -579,21 +580,21 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
                  exec_seconds: float, gpu_type: Optional[str] = None,
                  continuation: Optional[Dict] = None) -> Optional[Dict]:
     """Land a job's outcome, debit its game's compute budget, and advance its chain. One
-    transaction: the job row, the games and builds seconds_used debits, the worker's busy-seconds
+    transaction: the job row, the games and builds spent_micros debits, the worker's busy-seconds
     and the follow-up job all move together. None if the job isn't this worker's claim (lease
     lapsed — the retry's result wins, this one is dropped).
 
     ONLY DELIVERED WORK IS BILLED. A game is debited when it got a result and never otherwise: a
     failed job, a lapsed-lease duplicate, and a job whose enqueuer abandoned it all leave
-    seconds_used untouched. The worker's busy_seconds still moves in every case — that measures
+    spent_micros untouched. The worker's busy_seconds still moves in every case — that measures
     the GPU time WE pay for, which is real whether or not the user got anything for it.
 
-    The debit is exec_seconds × the card's rate (`gpu_rate`): grants are 5090-seconds, and the
-    row keeps both the raw exec_seconds (what the card ran) and billed_seconds (what the game
-    paid), so the ledger survives a rate change.
+    The debit is exec_seconds at the claiming worker's own hourly rate (`job_micros`), read in
+    this transaction. The row keeps both the raw exec_seconds (what the card ran) and
+    billed_micros (what it cost), so the ledger survives a rate change.
 
     `continuation` is a fully-built {queue, payload, metadata?, model?} the caller derived from
-    this job's `then`; it inherits game_id/build_id/batch_id so its seconds debit the same game
+    this job's `then`; it inherits game_id/build_id/batch_id so its cost debits the same game
     even though nothing enqueued it inside a run_scope. Refused by the budget it is simply
     dropped — the batch finishes short and the finalize still runs, which is the asset stage's
     soft-degrade.
@@ -604,7 +605,6 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
     never see an empty batch whose next job simply doesn't exist yet."""
     now = time.time()
     status = "failed" if error else "done"
-    billed = exec_seconds * gpu_rate(gpu_type)
     # No immediate=True: the UPDATE below is the first statement, so the write lock is already
     # held by the time the continuation's admission reads the game's headroom.
     with _db() as conn:
@@ -614,9 +614,11 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
         if job_row is None:
             return None
         payload = elide_payload(job_row["queue"], json.loads(job_row["payload"]))
+        rate = conn.execute("SELECT usd_per_hour FROM workers WHERE id = ?", (worker_id,)).fetchone()
+        billed = job_micros(exec_seconds, rate and rate["usd_per_hour"])
         cur = conn.execute(
             "UPDATE jobs SET status = ?, payload = ?, result = ?, error = ?, exec_seconds = ?, "
-            "billed_seconds = ?, gpu_type = ?, model = COALESCE(?, model), "
+            "billed_micros = ?, gpu_type = ?, model = COALESCE(?, model), "
             "finished_at = ? WHERE id = ?",
             (status, json.dumps(payload, ensure_ascii=False),
              json.dumps(result, ensure_ascii=False) if result is not None else None,
@@ -629,11 +631,11 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
             (job_id,)).fetchone()
         if error is None and row["game_id"]:
             conn.execute(
-                "UPDATE games SET seconds_used = seconds_used + ?, updated_at = ? WHERE id = ?",
+                "UPDATE games SET spent_micros = spent_micros + ?, updated_at = ? WHERE id = ?",
                 (billed, now, row["game_id"]))
         if error is None and row["build_id"]:
             conn.execute(
-                "UPDATE builds SET seconds_used = seconds_used + ? WHERE id = ?",
+                "UPDATE builds SET spent_micros = spent_micros + ? WHERE id = ?",
                 (billed, row["build_id"]))
         conn.execute(
             "UPDATE workers SET busy_seconds = busy_seconds + ?, last_seen_at = ? WHERE id = ?",
@@ -886,16 +888,16 @@ def backlog_seconds(queue: str) -> float:
     yet finished (pending + claimed). What the admin view reads as the live backlog cost."""
     with _db() as conn:
         row = conn.execute(
-            "SELECT COALESCE(SUM(est_seconds), 0) AS s FROM jobs "
+            "SELECT COUNT(*) AS n FROM jobs "
             "WHERE queue = ? AND status IN ('pending', 'claimed')", (queue,)).fetchone()
-    return row["s"]
+    return row["n"] * estimate_seconds(queue)
 
 
 def pending_jobs_head(queue: str, limit: int) -> List[Dict]:
     """The next jobs a worker on this queue will claim, in claim order."""
     with _db() as conn:
         rows = conn.execute(
-            "SELECT id, game_id, build_id, est_seconds, created_at FROM jobs "
+            "SELECT id, game_id, build_id, created_at FROM jobs "
             "WHERE queue = ? AND status = 'pending' ORDER BY created_at LIMIT ?",
             (queue, limit)).fetchall()
     return [dict(r) for r in rows]
@@ -904,33 +906,37 @@ def pending_jobs_head(queue: str, limit: int) -> List[Dict]:
 def claimed_jobs(queue: str) -> List[Dict]:
     with _db() as conn:
         rows = conn.execute(
-            "SELECT id, game_id, build_id, worker_id, est_seconds, started_at FROM jobs "
+            "SELECT id, game_id, build_id, worker_id, started_at FROM jobs "
             "WHERE queue = ? AND status = 'claimed'", (queue,)).fetchall()
     return [dict(r) for r in rows]
 
 
-def exec_seconds_by_gpu(since: float) -> Dict[str, float]:
-    """GPU-seconds worked per card over jobs finished since `since` — done AND failed, since the
-    card ran either way. A job with no recorded card lands under 'unknown'."""
+_WORK_BY_GPU = ("SELECT COALESCE(gpu_type, 'unknown') AS gpu, "
+                "COALESCE(SUM(exec_seconds), 0) AS seconds, "
+                "COALESCE(SUM(billed_micros), 0) AS micros FROM jobs ")
+
+
+def exec_seconds_by_gpu(since: float) -> Dict[str, Dict[str, float]]:
+    """GPU-seconds worked per card over jobs finished since `since`, and what they cost at the
+    rate of the pod that ran each — done AND failed, since the card ran either way. A job with no
+    recorded card lands under 'unknown'."""
     with _db() as conn:
-        rows = conn.execute(
-            "SELECT COALESCE(gpu_type, 'unknown') AS gpu, COALESCE(SUM(exec_seconds), 0) AS s "
-            "FROM jobs WHERE finished_at >= ? GROUP BY gpu", (since,)).fetchall()
-    return {r["gpu"]: r["s"] for r in rows}
+        rows = conn.execute(_WORK_BY_GPU + "WHERE finished_at >= ? GROUP BY gpu",
+                            (since,)).fetchall()
+    return {r["gpu"]: {"seconds": r["seconds"], "micros": r["micros"]} for r in rows}
 
 
-def games_exec_seconds_by_gpu(game_ids: List[str]) -> Dict[str, float]:
+def games_exec_seconds_by_gpu(game_ids: List[str]) -> Dict[str, Dict[str, float]]:
     """Every finished job the games ever ran, per card — design, builds, art, whenever they
     happened. What a game cost is the whole of it, not the slice inside a window."""
     if not game_ids:
         return {}
     with _db() as conn:
         rows = conn.execute(
-            "SELECT COALESCE(gpu_type, 'unknown') AS gpu, COALESCE(SUM(exec_seconds), 0) AS s "
-            f"FROM jobs WHERE finished_at IS NOT NULL "
+            _WORK_BY_GPU + "WHERE finished_at IS NOT NULL "
             f"AND game_id IN ({','.join('?' * len(game_ids))}) GROUP BY gpu",
             game_ids).fetchall()
-    return {r["gpu"]: r["s"] for r in rows}
+    return {r["gpu"]: {"seconds": r["seconds"], "micros": r["micros"]} for r in rows}
 
 
 def games_built_since(since: float) -> List[str]:

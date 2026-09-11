@@ -4,11 +4,12 @@ worker holds, and the projected backlog."""
 import time
 
 from db import store
+from db.estimates import job_micros
 
 
 def _game():
     store.create_game("g1", "u1")
-    store.charge_game("g1", 1, 10_000)
+    store.charge_game("g1", 1, 1_000_000)
 
 
 def test_pending_head_is_claim_order_capped():
@@ -16,7 +17,7 @@ def test_pending_head_is_claim_order_capped():
     ids = [store.enqueue_job("llm", {}, game_id="g1", build_id="b1") for _ in range(4)]
     head = store.pending_jobs_head("llm", 3)
     assert [j["id"] for j in head] == ids[:3]
-    assert head[0].keys() == {"id", "game_id", "build_id", "est_seconds", "created_at"}
+    assert head[0].keys() == {"id", "game_id", "build_id", "created_at"}
     assert head[0]["game_id"] == "g1"
 
 
@@ -62,21 +63,28 @@ def test_exec_seconds_by_gpu_groups_finished_jobs_by_card():
     _finish("mesh", 7.0, game_id="g1", gpu_type="B")
     _finish("llm", 1.0, game_id=None)
 
-    assert store.exec_seconds_by_gpu(0.0) == {"A": 15.0, "B": 7.0, "unknown": 1.0}
+    cost = lambda *s: sum(job_micros(x, None) for x in s)
+    assert store.exec_seconds_by_gpu(0.0) == {
+        "A": {"seconds": 15.0, "micros": cost(10.0, 5.0)},
+        "B": {"seconds": 7.0, "micros": cost(7.0)},
+        "unknown": {"seconds": 1.0, "micros": cost(1.0)}}
     assert store.exec_seconds_by_gpu(time.time() + 10) == {}
 
 
 def test_games_exec_seconds_is_everything_the_games_ever_ran():
     _game()
     store.create_game("g2", "u1")
-    store.charge_game("g2", 1, 10_000)
+    store.charge_game("g2", 1, 1_000_000)
     _finish("llm", 10.0, game_id="g1", gpu_type="A")
     _finish("image", 4.0, game_id="g1", gpu_type="B")
     _finish("llm", 3.0, game_id="g2", gpu_type="A")
     _finish("llm", 1.0, game_id=None, gpu_type="A")
 
-    assert store.games_exec_seconds_by_gpu(["g1"]) == {"A": 10.0, "B": 4.0}
-    assert store.games_exec_seconds_by_gpu(["g1", "g2"]) == {"A": 13.0, "B": 4.0}
+    cost = lambda *s: sum(job_micros(x, None) for x in s)
+    assert store.games_exec_seconds_by_gpu(["g1"]) == {
+        "A": {"seconds": 10.0, "micros": cost(10.0)}, "B": {"seconds": 4.0, "micros": cost(4.0)}}
+    assert store.games_exec_seconds_by_gpu(["g1", "g2"]) == {
+        "A": {"seconds": 13.0, "micros": cost(10.0, 3.0)}, "B": {"seconds": 4.0, "micros": cost(4.0)}}
     assert store.games_exec_seconds_by_gpu([]) == {}
 
 

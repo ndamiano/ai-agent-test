@@ -1,5 +1,5 @@
 """The games API against the platform db: list/detail read db rows, ownership gates cross-user
-access, and the build endpoint charges once — credits deducted, seconds granted, re-enqueue free."""
+access, and the build endpoint charges once — credits deducted, compute granted, re-enqueue free."""
 
 import json
 
@@ -8,9 +8,9 @@ import pytest
 from maestro.codegen import build_chain, design
 from maestro.codegen.staging import game_dir
 from auth import store as auth_store
-from auth.billing import SECONDS_PER_CREDIT
+from auth.billing import MICROS_PER_CREDIT
 from db import store as db_store
-from db.estimates import estimate_seconds
+from db.estimates import reserve_micros
 from maestro.codegen.run import create_run
 from maestro.state import RunState
 
@@ -20,10 +20,10 @@ def client(app_client, tmp_runs):
     return app_client
 
 
-def _burn(run_id, seconds):
+def _burn(run_id, micros):
     with db_store._db() as conn:
-        conn.execute("UPDATE games SET seconds_used = seconds_used + ? WHERE id = ?",
-                     (seconds, run_id))
+        conn.execute("UPDATE games SET spent_micros = spent_micros + ? WHERE id = ?",
+                     (micros, run_id))
 
 
 def _user(handle="alice", credits=10):
@@ -72,7 +72,7 @@ def test_new_game_creates_the_run_and_starts_its_design(client, monkeypatch):
     assert enqueued == [{"stage": "design", "run_id": run_id}]
     assert db_store.owner_of(run_id) == user.id
     assert auth_store.balance(user.id) == 9
-    assert db_store.game(run_id)["seconds_granted"] == SECONDS_PER_CREDIT
+    assert db_store.game(run_id)["granted_micros"] == MICROS_PER_CREDIT
 
 
 def test_a_game_still_designing_reports_no_prompt_and_refuses_to_build(client, monkeypatch):
@@ -164,12 +164,12 @@ def test_build_charges_once_and_grants_seconds(client, monkeypatch):
     assert auth_store.balance(user.id) == 9
     row = db_store.game(run_id)
     assert row["credits_spent"] == 1
-    assert row["seconds_granted"] == SECONDS_PER_CREDIT
+    assert row["granted_micros"] == MICROS_PER_CREDIT
 
     # Second enqueue: already charged — no second deduction, no second grant.
     client.post(f"/api/games/{run_id}/build", headers=headers)
     assert auth_store.balance(user.id) == 9
-    assert db_store.game(run_id)["seconds_granted"] == SECONDS_PER_CREDIT
+    assert db_store.game(run_id)["granted_micros"] == MICROS_PER_CREDIT
 
 
 def test_build_with_no_credits_is_402_and_uncharged(client, monkeypatch):
@@ -189,7 +189,7 @@ def test_a_game_out_of_compute_is_402_on_every_gpu_endpoint(client, monkeypatch)
     monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: "bid")
 
     assert client.post(f"/api/games/{run_id}/build", headers=headers).status_code == 200
-    _burn(run_id, SECONDS_PER_CREDIT)
+    _burn(run_id, MICROS_PER_CREDIT)
 
     for path, body in (("build", None), ("change", {"note": "a"}), ("assets", None), ("resume", None)):
         r = client.post(f"/api/games/{run_id}/{path}", headers=headers, json=body)
@@ -202,16 +202,16 @@ def test_a_game_out_of_compute_is_402_on_every_gpu_endpoint(client, monkeypatch)
 
 
 def test_detail_reports_remaining_net_of_queued_work(client):
-    """The budget bar nets out queued work immediately: seconds_used lags by the whole depth of the
+    """The budget bar nets out queued work immediately: spent_micros lags by the whole depth of the
     queue, so a bar drawn from spend alone would read full while a build's jobs are already spoken
     for. budget_pct_remaining is computed from compute_remaining, which reserves the estimate."""
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
-    db_store.charge_game(run_id, 1, 1000.0)
+    db_store.charge_game(run_id, 1, 1_000_000)
     db_store.enqueue_job("mesh", {}, game_id=run_id, build_id="b1")
 
     detail = client.get(f"/api/games/{run_id}", headers=headers).json()
-    assert detail["budget_pct_remaining"] == (1000.0 - estimate_seconds("mesh")) / 1000.0
+    assert detail["budget_pct_remaining"] == (1_000_000 - reserve_micros("mesh")) / 1_000_000
 
 
 def test_events_endpoint_replays_the_log(client):
@@ -354,8 +354,8 @@ def test_regenerate_bad_asset_id_is_400(client):
 def test_regenerate_out_of_compute_is_402(client):
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
-    db_store.charge_game(run_id, 1, SECONDS_PER_CREDIT)
-    _burn(run_id, SECONDS_PER_CREDIT)
+    db_store.charge_game(run_id, 1, MICROS_PER_CREDIT)
+    _burn(run_id, MICROS_PER_CREDIT)
     r = client.post(f"/api/games/{run_id}/assets/hero/regenerate", headers=headers,
                     json={"prompt": "x"})
     assert r.status_code == 402

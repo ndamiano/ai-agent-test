@@ -24,7 +24,7 @@ export interface GameDetail {
     // A previous attempt left files in the game folder — what a from-scratch build discards.
     has_game: boolean
     // Compute budget for the numberless bar: fraction remaining, 0..1, or null when the game is
-    // uncharged (no bar). Raw seconds — especially seconds_used — are deliberately never surfaced.
+    // uncharged (no bar). Raw spend — especially spent_micros — is deliberately never surfaced.
     budget_pct_remaining: number | null
 }
 
@@ -122,7 +122,7 @@ export interface QueueRow {
 
 // Effective cost (GET /api/admin/costs), per window and per card. alive_* is RunPod's ledger
 // (pod wall-clock and what it billed), null when the ledger is unreachable or has no row for the
-// card; worked_* is the seconds our jobs ran on it, priced at our rate table. games counts games
+// card; worked_* is the seconds our jobs ran on it, priced at the rate of the pod that ran each. games counts games
 // whose full build finished in the window, averaged over every job they ever ran and every
 // change round they asked for.
 export interface CostGpu {

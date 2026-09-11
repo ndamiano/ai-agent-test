@@ -7,7 +7,6 @@ import pytest
 from unittest.mock import MagicMock
 
 from auth import store
-from config.settings_manager import settings_manager
 from db import store as db_store
 from db.estimates import QUEUE_SECONDS
 
@@ -44,7 +43,7 @@ def _queue(app_client, name):
 
 def test_next_lists_pending_jobs_in_claim_order_with_their_wait(app_client):
     db_store.create_game("g1", "u1")
-    db_store.charge_game("g1", 1, 10_000)
+    db_store.charge_game("g1", 1, 1_000_000)
     build = db_store.create_build("g1")
     first = db_store.enqueue_job("mesh", {}, game_id="g1", build_id=build)
     second = db_store.enqueue_job("mesh", {}, game_id="g1", build_id="b1")
@@ -67,14 +66,9 @@ def test_next_is_capped_at_ten(app_client):
     assert (image["pending"], len(image["next"])) == (12, 10)
 
 
-def test_workers_report_state_and_the_job_they_hold(app_client, monkeypatch):
-    monkeypatch.setattr(
-        "config.settings_manager.settings_manager.get_settings",
-        lambda s=settings_manager.get_settings(): {
-            **s, "billing": {"usd_per_5090_hour": 1.0,
-                             "gpu_rates": {"NVIDIA GeForce RTX 5090": 1.0, "BIG": 2.5}}})
+def test_workers_report_state_and_the_job_they_hold(app_client):
     db_store.create_game("g1", "u1")
-    db_store.charge_game("g1", 1, 10_000)
+    db_store.charge_game("g1", 1, 1_000_000)
     jid = db_store.enqueue_job("mesh", {}, game_id="g1", build_id="b1")
     db_store.worker_seen("busy", "mesh", gpu_type="BIG", source="runpod", pod_id="p1")
     db_store.worker_seen("idle", "mesh", gpu_type="NVIDIA GeForce RTX 5090", source="local")
@@ -87,6 +81,7 @@ def test_workers_report_state_and_the_job_they_hold(app_client, monkeypatch):
     assert by_id["busy"]["job"]["id"] == jid
     assert by_id["busy"]["job"]["game_id"] == "g1"
     assert 0 <= by_id["busy"]["job"]["running_seconds"] < 5
+    assert by_id["busy"]["job"]["est_seconds"] == QUEUE_SECONDS["mesh"]
     assert by_id["idle"]["state"] == "idle"
     assert by_id["idle"]["job"] is None
     assert (mesh["workers_live"], mesh["claimed"], mesh["pending"]) == (2, 1, 0)
@@ -115,16 +110,9 @@ def _billing(rows_hourly, rows_daily):
     return {"hourly_24h": rows_hourly, "daily_30d": rows_daily}
 
 
-def _rates(monkeypatch, rates):
-    base = settings_manager.get_settings()
-    monkeypatch.setattr("config.settings_manager.settings_manager.get_settings",
-                        lambda: {**base, "billing": {"usd_per_5090_hour": 1.0, "gpu_rates": rates}})
-
-
 def test_costs_joins_runpod_billing_against_our_logs_per_card(app_client, monkeypatch):
     from api.routers import admin
 
-    _rates(monkeypatch, {"NVIDIA GeForce RTX 5090": 1.0, "NVIDIA RTX PRO 4500 Blackwell": 0.5})
     now = time.time()
     iso = admin._iso
     # The wire format: space-separated, NOT the ISO "T" the docs imply.
@@ -141,10 +129,14 @@ def test_costs_joins_runpod_billing_against_our_logs_per_card(app_client, monkey
     db_store.worker_created("w4500", "p4500", "llm", "NVIDIA RTX PRO 4500 Blackwell", 0.25)
     admin._cost_cache.update(at=0.0, data=None)
 
+    db_store.worker_created("w1", "known", "llm", None, 1.0)
     db_store.worker_seen("w1", "llm", gpu_type="NVIDIA GeForce RTX 5090", source="runpod",
                          pod_id="known")
+    db_store.worker_created("w2", "known2", "llm", None, 0.5)
+    db_store.worker_seen("w2", "llm", gpu_type="NVIDIA RTX PRO 4500 Blackwell", source="runpod",
+                         pod_id="known2")
     db_store.create_game("g1", "u1")
-    db_store.charge_game("g1", 1, 100_000)
+    db_store.charge_game("g1", 1, 10_000_000)
     build = db_store.create_build("g1")
     job_id = db_store.enqueue_job("llm", {"p": 1}, game_id="g1", build_id=build)
     db_store.claim_job("llm", "w1", lease_seconds=120)
@@ -153,16 +145,16 @@ def test_costs_joins_runpod_billing_against_our_logs_per_card(app_client, monkey
     db_store.build_finished(build, "built")
     # The game's design ran before the window opened, on another card: it still costs the game.
     design = db_store.enqueue_job("llm", {"p": 0}, game_id="g1", build_id="b1")
-    db_store.claim_job("llm", "w1", lease_seconds=120)
-    db_store.complete_job(design, "w1", {"ok": True}, None, exec_seconds=1800,
+    db_store.claim_job("llm", "w2", lease_seconds=120)
+    db_store.complete_job(design, "w2", {"ok": True}, None, exec_seconds=1800,
                           gpu_type="NVIDIA RTX PRO 4500 Blackwell")
     with db_store._db() as conn:
         conn.execute("UPDATE jobs SET finished_at = ? WHERE id = ?", (now - 2 * 24 * 3600, design))
     db_store.build_finished(db_store.create_build("g1", kind="change"), "built")
     # A platform job (no game) on a card RunPod has no row for in the 24h bucket.
     pj = db_store.enqueue_job("llm", {"p": 2})
-    db_store.claim_job("llm", "w1", lease_seconds=120)
-    db_store.complete_job(pj, "w1", {"ok": True}, None, exec_seconds=360,
+    db_store.claim_job("llm", "w2", lease_seconds=120)
+    db_store.complete_job(pj, "w2", {"ok": True}, None, exec_seconds=360,
                           gpu_type="NVIDIA RTX PRO 4500 Blackwell")
 
     token = _token("root", "admin")
@@ -172,11 +164,11 @@ def test_costs_joins_runpod_billing_against_our_logs_per_card(app_client, monkey
     assert body["runpod_reachable"] is True
     day = next(w for w in body["windows"] if w["label"] == "24h")
     by_gpu = {g["gpu"]: g for g in day["gpus"]}
-    # $0.50 at the pod's $0.50/h is 1 billed GPU-hour; 600 exec seconds of it worked, priced at our $1/h rate.
+    # $0.50 at the pod's $0.50/h is 1 billed GPU-hour; 600 exec seconds of it worked, on w1's $1/h pod.
     assert by_gpu["NVIDIA GeForce RTX 5090"] == {
         "gpu": "NVIDIA GeForce RTX 5090", "alive_seconds": 3600.0, "alive_usd": 0.5,
         "worked_seconds": 600.0, "worked_usd": round(600 / 3600, 4)}
-    # Worked with no ledger row: alive unknown, worked still priced at the card's rate.
+    # Worked with no ledger row: alive unknown, worked still priced at w2's $0.50/h.
     assert by_gpu["NVIDIA RTX PRO 4500 Blackwell"] == {
         "gpu": "NVIDIA RTX PRO 4500 Blackwell", "alive_seconds": None, "alive_usd": None,
         "worked_seconds": 360.0, "worked_usd": 0.05}
@@ -185,6 +177,7 @@ def test_costs_joins_runpod_billing_against_our_logs_per_card(app_client, monkey
     assert day["games"] == {"n": 1, "avg_gpu_hours": round(2400 / 3600, 4),
                             "avg_usd": round(600 / 3600 + 1800 / 3600 * 0.5, 4),
                             "avg_changes": 1.0}
+    assert day["games"]["avg_usd"] == round(db_store.game("g1")["spent_micros"] / 1e6, 4)
 
     month = next(w for w in body["windows"] if w["label"] == "30d")
     by_gpu = {g["gpu"]: g for g in month["gpus"]}

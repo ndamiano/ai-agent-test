@@ -264,21 +264,6 @@ neither metered nor gated. Build and asset enqueues pass it directly; the one bl
 Env `MAESTRO_DATA_DIR`, default `<repo>/data`. Where platform.db + auth.db live — control-plane
 state, deliberately not under `working_directory`.
 
-### `billing`
-
-`usd_per_5090_hour` — the 5090's secure-cloud hourly price, the dollar the rates below are over.
-The admin fleet view shows a pod's own price (`workers.usd_per_hour`, RunPod's pod `cost`,
-written at create) and falls back to `rate × this` for a row without one; nothing bills in
-dollars.
-The same view carries each queue's provider stock-outs (`pod_refusals`, see `docs/deploy.md`
-"Autoscaler"): the outage under way, the count over the last seven days, and the never-pruned
-requests-vs-stock-refusals ratio over 60 days and all time; nothing when zero.
-
-`gpu_rates` — 5090-seconds debited per GPU-second, keyed by the `gpu_type` string the worker
-reports (`nvidia-smi`'s name): each card's secure-cloud hourly price over the 5090's. A
-card missing from the map bills at 1.0 and logs a warning once. The block merges over the
-defaults, so a file that names it carries every card (`docs/compute_billing_plan.md`).
-
 ### `play.origin` / `play.app_origin`
 
 Set BOTH to serve games from their own registrable domain; empty means one origin. settings.json
@@ -316,6 +301,13 @@ block with its own template id — the same image, told its queue by the scaler.
 only when RunPod refuses that create, since the cards are not substitutes. Which card a pod GOT is the worker's to report, from the device — a control plane that
 records its own request records the first list entry forever (measured 2026-08-01: 879 prod jobs
 stamped 5090, the bill entirely RTX PRO 4500).
+
+A pod's price is RunPod's own (`workers.usd_per_hour`, the pod's `costPerHr`, written at create),
+and it is what every job that pod runs debits (`docs/compute_billing_plan.md`); there is no rate
+table to keep. The admin fleet view shows it beside each queue's provider stock-outs
+(`pod_refusals`, see `docs/deploy.md` "Autoscaler"): the outage under way, the count over the last
+seven days, and the never-pruned requests-vs-stock-refusals ratio over 60 days and all time;
+nothing when zero.
 
 `llm.model` must be what the engine answers to: it reaches the pod as `LLM_MODEL`, and the
 autoscaled llm image serves `pennyroyal` and refuses to boot under any other name.

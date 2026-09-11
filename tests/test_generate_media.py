@@ -25,7 +25,7 @@ def _env(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
     monkeypatch.setattr(maestro.state, "resolve_base_path", lambda input_path=None: tmp_path)
     store.create_game(RUN, "u1")
-    store.charge_game(RUN, 1, 10_000.0)
+    store.charge_game(RUN, 1, 1_000_000)
 
 
 @pytest.fixture
@@ -250,7 +250,7 @@ def test_an_exhausted_budget_tells_the_model_to_draw_it_instead(run_dir):
     """The compute budget is the only cap on how much art a build may ask for — there is no call
     limit, because a refused enqueue already says so in words the model can act on."""
     with store._db() as conn:
-        conn.execute("UPDATE games SET seconds_used = 10000 WHERE id = ?", (RUN,))
+        conn.execute("UPDATE games SET spent_micros = 1000000 WHERE id = ?", (RUN,))
     out = request_media(RUN, run_dir, "b1", "goblin", "a goblin", STYLE)
     assert out["ok"] is False and "draw this one with code" in out["error"]
     assert _image_jobs() == []

@@ -30,18 +30,18 @@ def test_prompt_meta_mirrors_the_title_and_marks_the_run_buildable():
     assert (row["title"], row["status"]) == ("Moon Miner", "ready")
 
 
-def test_charge_grants_seconds_and_is_durable():
+def test_charge_grants_compute_and_is_durable():
     store.create_game("g1", "u1")
     assert not store.is_charged("g1")
     store.charge_game("g1", 1, 14_400)
     assert store.is_charged("g1")
     row = store.game("g1")
     assert row["credits_spent"] == 1
-    assert row["seconds_granted"] == 14_400
+    assert row["granted_micros"] == 14_400
     # An extension stacks; it never resets.
     store.charge_game("g1", 1, 14_400)
     row = store.game("g1")
-    assert (row["credits_spent"], row["seconds_granted"]) == (2, 28_800)
+    assert (row["credits_spent"], row["granted_micros"]) == (2, 28_800)
 
 
 def test_build_lifecycle():
@@ -58,7 +58,7 @@ def test_a_job_on_a_game_must_name_its_build():
     """Cost and history join on the build, so a game's job with no build is a bug at the enqueue,
     not a row to reconcile later. Platform jobs (no game) stay unattributed."""
     store.create_game("g1", "u1")
-    store.charge_game("g1", 1, 1000)
+    store.charge_game("g1", 1, 1_000_000)
     with pytest.raises(ValueError):
         store.enqueue_job("llm", {}, game_id="g1")
     assert store.enqueue_job("llm", {}, game_id="g1", build_id="b1")

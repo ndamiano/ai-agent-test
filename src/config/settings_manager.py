@@ -55,17 +55,6 @@ class SettingsManager:
                 "slots": int(os.getenv("LLM_SLOTS", "1")),
                 "n_ctx": int(os.getenv("LLM_N_CTX", "32768"))
             },
-            # 5090-seconds debited per GPU-second, by the card the worker reported: each card's
-            # secure-cloud hourly price over the 5090's (RunPod, 2026-09-03).
-            "billing": {
-                "usd_per_5090_hour": 0.99,
-                "gpu_rates": {
-                    "NVIDIA GeForce RTX 5090": 1.0,
-                    "NVIDIA RTX PRO 4500 Blackwell": 0.73,
-                    "NVIDIA RTX PRO 6000 Blackwell Workstation Edition": 2.21,
-                    "NVIDIA RTX PRO 6000 Blackwell Server Edition": 2.11,
-                },
-            },
             "workqueue": {
                 "token": os.getenv("WORKQUEUE_TOKEN", ""),
                 "job_timeout_seconds": int(os.getenv("WORKQUEUE_JOB_TIMEOUT", "1800")),

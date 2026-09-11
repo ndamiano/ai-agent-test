@@ -12,6 +12,7 @@ import base64
 
 from api.routers import workqueue as wq
 from db import store
+from db.estimates import job_micros
 from llm_clients.connector import LLMConnector
 from llm_clients.rate_limiter import get_llm_rate_limiter
 from tools.execution_context import run_scope
@@ -61,12 +62,12 @@ def test_heartbeat_extends_only_the_owners_lease():
 
 def test_complete_debits_the_games_budget_and_worker_busy():
     store.create_game("g1", "u1")
-    store.charge_game("g1", 1, 1000.0)   # enqueue admits against the grant
+    store.charge_game("g1", 1, 1_000_000)   # enqueue admits against the grant
     store.worker_seen("w1", "llm")
     job_id = store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
     store.claim_job("llm", "w1", lease_seconds=60)
     store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=12.5)
-    assert store.game("g1")["seconds_used"] == 12.5
+    assert store.game("g1")["spent_micros"] == job_micros(12.5, None)
     job = store.get_job(job_id)
     assert (job["status"], job["exec_seconds"]) == ("done", 12.5)
 
@@ -116,7 +117,7 @@ def test_a_claim_never_hands_a_worker_the_jobs_metadata(client):
 
 def test_claim_execute_complete_over_http(client):
     store.create_game("g1", "u1")
-    store.charge_game("g1", 1, 1000.0)
+    store.charge_game("g1", 1, 1_000_000)
     store.enqueue_job("llm", {"path": "/v1/responses", "body": {"model": "m"}}, game_id="g1", build_id="b1")
 
     r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1"}, headers=_hdr())
@@ -131,7 +132,7 @@ def test_claim_execute_complete_over_http(client):
         "job_id": job["id"], "worker_id": "w1", "result": {"output": []},
         "exec_seconds": 4.5}, headers=_hdr())
     assert done.json()["ok"] is True
-    assert store.game("g1")["seconds_used"] == 4.5
+    assert store.game("g1")["spent_micros"] == job_micros(4.5, None)
 
 
 def test_complete_offloads_the_glb_to_the_blob_dir(client, tmp_path, monkeypatch):
@@ -327,11 +328,11 @@ def test_connector_round_trip(fake_worker):
 
 def test_connector_attributes_jobs_to_the_run_scope(fake_worker):
     store.create_game("g9", "u1")
-    store.charge_game("g9", 1, 1000.0)
+    store.charge_game("g9", 1, 1_000_000)
     fake_worker(lambda p: ({"choices": [{"message": {"content": ""}}]}, None))
     with run_scope("g9", "b1"):
         _connector().generate_with_tools([{"role": "user", "content": "hi"}], [])
-    assert store.game("g9")["seconds_used"] == 1.0
+    assert store.game("g9")["spent_micros"] == job_micros(1.0, None)
 
 
 def test_a_blocking_callers_reply_is_whole_until_read_then_elided(fake_worker):

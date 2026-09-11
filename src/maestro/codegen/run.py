@@ -25,7 +25,7 @@ import uuid
 from typing import Optional
 
 from auth import store
-from auth.billing import SECONDS_PER_CREDIT
+from auth.billing import MICROS_PER_CREDIT
 from db import store as db_store
 from maestro.codegen import build_chain, build_state, design
 from maestro.codegen.staging import game_dir, is_staged
@@ -136,8 +136,8 @@ def _new_run(request: str) -> Optional[str]:
         return None
     run_id = create_run(users[0].id)
     # The CLI is the employee path — no credit charge, but the compute budget still gates every
-    # enqueue, so grant the same seconds a charged build would get or step 1 is refused.
-    db_store.charge_game(run_id, 0, SECONDS_PER_CREDIT)
+    # enqueue, so grant the same budget a charged build would get or step 1 is refused.
+    db_store.charge_game(run_id, 0, MICROS_PER_CREDIT)
     open_ask(run_id, request)
     print(f"run: {run_id}\nask: {request!r}\ndesigning...")
     prompt = design.generate(run_id, request)

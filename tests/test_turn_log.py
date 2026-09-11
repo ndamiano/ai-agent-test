@@ -29,7 +29,7 @@ def run(tmp_path, monkeypatch):
     user = auth_store.create_user("alice", "pw-pass1234", role="admin", email="alice@example.com")
     run_id = create_run(user.id)
     RunState(run_id).write_spec({"request": "make a game", "title": "Moon Miner"})
-    db_store.charge_game(run_id, 1, 3600)
+    db_store.charge_game(run_id, 1, 1_000_000)
     return run_id
 
 

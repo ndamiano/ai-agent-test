@@ -13,7 +13,7 @@ from auth.deps import require_admin
 from auth.store import User
 from config.settings_manager import settings_manager
 from db import store as db_store
-from db.estimates import QUEUE_SECONDS, gpu_rate
+from db.estimates import QUEUE_SECONDS
 from maestro.codegen import build_chain
 from scaler.runpod_client import RunPodClient
 
@@ -50,13 +50,6 @@ def _stockouts(queue: str, now: float) -> Dict[str, Any]:
     }
 
 
-def _usd_per_hour(gpu_type) -> Optional[float]:
-    if not gpu_type:
-        return None
-    billing = settings_manager.get_settings()["billing"]
-    return round(gpu_rate(gpu_type) * float(billing["usd_per_5090_hour"]), 2)
-
-
 def _workers(queue: str, now: float, freshness: float) -> List[Dict[str, Any]]:
     """Returns a list of live workers."""
     held = {j["worker_id"]: j for j in db_store.claimed_jobs(queue)}
@@ -75,7 +68,7 @@ def _workers(queue: str, now: float, freshness: float) -> List[Dict[str, Any]]:
             "busy_seconds": w["busy_seconds"],
             "job": job and {"id": job["id"], "game_id": job["game_id"], "build_id": job["build_id"],
                             "running_seconds": now - (job["started_at"] or now),
-                            "est_seconds": job["est_seconds"]},
+                            "est_seconds": QUEUE_SECONDS[queue]},
         })
     return rows
 
@@ -102,7 +95,7 @@ async def get_queues(_: User = Depends(require_admin)) -> Dict[str, Any]:
             "est_seconds": QUEUE_SECONDS[q],
             "backlog_seconds": db_store.backlog_seconds(q),
             "next": [{"id": j["id"], "game_id": j["game_id"], "build_id": j["build_id"],
-                      "waiting_seconds": now - j["created_at"], "est_seconds": j["est_seconds"]}
+                      "waiting_seconds": now - j["created_at"], "est_seconds": QUEUE_SECONDS[q]}
                      for j in db_store.pending_jobs_head(q, _NEXT_LIMIT)],
             "workers": workers,
             "stockouts": _stockouts(q, now),
@@ -146,8 +139,8 @@ async def list_violations(_: User = Depends(require_admin)) -> Dict[str, Any]:
 # boot-loop pods that never worked at all. The join is the point: per card, the gap between the
 # two IS the overhead, and a pod RunPod billed that no worker row ever claimed is GHOST spend
 # (measured 2026-08-01: two ninfer boot-loops billed ~15 min each, invisible to every
-# jobs-derived number). Worked seconds are priced at our own rate table, so a card's worked_usd
-# beside its alive_usd is what the same hours would have cost with zero overhead.
+# jobs-derived number). Worked seconds are priced at the rate of the pod that ran each job, so a
+# card's worked_usd beside its alive_usd is what the same hours would have cost with zero overhead.
 
 _WINDOWS = [("24h", 24), ("7d", 7 * 24), ("30d", 30 * 24)]
 _COST_CACHE_TTL = 300.0
@@ -203,10 +196,6 @@ def _alive_by_gpu(rows: List[Dict], since: float,
     return out
 
 
-def _worked_usd(gpu: str, seconds: float) -> float:
-    return seconds / 3600.0 * (_usd_per_hour(gpu) or 0.0)
-
-
 def _window(label: str, since: float, billing_rows, pods: Dict[str, Dict]) -> Dict[str, Any]:
     """One window: per card, the wall-clock RunPod billed beside the seconds our jobs ran on it —
     the gap is boot, idle and warmup — and what a game cost on average. A game belongs to the
@@ -216,19 +205,19 @@ def _window(label: str, since: float, billing_rows, pods: Dict[str, Dict]) -> Di
     gpus = []
     for gpu in sorted(set(worked) | set(alive or {})):
         a = (alive or {}).get(gpu)
-        w = worked.get(gpu, 0.0)
+        w = worked.get(gpu, {"seconds": 0.0, "micros": 0})
         gpus.append({
             "gpu": gpu,
             "alive_seconds": a["seconds"] if a else None,
             "alive_usd": round(a["usd"], 4) if a else None,
-            "worked_seconds": w,
-            "worked_usd": round(_worked_usd(gpu, w), 4),
+            "worked_seconds": w["seconds"],
+            "worked_usd": round(w["micros"] / 1e6, 4),
         })
     game_ids = db_store.games_built_since(since)
-    per_game = db_store.games_exec_seconds_by_gpu(game_ids)
+    per_game = db_store.games_exec_seconds_by_gpu(game_ids).values()
     n = len(game_ids)
-    seconds = sum(per_game.values())
-    usd = sum(_worked_usd(g, s) for g, s in per_game.items())
+    seconds = sum(g["seconds"] for g in per_game)
+    usd = sum(g["micros"] for g in per_game) / 1e6
     return {
         "label": label,
         "gpus": gpus,

@@ -7,8 +7,8 @@ the scaleout S3 usage hook) drop in HERE, leaving the ledger and the build gate 
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
-# One credit buys this much GPU-execution budget (3 hours of 5090-seconds).
-SECONDS_PER_CREDIT = 10_800
+# One credit buys this much GPU-execution budget, in micros ($3.00).
+MICROS_PER_CREDIT = 3_000_000
 
 USD_CENTS_PER_CREDIT = 500
 

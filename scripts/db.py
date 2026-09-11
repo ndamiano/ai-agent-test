@@ -28,18 +28,18 @@ QUERIES = {
     "cost": """
         SELECT substr(g.id,1,8) AS game, g.status,
                g.credits_spent AS credits,
-               round(g.seconds_used/60.0, 1) AS gpu_min,
-               round(100.0*g.seconds_used/nullif(g.seconds_granted,0), 1) AS pct_budget,
+               round(g.spent_micros/1e6, 3) AS usd,
+               round(100.0*g.spent_micros/nullif(g.granted_micros,0), 1) AS pct_budget,
                (SELECT count(*) FROM builds b WHERE b.game_id=g.id) AS builds,
                (SELECT group_concat(DISTINCT j.model) FROM jobs j
                  WHERE j.game_id=g.id AND j.queue='llm') AS served
           FROM games g
-         WHERE g.created_at > :since AND g.seconds_used > 0
-         ORDER BY g.seconds_used DESC
+         WHERE g.created_at > :since AND g.spent_micros > 0
+         ORDER BY g.spent_micros DESC
     """,
     "builds": """
         SELECT substr(b.id,1,8) AS build, substr(b.game_id,1,8) AS game, b.kind, b.status,
-               b.steps, round(b.seconds_used/60.0, 1) AS gpu_min,
+               b.steps, round(b.spent_micros/1e6, 3) AS usd,
                round((b.finished_at - b.started_at)/60.0, 1) AS wall_min
           FROM builds b
          WHERE b.queued_at > :since

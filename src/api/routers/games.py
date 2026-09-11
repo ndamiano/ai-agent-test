@@ -18,12 +18,12 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from auth import playgrants, store
-from auth.billing import SECONDS_PER_CREDIT, cost
+from auth.billing import MICROS_PER_CREDIT, cost
 from auth.deps import get_current_user
 from auth.store import User
 from config.settings_manager import settings_manager
 from db import store as db_store
-from db.estimates import cheapest_seconds
+from db.estimates import cheapest_micros
 from maestro.codegen import archive, build_chain
 from maestro.codegen.assets import (AlreadyRendering, add_assets, entry_kind, ext_for, read_manifest,
                                     regenerate_asset)
@@ -81,11 +81,9 @@ def _require_compute(run_id: str) -> None:
     """Refuse work a game can't pay for, BEFORE it occupies the build queue. Enqueue enforces the
     same budget per job, so this is the fast, legible failure rather than the safety net: without
     it a broke run wins the GPU slot and then thrashes on refused jobs until its step cap."""
-    remaining = db_store.compute_remaining(run_id)
-    if remaining < cheapest_seconds():
+    if db_store.compute_remaining(run_id) < cheapest_micros():
         raise HTTPException(status_code=402, detail={
-            "reason": "compute_exhausted", "run_id": run_id,
-            "seconds_remaining": max(0.0, remaining)})
+            "reason": "compute_exhausted", "run_id": run_id})
 
 
 def _require_not_held(run_id: str) -> None:
@@ -146,7 +144,7 @@ async def create_game(body: NewGameBody, user: User = Depends(get_current_user))
     if not store.deduct(user.id, price, "build", run_id):
         raise HTTPException(status_code=402, detail={
             "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
-    db_store.charge_game(run_id, price, price * SECONDS_PER_CREDIT)
+    db_store.charge_game(run_id, price, price * MICROS_PER_CREDIT)
     await asyncio.to_thread(propose_prompt, text, run_id)
     return {"run_id": run_id, "status": "designing"}
 
@@ -180,7 +178,7 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         # Whether a previous attempt left files behind — what the from-scratch build would discard.
         "has_game": has_authored_files(state.run_dir),
         "credits_spent": row.get("credits_spent", 0),
-        # Compute budget as a fraction remaining (0..1), never raw seconds — seconds_used is
+        # Compute budget as a fraction remaining (0..1), never raw spend — spent_micros is
         # deliberately not surfaced (it would expose actual GPU spend). None ⇒ uncharged, no bar.
         "budget_pct_remaining": _budget_pct(row, run_id),
     }
@@ -208,7 +206,7 @@ async def play_session(run_id: str, user: User = Depends(get_current_user)):
 
 
 def _budget_pct(row: Dict, run_id: str) -> Optional[float]:
-    granted = row.get("seconds_granted", 0)
+    granted = row.get("granted_micros", 0)
     if granted <= 0:
         return None
     return max(0.0, min(1.0, db_store.compute_remaining(run_id) / granted))
@@ -335,7 +333,7 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
         if not store.deduct(user.id, price, "build", run_id):
             raise HTTPException(status_code=402, detail={
                 "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
-        db_store.charge_game(run_id, price, price * SECONDS_PER_CREDIT)
+        db_store.charge_game(run_id, price, price * MICROS_PER_CREDIT)
     _require_compute(run_id)
 
     # kickoff seeds the game folder before enqueueing the first llm turn, so it touches disk.

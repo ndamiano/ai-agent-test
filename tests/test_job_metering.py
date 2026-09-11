@@ -53,45 +53,59 @@ def test_a_failed_job_keeps_the_requested_model():
     assert store.get_job(job_id)["model"] == "qwen3.6_27b"
 
 
-WK = "NVIDIA RTX PRO 6000 Blackwell Workstation Edition"
-
-
-def test_a_pricier_card_debits_more_than_one_second_per_second():
-    job_id = _job()
-    store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=10.0, gpu_type=WK)
-    game = store.game("g1"); job = store.get_job(job_id)
-    assert game["seconds_used"] == pytest.approx(22.1)
-    assert (job["exec_seconds"], job["billed_seconds"]) == (10.0, pytest.approx(22.1))
-
-
-def test_a_5090_debits_one_for_one():
-    job_id = _job()
-    store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=10.0,
-                       gpu_type="NVIDIA GeForce RTX 5090")
-    assert store.game("g1")["seconds_used"] == 10.0
-
-
-def test_an_unrated_or_unknown_card_debits_one_for_one():
-    """A card with no rate under-bills rather than refusing work; the warning is the signal."""
-    for game, gpu in (("g2", "NVIDIA H100 80GB HBM3"), ("g3", None)):
+def _priced_job(usd_per_hour, game="g1", build_id="b1") -> str:
+    """A job claimed by a pod the scaler priced at `usd_per_hour` (None: never priced)."""
+    worker = f"w-{usd_per_hour}"
+    if store.game(game) is None:
         store.create_game(game, "u1")
-        store.charge_game(game, 1, 10_000.0)
-        job_id = store.enqueue_job("llm", {}, game_id=game, build_id="b1")
-        store.worker_seen("w1", "llm")
-        store.claim_job("llm", "w1", 60)
-        store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=4.0, gpu_type=gpu)
-        assert store.game(game)["seconds_used"] == 4.0
+        store.charge_game(game, 1, 10_000_000)
+    store.worker_created(worker, f"p-{usd_per_hour}", "llm", None, usd_per_hour)
+    job_id = store.enqueue_job("llm", {}, game_id=game, build_id=build_id)
+    store.claim_job("llm", worker, 60)
+    return job_id
 
 
-def test_the_builds_debit_is_weighted_like_the_games():
+def _finish(job_id, usd_per_hour, exec_seconds, error=None):
+    store.complete_job(job_id, f"w-{usd_per_hour}", None if error else {"out": 1}, error,
+                       exec_seconds=exec_seconds)
+
+
+def test_a_job_debits_its_pods_own_rate_rounded_up_to_the_micro():
+    job_id = _priced_job(2.21)
+    _finish(job_id, 2.21, 47.0)
+    # $2.21/h × 47 s = $0.0288527… → 28,853 micros.
+    assert store.game("g1")["spent_micros"] == 28_853
+    assert store.get_job(job_id)["billed_micros"] == 28_853
+
+
+def test_a_second_at_the_fallback_rate_is_275_micros():
+    _finish(_priced_job(0.99), 0.99, 1.0)
+    assert store.game("g1")["spent_micros"] == 275
+
+
+def test_a_worker_with_no_rate_debits_at_the_fallback():
+    _finish(_priced_job(None), None, 1.0)
+    assert store.game("g1")["spent_micros"] == 275
+
+
+def test_a_pricier_pod_debits_more_for_the_same_seconds():
+    _finish(_priced_job(2.19, game="g1"), 2.19, 100.0)
+    _finish(_priced_job(0.99, game="g2"), 0.99, 100.0)
+    ratio = store.game("g1")["spent_micros"] / store.game("g2")["spent_micros"]
+    assert ratio == pytest.approx(2.19 / 0.99, rel=1e-4)
+
+
+def test_the_builds_debit_matches_the_games():
+    store.create_game("g1", "u1")
+    store.charge_game("g1", 1, 10_000_000)
     build_id = store.create_build("g1")
-    job_id = _job(build_id=build_id)
-    store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=10.0, gpu_type=WK)
-    assert store.builds_for("g1")[0]["seconds_used"] == pytest.approx(22.1)
+    _finish(_priced_job(2.21, build_id=build_id), 2.21, 47.0)
+    assert store.builds_for("g1")[0]["spent_micros"] == 28_853
 
 
-def test_the_job_row_keeps_raw_exec_beside_the_weighted_debit():
-    job_id = _job()
-    store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=10.0, gpu_type=WK)
+def test_a_failed_job_debits_nothing_but_its_row_keeps_the_price():
+    job_id = _priced_job(2.21)
+    _finish(job_id, 2.21, 47.0, error="status 500")
     job = store.get_job(job_id)
-    assert (job["exec_seconds"], job["billed_seconds"]) == (10.0, pytest.approx(22.1))
+    assert store.game("g1")["spent_micros"] == 0
+    assert (job["exec_seconds"], job["billed_micros"]) == (47.0, 28_853)

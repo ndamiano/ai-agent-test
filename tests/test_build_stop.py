@@ -100,7 +100,7 @@ def quiet(monkeypatch):
 
 def _game(tmp_runs, run_id="g1", ask="a game about frogs"):
     store.create_game(run_id, "u1")
-    store.charge_game(run_id, 1, 100000)
+    store.charge_game(run_id, 1, 1_000_000)
     RunState(run_id).write_spec({"ask": ask, "title": "frogs"})
     return run_id
 
@@ -140,7 +140,7 @@ def test_stop_cancels_a_claimed_design_job_and_its_late_result_is_dropped(tmp_ru
     assert build_chain.stop(run_id) is True
     assert store.get_job(job)["status"] == "failed"
     assert store.complete_job(job, "w1", {"choices": []}, None, 12.0) is None
-    assert store.game(run_id)["seconds_used"] == 0
+    assert store.game(run_id)["spent_micros"] == 0
 
 
 def test_stop_releases_the_reservation(tmp_runs, quiet):
@@ -239,7 +239,7 @@ def test_an_admin_stops_a_run_owned_by_someone_else(tmp_runs, app_client, quiet)
     owner, _ = _user("alice")
     _, admin_hdr = _user("root", role="admin")
     store.create_game("g1", owner.id)
-    store.charge_game("g1", 1, 100000)
+    store.charge_game("g1", 1, 1_000_000)
     RunState("g1").write_spec({"ask": "x", "title": "x"})
     bid = store.create_build("g1", kind="design")
     store.build_started(bid)

@@ -12,9 +12,9 @@ import pytest
 from db import store
 
 
-def _game(seconds: float = 10_000.0, game_id: str = "g1") -> str:
+def _game(micros: int = 1_000_000, game_id: str = "g1") -> str:
     store.create_game(game_id, "u1")
-    store.charge_game(game_id, 1, seconds)
+    store.charge_game(game_id, 1, micros)
     return game_id
 
 
@@ -80,13 +80,13 @@ def test_a_continuation_inherits_its_parent_game_batch_and_build():
     assert child["queue"] == "mesh"
 
 
-def test_a_continuations_seconds_debit_the_parents_game():
-    _game(10_000.0)
+def test_a_continuations_cost_debits_the_parents_game():
+    _game()
     out = _complete(_image_job("b1"), continuation=_MESH)
-    before = store.game("g1")["seconds_used"]
+    before = store.game("g1")["spent_micros"]
     store.claim_job("mesh", "w2", lease_seconds=60)
     store.complete_job(out["continuation_id"], "w2", {"glb_file": "/x.glb"}, None, 30.0)
-    assert store.game("g1")["seconds_used"] == pytest.approx(before + 30.0)
+    assert store.game("g1")["spent_micros"] == before + store.job_micros(30.0, None)
 
 
 def test_a_failed_job_enqueues_no_continuation():
@@ -99,7 +99,7 @@ def test_a_failed_job_enqueues_no_continuation():
 def test_a_refused_continuation_still_finishes_the_batch():
     """A budget refusal mid-chain must not strand the batch: the game renders shapes, which is the
     stage's soft-degrade, and the finalize still has to run."""
-    _game(store.estimate_seconds("image") + 1.0)
+    _game(store.reserve_micros("image") + 1)
     out = _complete(_image_job("b1"), continuation=_MESH)
     assert out["continuation_id"] is None
     assert out["batch_complete"] is True
@@ -144,7 +144,7 @@ def test_a_lapsed_lease_is_requeued_without_any_claim_traffic():
 
 
 def test_stale_pending_jobs_fail_and_release_their_reservation():
-    _game(10_000.0)
+    _game()
     store.enqueue_job("mesh", {"k": 1}, game_id="g1", build_id="b1")
     reserved = store.compute_remaining("g1")
     failed = store.fail_stale_pending(-1.0)

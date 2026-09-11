@@ -9,30 +9,30 @@ While the main expected income is from generating games, selling the games peopl
 ## 1. The product & price
 
 - A credit costs $5.
-- Spending a credit on a game starts the build and grants that run 10,800 seconds of 5090
-  GPU-execution (`auth/billing.py`, `SECONDS_PER_CREDIT`).
+- Spending a credit on a game starts the build and grants that run $3.00 of GPU-execution
+  (`auth/billing.py`, `MICROS_PER_CREDIT` — budgets are integer micros, millionths of a dollar).
 - When a run's compute is exhausted, the user can spend another credit to extend the same run by
-  another 3 hours.
+  another $3.00.
 - The frontend shows an obfuscated bar that drains as compute is consumed — no numbers, no
   seconds. The bar is `remaining / granted`.
 
-The 3 hours is a *ceiling*, not a target. Most games should finish well under it; the ceiling exists
+The $3.00 is a *ceiling*, not a target. Most games should finish well under it; the ceiling exists
 so a thrashing build can't burn unbounded compute on our dime.
 
 ---
 
 ## 2. Unit economics
 
-Cost invariant is 5090 GPU-seconds.
+Cost invariant is dollars of GPU-execution, at the hourly price of the pod that ran each job.
 
 |Item|Cost|Margin|
 |---|---|---|
 | Credit | $5.00 |-|
 | RunPod 5090 hour | $0.99 |-|
-| 3 GPU-hr fully burned |$2.97|$2.03|
+| Grant fully burned |$3.00|$2.00|
 | 40 GPU-min build | $0.66 |$4.34 margin|
 
-$2 is the floor, hit only if a run consumes its entire 3-hour ceiling. Faster builds consume less GPU and widen the margin. This aligns the incentive perfectly: every quality improvement that lets a game finish in less compute both improves UX and fattens the margin.
+$2 is the floor, hit only if a run consumes its entire grant. Faster builds consume less GPU and widen the margin. This aligns the incentive perfectly: every quality improvement that lets a game finish in less compute both improves UX and fattens the margin.
 
 Parallelization is a UX optimization only. GPU-hours is the cost invariant, so 10 GPUs for 4 min each costs the same as 1 GPU for 40 min. It shortens wall-clock (nice for asset fan-out) but does not change the bill.
 
@@ -54,7 +54,7 @@ the same transaction that lands the job. Multiple requests run at once, each deb
 completes.
 
 **Overdraw is bounded by reservations** (`db/estimates.py`, landed). Debiting only on completion
-would let a build enqueue far faster than workers complete, so `seconds_used` reads near-zero right
+would let a build enqueue far faster than workers complete, so `spent_micros` reads near-zero right
 up to the moment a grant is already gone. Instead each queue carries a flat estimate — llm 15s,
 image 8s, mesh 90s, each near the p90 of the jobs table's real `exec_seconds` — and enqueue RESERVES that estimate against the grant; the measured debit
 replaces the reservation when the job leaves the queue. A single job that runs longer than its
@@ -62,18 +62,15 @@ estimate is never refused mid-flight, so a game can still overdraw — the reser
 The estimates are a hill-climbable policy constant, not a measurement: tune them against the jobs
 table's real `exec_seconds`.
 
-**The debit is weighted by the card.** A grant is 5090-seconds, and a second on a pricier card
-costs more of them: `billing.gpu_rates` maps the `gpu_type` the worker read off the device to its
-hourly price over the 5090's ($0.99), and `complete_job` debits `exec_seconds × rate`
-(`db/estimates.gpu_rate`). The job row keeps both — `exec_seconds` is what the card ran and
-`billed_seconds` what the game paid — so the ledger survives a rate change, and the admin view's
-`billed` is the weighted sum while `paid` stays raw. A card with no rate bills at 1.0 and logs
-once, so a new card under-bills loudly rather than refusing work. The estimate a job reserves at
-enqueue is NOT weighted: the card is unknown until a worker claims. Built 2026-09-03, when the
-llm queue moved to the RTX PRO 6000 (1.91× Workstation, 2.11× Server) and every build began
-under-billing by half. The rate keys on the worker's reading and nothing else, because rows before
-2026-08-01 carry the type the scaler ASKED for, which was 5090 on every row while the bill was
-entirely RTX PRO 4500.
+**The debit is the pod's own price.** `complete_job` reads the claiming worker's
+`workers.usd_per_hour` — RunPod's `costPerHr`, stamped when the scaler creates the pod — and
+debits `ceil(exec_seconds × rate / 3600)` micros (`db/estimates.job_micros`), so a job on a $2.21
+card costs 2.2× the same seconds on a $0.99 one and a price change reaches the bill with no table
+to update. A worker with no rate (a home box) bills at a flat $0.99/h. The job row keeps both —
+`exec_seconds` is what the card ran and `billed_micros` what it cost — and the admin view's worked
+cost is the sum of those rows. The reservation at enqueue is priced at the same $0.99/h: the card
+is unknown until a worker claims, so a job on a pricier card overdraws its reservation until its
+real debit lands.
 
 ---
 

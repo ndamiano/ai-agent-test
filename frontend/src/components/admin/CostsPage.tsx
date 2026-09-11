@@ -33,7 +33,7 @@ const WindowTable: React.FC<{ w: CostWindow }> = ({ w }) => {
                                 <th className="font-semibold pb-1 pr-3 text-right" title="pod wall-clock RunPod billed">alive</th>
                                 <th className="font-semibold pb-1 pr-3 text-right" title="what RunPod charged for it">cost</th>
                                 <th className="font-semibold pb-1 pr-3 text-right" title="seconds our jobs ran on the card">worked</th>
-                                <th className="font-semibold pb-1 pr-3 text-right" title="worked hours at our rate table — the cost with zero overhead">cost</th>
+                                <th className="font-semibold pb-1 pr-3 text-right" title="worked hours at each pod's own rate — the cost with zero overhead">cost</th>
                                 <th className="font-semibold pb-1 text-right" title="worked ÷ alive">util</th>
                             </tr>
                         </thead>
@@ -93,7 +93,7 @@ const CostsPage: React.FC = () => {
                 <Refresh busy={busy} onClick={load} />
             </div>
             <div className="text-xs text-slate">
-                alive is pod wall-clock RunPod billed; worked is what our jobs ran, priced at our rate table.
+                alive is pod wall-clock RunPod billed; worked is what our jobs ran, priced at the rate of the pod that ran each.
                 A game counts in the window its full build finished in, and costs everything it ever ran: design, art, change rounds.
             </div>
             {costs.windows.map(w => <WindowTable key={w.label} w={w} />)}

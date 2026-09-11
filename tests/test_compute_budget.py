@@ -1,6 +1,6 @@
 """The compute budget: enqueue is the one gate every producer of GPU work passes through.
 
-A game gets seconds_granted when it is charged; workers debit seconds_used as jobs complete. The
+A game gets granted_micros when it is charged; workers debit spent_micros as jobs complete. The
 hole this closes is the window BETWEEN those two: a build enqueues far faster than workers finish,
 so measured spend alone reads near-zero right up to the moment a hundred queued jobs land. Enqueue
 therefore reserves each job's per-queue estimate and admits against grant − used − reserved.
@@ -11,39 +11,39 @@ import threading
 import pytest
 
 from db import queue_client, store
-from db.estimates import estimate_seconds
+from db.estimates import job_micros, reserve_micros
 from tools.execution_context import run_scope
 
 
-def _game(seconds: float = 1000.0, game_id: str = "g1") -> str:
+def _game(micros: int = 1_000_000, game_id: str = "g1") -> str:
     store.create_game(game_id, "u1")
-    store.charge_game(game_id, 1, seconds)
+    store.charge_game(game_id, 1, micros)
     return game_id
 
 
 def test_remaining_starts_at_the_grant():
-    _game(500.0)
-    assert store.compute_remaining("g1") == 500.0
+    _game(500_000)
+    assert store.compute_remaining("g1") == 500_000
 
 
 def test_pending_jobs_reserve_their_estimate():
-    _game(1000.0)
+    _game()
     store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
-    # Nothing has executed, so seconds_used is still zero — the reservation is the whole point.
-    assert store.game("g1")["seconds_used"] == 0
-    assert store.compute_remaining("g1") == 1000.0 - estimate_seconds("llm")
+    # Nothing has executed, so spent_micros is still zero — the reservation is the whole point.
+    assert store.game("g1")["spent_micros"] == 0
+    assert store.compute_remaining("g1") == 1_000_000 - reserve_micros("llm")
 
 
-def test_completion_replaces_the_reservation_with_measured_seconds():
-    _game(1000.0)
+def test_completion_replaces_the_reservation_with_the_measured_cost():
+    _game()
     job_id = store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
     store.worker_seen("w1", "llm")
     store.claim_job("llm", "w1", 60)
     store.complete_job(job_id, "w1", {"ok": True}, None, exec_seconds=12.0)
 
-    assert store.game("g1")["seconds_used"] == 12.0
+    assert store.game("g1")["spent_micros"] == job_micros(12.0, None)
     # The estimate is released; only the real 12s is held against the grant.
-    assert store.compute_remaining("g1") == 988.0
+    assert store.compute_remaining("g1") == 1_000_000 - job_micros(12.0, None)
 
 
 def _build_row(build_id: str):
@@ -51,7 +51,7 @@ def _build_row(build_id: str):
 
 
 def test_a_completed_job_debits_its_build():
-    _game(10_000.0)
+    _game()
     build_id = store.create_build("g1")
     job_id = store.enqueue_job("llm", {}, game_id="g1", build_id=build_id)
     store.worker_seen("w1", "llm")
@@ -59,12 +59,12 @@ def test_a_completed_job_debits_its_build():
 
     store.complete_job(job_id, "w1", {"ok": True}, None, exec_seconds=12.0)
 
-    assert _build_row(build_id)["seconds_used"] == 12.0
+    assert _build_row(build_id)["spent_micros"] == job_micros(12.0, None)
 
 
-def test_build_seconds_accumulate_across_turns():
+def test_build_spend_accumulates_across_turns():
     """A build is a chain of turns; its cost is their sum, not the last one."""
-    _game(10_000.0)
+    _game()
     build_id = store.create_build("g1")
     store.worker_seen("w1", "llm")
     for seconds in (5.0, 7.0, 3.0):
@@ -72,12 +72,12 @@ def test_build_seconds_accumulate_across_turns():
         store.claim_job("llm", "w1", 60)
         store.complete_job(job_id, "w1", {"ok": True}, None, exec_seconds=seconds)
 
-    assert _build_row(build_id)["seconds_used"] == 15.0
+    assert _build_row(build_id)["spent_micros"] == sum(job_micros(s, None) for s in (5.0, 7.0, 3.0))
 
 
 def test_a_failed_job_does_not_debit_its_build():
     """Same rule the game debit follows: only delivered work is billed."""
-    _game(10_000.0)
+    _game()
     build_id = store.create_build("g1")
     job_id = store.enqueue_job("llm", {}, game_id="g1", build_id=build_id)
     store.worker_seen("w1", "llm")
@@ -85,27 +85,27 @@ def test_a_failed_job_does_not_debit_its_build():
 
     store.complete_job(job_id, "w1", None, "boom", exec_seconds=9.0)
 
-    assert _build_row(build_id)["seconds_used"] == 0
+    assert _build_row(build_id)["spent_micros"] == 0
 
 
 def test_a_failed_job_does_not_debit_the_game():
     """The user got nothing out of an OOM or a 500. It burned real GPU time, but that is our cost
     to eat, not theirs to pay."""
-    _game(1000.0)
+    _game()
     job_id = store.enqueue_job("mesh", {}, game_id="g1", build_id="b1")
     store.worker_seen("w1", "mesh")
     store.claim_job("mesh", "w1", 60)
     store.complete_job(job_id, "w1", None, "Status 500: OOM", exec_seconds=180.0)
 
-    assert store.game("g1")["seconds_used"] == 0
+    assert store.game("g1")["spent_micros"] == 0
     # The reservation is released either way — the job is terminal, nothing more will be spent.
-    assert store.compute_remaining("g1") == 1000.0
+    assert store.compute_remaining("g1") == 1_000_000
 
 
 def test_a_failed_job_still_counts_against_the_worker():
     """busy_seconds measures what WE pay the GPU host for, which is real whether or not the user
     got a result. Never conflate it with what the user is billed."""
-    _game(1000.0)
+    _game()
     job_id = store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
     store.worker_seen("w1", "llm")
     store.claim_job("llm", "w1", 60)
@@ -113,61 +113,61 @@ def test_a_failed_job_still_counts_against_the_worker():
 
     (worker,) = store.live_workers("llm", freshness_seconds=60)
     assert worker["busy_seconds"] == 42.0
-    assert store.game("g1")["seconds_used"] == 0
+    assert store.game("g1")["spent_micros"] == 0
 
 
 def test_a_partial_failure_is_not_billed_pro_rata():
     """A job that ran a long time and THEN failed is still a non-delivery — the elapsed seconds
     are not a partial entitlement."""
-    _game(1000.0)
+    _game()
     job_id = store.enqueue_job("mesh", {}, game_id="g1", build_id="b1")
     store.worker_seen("w1", "mesh")
     store.claim_job("mesh", "w1", 600)
     store.complete_job(job_id, "w1", {"partial": True}, "died at 95%", exec_seconds=900.0)
 
-    assert store.game("g1")["seconds_used"] == 0
+    assert store.game("g1")["spent_micros"] == 0
 
 
 def test_abandoned_job_releases_its_reservation():
-    _game(1000.0)
+    _game()
     job_id = store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
-    assert store.compute_remaining("g1") < 1000.0
+    assert store.compute_remaining("g1") < 1_000_000
     assert store.abandon_job(job_id, "timed out") is True
-    assert store.compute_remaining("g1") == 1000.0
+    assert store.compute_remaining("g1") == 1_000_000
     assert store.abandon_job(job_id, "again") is False
 
 
 def test_worker_completing_an_abandoned_job_is_dropped():
     """The enqueuer gave up and the reservation was released; a late completion must not then
     debit the game for work nobody is waiting on."""
-    _game(1000.0)
+    _game()
     job_id = store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
     store.worker_seen("w1", "llm")
     store.claim_job("llm", "w1", 60)
     store.abandon_job(job_id, "timed out")
 
     assert store.complete_job(job_id, "w1", {"ok": True}, None, exec_seconds=99.0) is None
-    assert store.game("g1")["seconds_used"] == 0
+    assert store.game("g1")["spent_micros"] == 0
 
 
 def test_enqueue_refuses_when_the_estimate_does_not_fit():
-    _game(estimate_seconds("mesh") - 1)
+    _game(reserve_micros("mesh") - 1)
     with pytest.raises(store.InsufficientCompute) as exc:
         store.enqueue_job("mesh", {}, game_id="g1", build_id="b1")
-    assert exc.value.needed == estimate_seconds("mesh")
+    assert exc.value.needed == reserve_micros("mesh")
     assert exc.value.game_id == "g1"
 
 
 def test_estimates_are_per_queue_so_a_cheap_job_still_fits():
     """A grant too small for a mesh can still afford an llm call — the gate is per-queue cost,
     not one flat number."""
-    _game(estimate_seconds("mesh") - 1)
-    assert estimate_seconds("llm") < estimate_seconds("mesh")
+    _game(reserve_micros("mesh") - 1)
+    assert reserve_micros("llm") < reserve_micros("mesh")
     store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
 
 
 def test_reservations_accumulate_until_the_grant_is_gone():
-    budget = estimate_seconds("llm") * 3
+    budget = reserve_micros("llm") * 3
     _game(budget)
     for _ in range(3):
         store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
@@ -179,13 +179,13 @@ def test_reservations_accumulate_until_the_grant_is_gone():
 def test_measured_overrun_can_push_remaining_negative_but_still_refuses():
     """Estimates are not caps: a job that runs long overdraws. The gate must read the overdraft
     rather than treating a negative balance as headroom."""
-    _game(50.0)
+    _game(5_000)
     job_id = store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
     store.worker_seen("w1", "llm")
     store.claim_job("llm", "w1", 60)
     store.complete_job(job_id, "w1", {}, None, exec_seconds=500.0)
 
-    assert store.compute_remaining("g1") == -450.0
+    assert store.compute_remaining("g1") == 5_000 - job_micros(500.0, None)
     with pytest.raises(store.InsufficientCompute):
         store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
 
@@ -194,7 +194,7 @@ def test_concurrent_enqueues_cannot_all_take_the_same_headroom():
     """Several threads enqueue at once. A check-then-insert that is not one transaction lets every
     thread read the same remaining seconds and each spend it."""
     fits = 4
-    _game(estimate_seconds("llm") * fits)
+    _game(reserve_micros("llm") * fits)
     admitted, refused = [], []
     start = threading.Barrier(12)
 
@@ -231,7 +231,7 @@ def test_unknown_game_has_no_budget():
 def test_run_scope_attributes_and_gates_every_producer(monkeypatch):
     """The scope is what ties a job to a game. queue_client reads it for EVERY queue, so image and
     mesh work is metered exactly like llm work."""
-    _game(1000.0)
+    _game()
     seen = []
     monkeypatch.setattr(store, "enqueue_job",
                         lambda q, p, **kw: seen.append((q, kw.get("game_id"))) or "j1")
@@ -248,7 +248,7 @@ def test_run_scope_attributes_and_gates_every_producer(monkeypatch):
 def test_refused_job_comes_back_as_a_failed_job_not_an_exception():
     """Callers branch on one shape. A budget refusal must degrade like a timeout — the image and
     mesh stages fall back to shapes, and a build fails its gate rather than crashing the loop."""
-    _game(1.0)
+    _game(1)
     with run_scope("g1", "b1"):
         job = queue_client.run_job("llm", {})
 
@@ -256,11 +256,11 @@ def test_refused_job_comes_back_as_a_failed_job_not_an_exception():
     assert "compute budget exhausted" in job["error"]
 
 
-def test_timed_out_job_is_abandoned_so_it_stops_holding_seconds(monkeypatch):
-    _game(1000.0)
+def test_timed_out_job_is_abandoned_so_it_stops_holding_budget(monkeypatch):
+    _game()
     monkeypatch.setattr(queue_client, "_POLL_INTERVAL", 0.01)
     with run_scope("g1", "b1"):
         job = queue_client.run_job("llm", {}, timeout_seconds=0.05)
 
     assert job["status"] == "failed" and "timed out" in job["error"]
-    assert store.compute_remaining("g1") == 1000.0
+    assert store.compute_remaining("g1") == 1_000_000

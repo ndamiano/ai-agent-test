@@ -261,7 +261,7 @@ state, deliberately not under `working_directory`.
 ### `billing`
 
 `usd_per_5090_hour` — the 5090's secure-cloud hourly price, the dollar the rates below are over.
-The admin fleet view shows a pod's own price (`workers.usd_per_hour`, RunPod's `costPerHr`,
+The admin fleet view shows a pod's own price (`workers.usd_per_hour`, RunPod's pod `cost`,
 written at create) and falls back to `rate × this` for a row without one; nothing bills in
 dollars.
 The same view carries each queue's provider stock-outs (`pod_refusals`, see `docs/deploy.md`

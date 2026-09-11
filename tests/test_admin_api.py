@@ -111,8 +111,8 @@ def test_a_created_pod_is_booting_until_its_worker_registers(app_client):
     assert llm["workers_live"] == 1
 
 
-def _billing(rows_hourly, rows_daily, rows_pods):
-    return {"hourly_24h": rows_hourly, "daily_30d": rows_daily, "pods_30d": rows_pods}
+def _billing(rows_hourly, rows_daily):
+    return {"hourly_24h": rows_hourly, "daily_30d": rows_daily}
 
 
 def _rates(monkeypatch, rates):
@@ -129,18 +129,16 @@ def test_costs_joins_runpod_billing_against_our_logs_per_card(app_client, monkey
     iso = admin._iso
     # The wire format: space-separated, NOT the ISO "T" the docs imply.
     wire = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(now - 3600))
-    hourly = [{"time": wire, "amount": 0.5, "timeBilledMs": 3_600_000,
-               "gpuTypeId": "NVIDIA GeForce RTX 5090"}]
-    daily = [{"time": iso(now - 2 * 24 * 3600), "amount": 2.0, "timeBilledMs": 7_200_000,
-              "gpuTypeId": "NVIDIA GeForce RTX 5090"},
-             {"time": iso(now - 20 * 24 * 3600), "amount": 4.0, "timeBilledMs": 14_400_000,
-              "gpuTypeId": "NVIDIA RTX PRO 4500 Blackwell"}]
-    pods = [{"podId": "known", "time": iso(now - 3600), "amount": 5.0, "timeBilledMs": 20_000_000},
-            {"podId": "boot-looper", "time": iso(now + 60), "amount": 1.5, "timeBilledMs": 1_800_000},
-            # Billed before any worker row existed: predates tracking, NOT a ghost.
-            {"podId": "prehistoric", "time": iso(now - 29 * 24 * 3600), "amount": 9.0,
-             "timeBilledMs": 30_000_000}]
-    monkeypatch.setattr(admin, "_billing_rows", lambda _now: _billing(hourly, daily, pods))
+    # One record per pod per bucket, money only: the card and the rate come from our worker rows.
+    hourly = [{"podId": "p5090", "startTime": wire, "totalAmount": 0.5}]
+    daily = [{"podId": "p5090", "startTime": iso(now - 2 * 24 * 3600), "totalAmount": 2.0},
+             {"podId": "p4500", "startTime": iso(now - 20 * 24 * 3600), "totalAmount": 4.0},
+             {"podId": "boot-looper", "startTime": iso(now + 60), "totalAmount": 1.5},
+             # Billed before any worker row existed: predates tracking, NOT a ghost.
+             {"podId": "prehistoric", "startTime": iso(now - 29 * 24 * 3600), "totalAmount": 9.0}]
+    monkeypatch.setattr(admin, "_billing_rows", lambda _now: _billing(hourly, daily))
+    db_store.worker_created("p5090", "llm", "NVIDIA GeForce RTX 5090", 0.5)
+    db_store.worker_created("p4500", "llm", "NVIDIA RTX PRO 4500 Blackwell", 0.25)
     admin._cost_cache.update(at=0.0, data=None)
 
     db_store.worker_seen("w1", "llm", gpu_type="NVIDIA GeForce RTX 5090", source="runpod",
@@ -174,7 +172,7 @@ def test_costs_joins_runpod_billing_against_our_logs_per_card(app_client, monkey
     assert body["runpod_reachable"] is True
     day = next(w for w in body["windows"] if w["label"] == "24h")
     by_gpu = {g["gpu"]: g for g in day["gpus"]}
-    # $0.50 for 1 billed GPU-hour; 600 exec seconds of it worked, priced at our $1/h rate.
+    # $0.50 at the pod's $0.50/h is 1 billed GPU-hour; 600 exec seconds of it worked, priced at our $1/h rate.
     assert by_gpu["NVIDIA GeForce RTX 5090"] == {
         "gpu": "NVIDIA GeForce RTX 5090", "alive_seconds": 3600.0, "alive_usd": 0.5,
         "worked_seconds": 600.0, "worked_usd": round(600 / 3600, 4)}
@@ -195,7 +193,7 @@ def test_costs_joins_runpod_billing_against_our_logs_per_card(app_client, monkey
 
     # The boot-looper pod billed money but never registered a worker: ghost spend.
     ghost = body["ghost_30d"]
-    assert (ghost["pods"], ghost["amount_usd"], ghost["billed_seconds"]) == (1, 1.5, 1800.0)
+    assert (ghost["pods"], ghost["amount_usd"]) == (1, 1.5)
 
 
 def test_costs_without_a_reachable_ledger_still_reports_our_half(app_client, monkeypatch):

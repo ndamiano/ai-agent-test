@@ -101,7 +101,7 @@ if [ "$rc" -eq 0 ] && [ -n "${RUNPOD_POD_ID:-}" ] && [ -n "${RUNPOD_API_KEY:-}" 
     echo "clean exit — self-terminating pod $RUNPOD_POD_ID"
     for _ in 1 2 3; do
         code=$(curl -s -o /tmp/selfterm.out -w '%{http_code}' -X DELETE \
-            "https://rest.runpod.io/v1/pods/$RUNPOD_POD_ID" \
+            "https://api.runpod.io/v2/pods/$RUNPOD_POD_ID" \
             -H "Authorization: Bearer $RUNPOD_API_KEY")
         case "$code" in 2*|404) echo "self-terminate accepted (HTTP $code)"; break ;; esac
         sleep 2

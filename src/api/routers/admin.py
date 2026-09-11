@@ -163,9 +163,8 @@ def _iso(ts: float) -> str:
 
 
 def _billing_rows(now: float):
-    """Three fetches: hourly for the 24h window (day buckets truncate it), daily for 7d/30d,
-    and per-pod for ghost accounting. None ⇒ no key or the API refused — the panel still shows
-    our half."""
+    """Two fetches: hourly for the 24h window (day buckets truncate it), daily for 7d/30d and
+    ghost accounting. None ⇒ no key or the API refused — the panel still shows our half."""
     key = (settings_manager.get_settings().get("runpod") or {}).get("api_key")
     if not key:
         return None
@@ -174,8 +173,6 @@ def _billing_rows(now: float):
         return {
             "hourly_24h": client.billing_pods(_iso(now - 24 * 3600), _iso(now), bucket="hour"),
             "daily_30d": client.billing_pods(_iso(now - 30 * 24 * 3600), _iso(now), bucket="day"),
-            "pods_30d": client.billing_pods(_iso(now - 30 * 24 * 3600), _iso(now),
-                                            bucket="day", grouping="podId"),
         }
     except Exception:
         return None
@@ -190,14 +187,23 @@ def _parse_time(value: str) -> float:
         return 0.0
 
 
-def _alive_by_gpu(rows: List[Dict], since: float) -> Dict[str, Dict[str, float]]:
+def _billed_seconds(usd: float, usd_per_hour: Optional[float]) -> float:
+    """RunPod's ledger states money, not time: the wall-clock is the amount over the pod's rate,
+    and a pod with no rate on record contributes none."""
+    return usd / usd_per_hour * 3600.0 if usd_per_hour else 0.0
+
+
+def _alive_by_gpu(rows: List[Dict], since: float,
+                  pods: Dict[str, Dict]) -> Dict[str, Dict[str, float]]:
     out: Dict[str, Dict[str, float]] = {}
     for r in rows:
-        if _parse_time(r.get("time", "")) < since:
+        if _parse_time(r.get("startTime", "")) < since:
             continue
-        slot = out.setdefault(r.get("gpuTypeId") or "unknown", {"seconds": 0.0, "usd": 0.0})
-        slot["seconds"] += float(r.get("timeBilledMs") or 0) / 1000.0
-        slot["usd"] += float(r.get("amount") or 0)
+        pod = pods.get(r.get("podId")) or {}
+        usd = float(r.get("totalAmount") or 0)
+        slot = out.setdefault(pod.get("gpu_type") or "unknown", {"seconds": 0.0, "usd": 0.0})
+        slot["seconds"] += _billed_seconds(usd, pod.get("usd_per_hour"))
+        slot["usd"] += usd
     return out
 
 
@@ -205,11 +211,11 @@ def _worked_usd(gpu: str, seconds: float) -> float:
     return seconds / 3600.0 * (_usd_per_hour(gpu) or 0.0)
 
 
-def _window(label: str, since: float, billing_rows) -> Dict[str, Any]:
+def _window(label: str, since: float, billing_rows, pods: Dict[str, Dict]) -> Dict[str, Any]:
     """One window: per card, the wall-clock RunPod billed beside the seconds our jobs ran on it —
     the gap is boot, idle and warmup — and what a game cost on average. A game belongs to the
     window its full build finished in, and costs everything it ever ran: design, art, changes."""
-    alive = _alive_by_gpu(billing_rows, since) if billing_rows is not None else None
+    alive = _alive_by_gpu(billing_rows, since, pods) if billing_rows is not None else None
     worked = db_store.exec_seconds_by_gpu(since)
     gpus = []
     for gpu in sorted(set(worked) | set(alive or {})):
@@ -246,26 +252,24 @@ async def get_costs(_: User = Depends(require_admin)) -> Dict[str, Any]:
         return _cost_cache["data"]
 
     billing = _billing_rows(now)
+    all_workers = db_store.workers_since(0.0)
+    pods = {w["pod_id"]: w for w in all_workers if w.get("pod_id")}
     windows = []
     for label, hours in _WINDOWS:
         rows = None
         if billing is not None:
             rows = billing["hourly_24h"] if hours <= 24 else billing["daily_30d"]
-        windows.append(_window(label, now - hours * 3600, rows))
+        windows.append(_window(label, now - hours * 3600, rows, pods))
 
     ghost = None
     if billing is not None:
-        all_workers = db_store.workers_since(0.0)
-        known = {w.get("pod_id") for w in all_workers}
         # Pods billed before the first worker row existed aren't ghosts — they predate pod
         # tracking entirely. The metric only judges the era it can see.
         tracking_from = min((float(w["started_at"]) for w in all_workers), default=now)
-        ghost_rows = [r for r in billing["pods_30d"]
-                      if r.get("podId") not in known and _parse_time(r.get("time", "")) >= tracking_from]
+        ghost_rows = [r for r in billing["daily_30d"] if r.get("podId") not in pods
+                      and _parse_time(r.get("startTime", "")) >= tracking_from]
         ghost = {"pods": len({r.get("podId") for r in ghost_rows}),
-                 "amount_usd": round(sum(float(r.get("amount") or 0) for r in ghost_rows), 4),
-                 "billed_seconds": sum(float(r.get("timeBilledMs") or 0) / 1000.0
-                                       for r in ghost_rows),
+                 "amount_usd": round(sum(float(r.get("totalAmount") or 0) for r in ghost_rows), 4),
                  "tracking_from": tracking_from}
 
     data = {"generated_at": now, "cache_seconds": _COST_CACHE_TTL,

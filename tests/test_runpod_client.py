@@ -28,23 +28,46 @@ def test_create_pod_payload_shape():
     c = _client()
     c.session.post.return_value = _resp(201, {"id": "pod1"})
     out = c.create_pod("maestro-mesh-a1", "tpl1", ["NVIDIA GeForce RTX 5090"], "vol1",
-                       {"CP_URL": "https://cp", "WORKER_TOKEN": "t"})
+                       {"CP_URL": "https://cp", "WORKER_TOKEN": "t"}, allowed_cuda_versions=["12.8"])
     assert out == {"id": "pod1"}
     url = c.session.post.call_args.args[0]
     body = c.session.post.call_args.kwargs["json"]
-    assert url.endswith("/pods")
-    assert body["gpuTypeIds"] == ["NVIDIA GeForce RTX 5090"]   # a LIST, not a scalar
+    assert url == "https://api.runpod.io/v2/pods"
+    assert body["gpu"] == {"id": "NVIDIA GeForce RTX 5090", "count": 1,
+                           "allowedCudaVersions": ["12.8"]}
     assert body["templateId"] == "tpl1"
-    assert body["networkVolumeId"] == "vol1"
-    assert body["cloudType"] == "SECURE"
-    assert body["gpuCount"] == 1
+    assert body["mounts"] == {"network": [{"volumeId": "vol1", "path": "/workspace"}]}
+    assert body["cloud"] == "SECURE"
     assert body["env"]["WORKER_TOKEN"] == "t"
 
 
-def test_list_pods_returns_the_json():
+def test_create_pod_asks_each_preferred_card_in_order_until_one_is_granted():
     c = _client()
-    c.session.get.return_value = _resp(200, [{"id": "p1"}])
+    c.session.post.side_effect = [_resp(500, text="no instances currently available"),
+                                  _resp(201, {"id": "pod1"})]
+    assert c.create_pod("n", "tpl", ["a", "b", "c"], "vol", {}) == {"id": "pod1"}
+    assert [k.kwargs["json"]["gpu"]["id"] for k in c.session.post.call_args_list] == ["a", "b"]
+
+
+def test_create_pod_refused_on_every_card_raises_every_refusal():
+    c = _client()
+    c.session.post.side_effect = [_resp(500, text="no a"), _resp(500, text="no b")]
+    with pytest.raises(RunPodError, match="no a.*no b"):
+        c.create_pod("n", "tpl", ["a", "b"], "vol", {})
+
+
+def test_list_pods_unwraps_the_envelope():
+    c = _client()
+    c.session.get.return_value = _resp(200, {"pods": [{"id": "p1"}]})
     assert c.list_pods() == [{"id": "p1"}]
+
+
+def test_billing_pods_unwraps_the_records():
+    c = _client()
+    c.session.get.return_value = _resp(200, {"records": [{"podId": "p1"}], "metadata": {}})
+    assert c.billing_pods("s", "e", bucket="hour") == [{"podId": "p1"}]
+    assert c.session.get.call_args.kwargs["params"] == {
+        "startTime": "s", "endTime": "e", "bucketSize": "hour"}
 
 
 def test_terminate_tolerates_404():

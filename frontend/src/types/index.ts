@@ -142,7 +142,7 @@ export interface CostWindow {
 export interface AdminCosts {
     runpod_reachable: boolean
     windows: CostWindow[]
-    ghost_30d: { pods: number; amount_usd: number; billed_seconds: number } | null
+    ghost_30d: { pods: number; amount_usd: number } | null
 }
 
 export interface AdminAnalytics {

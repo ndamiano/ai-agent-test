@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api/client'
 import type { AdminCosts, CostWindow } from '../../types'
-import { Refresh, fmtHours, fmtSecs, fmtUsd, shortGpu } from './format'
+import { Refresh, fmtHours, fmtUsd, shortGpu } from './format'
 
 const usd = (n: number | null): string => n == null ? '—' : fmtUsd(n)
 const hours = (s: number | null): string => s == null ? '—' : fmtHours(s)
@@ -100,7 +100,7 @@ const CostsPage: React.FC = () => {
             {costs.ghost_30d && costs.ghost_30d.pods > 0 && (
                 <div className="text-xs text-wait">
                     ghost spend 30d: {fmtUsd(costs.ghost_30d.amount_usd)} across {costs.ghost_30d.pods} pod{costs.ghost_30d.pods === 1 ? '' : 's'} that
-                    billed {fmtSecs(costs.ghost_30d.billed_seconds)} and never worked a job
+                    never worked a job
                 </div>
             )}
         </div>

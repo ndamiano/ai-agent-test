@@ -27,10 +27,9 @@ from scaler.stats import StatsSource
 
 logger = logging.getLogger("scaler")
 
-# What RunPod's create answers when the ask is fine and the stock is not — the two texts seen on
-# prod 2026-09-04 for a card and a datacenter respectively. Any other refusal (auth, template,
-# network) is our problem, not the provider's inventory, and is recorded under its own kind.
+# Runpod returns a generic 400 error when out of stock, with details in the message.
 _STOCK_MARKERS = ("no instances currently available",
+                  "no longer any instances available",
                   "could not find any pods with required specifications")
 
 
@@ -142,24 +141,10 @@ class Autoscaler:
             logger.error("action %r on queue %s failed: %s", action, queue, e)
 
     def _start_pod(self, name: str, queue: str, qcfg: Dict, rp: Dict, env: Dict) -> None:
-        """Create one pod, PREFERRING the first gpu_type_ids entry.
-
-        The list is a preference set RunPod satisfies by availability, and it documents no
-        priority order — asking for all of them at once is asking for whichever is cheapest to
-        hand out. So ask for the head alone first and widen only when that create is refused: the
-        cards differ in what they can serve, which makes the fallback a real downgrade rather
-        than a substitution."""
+        """Create a GPU pod, preferring the first gpu_type_ids entry."""
         ids = list(qcfg["gpu_type_ids"])
-        # The CUDA floor (`allowed_cuda_versions`) is what the queue's engine needs of the host
-        # driver, and every queue has one engine, so an old-driver host is a dead pod on any card
-        # and the floor rides the widened ask too (measured 2026-08-02: 3 of 4 draws landed
-        # old-driver hosts).
         cuda = qcfg.get("allowed_cuda_versions")
         gpu_asks = [ids[:1], ids] if len(ids) > 1 else [ids]
-        # A volume pins its datacenter, so a queue whose weights are copied onto several volumes
-        # can be served from several datacenters: each volume is asked in turn, the preferred
-        # card first and then the whole list, and the next volume only when a datacenter has
-        # refused every card.
         volumes = qcfg.get("network_volume_ids") or [rp.get("network_volume_id", "")]
         attempts = [(v, ask) for v in volumes for ask in gpu_asks]
         refused: List[Dict] = []
@@ -187,8 +172,8 @@ class Autoscaler:
             logger.info("scale-up %s: created pod %s (%s) on %s, volume %s (cuda %s)",
                         queue, name, pod.get("id"), attempt, volume, cuda)
             self._stats.record_pod_created(queue)
-            rate = pod.get("costPerHr")
+            rate = pod.get("cost")
             self._stats.record_worker_created(
-                pod["id"], queue, (pod.get("machine") or {}).get("gpuTypeId"),
+                pod["id"], queue, (pod.get("gpu") or {}).get("id"),
                 float(rate) if rate is not None else None)
             return

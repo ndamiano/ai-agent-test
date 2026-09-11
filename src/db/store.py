@@ -960,7 +960,8 @@ def workers_since(since: float) -> List[Dict]:
     """Worker rows alive at any point after `since` — for wall-clock and ghost accounting."""
     with _db() as conn:
         rows = conn.execute(
-            "SELECT id, queue, gpu_type, source, pod_id, started_at, last_seen_at, terminated_at "
+            "SELECT id, queue, gpu_type, source, pod_id, usd_per_hour, started_at, last_seen_at, "
+            "terminated_at "
             "FROM workers WHERE COALESCE(terminated_at, last_seen_at) >= ? OR terminated_at IS NULL",
             (since,)).fetchall()
     return [dict(r) for r in rows]

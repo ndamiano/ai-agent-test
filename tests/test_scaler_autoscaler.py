@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock
 
-from scaler.autoscaler import Autoscaler
+from scaler.autoscaler import Autoscaler, refusal_kind
 from scaler.policy import StartPod
 from scaler.stats import WorkerInfo
 from scaler.runpod_client import RunPodError
@@ -227,8 +227,8 @@ def test_no_cuda_floor_configured_sends_none():
 
 def test_a_successful_create_writes_the_worker_row_with_the_pods_price():
     a, client = _scaler()
-    client.create_pod.return_value = {"id": "pod1", "costPerHr": 1.89,
-                                      "machine": {"gpuTypeId": "NVIDIA RTX PRO 6000 Blackwell"}}
+    client.create_pod.return_value = {"id": "pod1", "cost": 1.89,
+                                      "gpu": {"id": "NVIDIA RTX PRO 6000 Blackwell", "count": 1}}
     _start(a)
     a._stats.record_worker_created.assert_called_once_with(
         "pod1", "llm", "NVIDIA RTX PRO 6000 Blackwell", 1.89)
@@ -267,8 +267,8 @@ def test_a_reaped_pod_is_marked_terminated_by_pod_id():
     a._stats.mark_pod_terminated.assert_called_once_with("p1")
 
 
-STOCK_CARD = RunPodError("POST /v1/pods -> 500: create pod: There are no instances currently available")
-STOCK_DC = RunPodError("POST /v1/pods -> 500: create pod: could not find any pods with required specifications")
+STOCK_CARD = RunPodError("POST /v2/pods -> 500: create pod: There are no instances currently available")
+STOCK_DC = RunPodError("POST /v2/pods -> 500: create pod: could not find any pods with required specifications")
 
 
 def test_every_combo_refused_for_stock_is_recorded_once_as_a_stock_out():
@@ -285,7 +285,7 @@ def test_every_combo_refused_for_stock_is_recorded_once_as_a_stock_out():
 
 def test_a_refusal_that_is_not_stock_is_recorded_under_its_own_kind():
     a, client = _scaler()
-    client.create_pod.side_effect = [STOCK_CARD, RunPodError("POST /v1/pods -> 401: unauthorized")]
+    client.create_pod.side_effect = [STOCK_CARD, RunPodError("POST /v2/pods -> 401: unauthorized")]
     _start(a)
     assert a._stats.record_pod_refusal.call_args.args[1] == "other"
 
@@ -309,3 +309,10 @@ def test_a_refused_create_is_not_also_counted_as_created():
     client.create_pod.side_effect = [STOCK_CARD, STOCK_DC]
     _start(a)
     a._stats.record_pod_created.assert_not_called()
+
+
+def test_v2_stock_wording_is_a_stock_out():
+    v2 = ('POST https://api.runpod.io/v2/pods -> 400: {"detail":"There are no longer any instances '
+          'available with the requested specifications. Please refresh and try again.",'
+          '"status":400,"title":"Bad Request"}')
+    assert refusal_kind([v2]) == "stock"

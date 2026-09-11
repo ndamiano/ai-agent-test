@@ -1,14 +1,11 @@
-"""Thin RunPod REST client — plain requests, no SDK.
-
-The full worker env (CP_URL, WORKER_TOKEN, …) is passed at create time, and it overrides the
-template's.
-"""
+"""Thin RunPod REST client"""
 
 from typing import Dict, List, Optional
 
 import requests
 
-BASE_URL = "https://rest.runpod.io/v1"
+BASE_URL = "https://api.runpod.io/v2"
+VOLUME_MOUNT_PATH = "/workspace"
 
 
 class RunPodError(Exception):
@@ -31,37 +28,41 @@ class RunPodClient:
                    network_volume_id: str, env: Dict[str, str],
                    cloud_type: str = "SECURE", gpu_count: int = 1,
                    allowed_cuda_versions: Optional[List[str]] = None) -> Dict:
-        body = {
-            "name": name,
-            "templateId": template_id,
-            "gpuTypeIds": list(gpu_type_ids),
-            "gpuCount": gpu_count,
-            "networkVolumeId": network_volume_id,
-            "env": env,
-            "cloudType": cloud_type,
-        }
-        if allowed_cuda_versions:
-            body["allowedCudaVersions"] = list(allowed_cuda_versions)
-        return self._checked(
-            self.session.post(f"{self.base_url}/pods", json=body, timeout=60)).json()
+        """Create a runpod pod with the defined parameters"""
+        errors = []
+        for gpu_type_id in gpu_type_ids:
+            gpu = {"id": gpu_type_id, "count": gpu_count}
+            if allowed_cuda_versions:
+                gpu["allowedCudaVersions"] = list(allowed_cuda_versions)
+            body = {
+                "name": name,
+                "templateId": template_id,
+                "gpu": gpu,
+                "mounts": {"network": [{"volumeId": network_volume_id,
+                                        "path": VOLUME_MOUNT_PATH}]},
+                "env": env,
+                "cloud": cloud_type,
+            }
+            try:
+                return self._checked(
+                    self.session.post(f"{self.base_url}/pods", json=body, timeout=60)).json()
+            except RunPodError as e:
+                errors.append(str(e))
+        raise RunPodError(" | ".join(errors))
 
     def list_pods(self) -> List[Dict]:
         return self._checked(
-            self.session.get(f"{self.base_url}/pods", timeout=30)).json()
+            self.session.get(f"{self.base_url}/pods", timeout=30)).json()["pods"]
 
-    def billing_pods(self, start_iso: str, end_iso: str, bucket: str = "day",
-                     grouping: str = "gpuTypeId") -> List[Dict]:
-        """Billing rows for the window — RunPod's ledger, the ground truth on what pods COST
-        (wall-clock: cold starts, idle linger and boot-loop failures included, none of which our
-        job rows can see)."""
+    def billing_pods(self, start_iso: str, end_iso: str, bucket: str = "day") -> List[Dict]:
+        """Get runpod's billing results"""
         return self._checked(self.session.get(
             f"{self.base_url}/billing/pods",
-            params={"startTime": start_iso, "endTime": end_iso,
-                    "bucketSize": bucket, "grouping": grouping},
-            timeout=30)).json()
+            params={"startTime": start_iso, "endTime": end_iso, "bucketSize": bucket},
+            timeout=30)).json()["records"]
 
     def terminate_pod(self, pod_id: str) -> None:
         r = self.session.delete(f"{self.base_url}/pods/{pod_id}", timeout=30)
         if r.status_code == 404:
-            return  # already gone — the outcome we wanted
+            return
         self._checked(r)

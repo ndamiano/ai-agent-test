@@ -37,6 +37,9 @@ class BuildCursor:
     # what the SERVER reported for the last turn — an estimate of ours that drifts low would hit the
     # context window with no warning.
     prompt_tokens: int = 0
+    # chars per token of the last prompt the server counted: compaction measures chars, and its
+    # target is a share of the window in tokens.
+    chars_per_token: float = 0.0
     compacted: int = 0                            # compactions so far
     no_call_streak: int = 0
     redriven: int = 0

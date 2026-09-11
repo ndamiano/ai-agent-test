@@ -95,7 +95,8 @@ then, OLDEST ROUND FIRST and only until the tail fits, the FILE BODIES are repla
 a stub naming the path and size — the round still says what the model wrote and edited, and the
 bytes are on disk — and only if that is not enough are the OLDEST WHOLE ROUNDS dropped
 (`build_steps.compact`). A body now sits INSIDE the program that wrote it, so a stub is spliced
-over the string literal's own source span and the rest of the program is left exactly as the model
+over the string literal's own source span — in the call, or in the one assignment that names it,
+because a model writes a big file in named sections — and the rest of the program is left exactly as the model
 wrote it: the loop, the art asks and the order it did things in still say what it DID, which is the
 whole point of keeping the round. A body the program ASSEMBLED has no span and is left whole — the
 program is the only record of how it was made. Rounds are never split — a `tool` message whose assistant `tool_calls`

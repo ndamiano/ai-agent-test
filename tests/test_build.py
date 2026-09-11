@@ -750,6 +750,61 @@ def test_a_body_built_at_runtime_is_left_alone(tmp_path):
     assert left == built
 
 
+def _one_round(code):
+    return [{"role": "user", "content": "go"},
+            {"role": "assistant", "content": "", "tool_calls": [_program(code, 0)]},
+            {"role": "tool", "tool_call_id": "c0", "content": "ok"}]
+
+
+def _left_after_compact(tmp_path, code):
+    (tmp_path / "game").mkdir(exist_ok=True)
+    cursor = _cursor(history=_one_round(code))
+    build_steps.compact(tmp_path, cursor, keep_chars=700)
+    return build_steps.parse_args(
+        cursor.history[-2]["tool_calls"][0]["function"]["arguments"])["code"]
+
+
+def test_a_body_bound_to_a_name_and_passed_by_position_is_stubbed(tmp_path):
+    """The shape of turn 9 of run 8988a28a746e, which wrote every file this way and never had a
+    body stubbed in 30 compactions: sections bound to names, the path passed positionally."""
+    code = (f"util = {'u' * 1281!r}\n"
+            f"data = {'d' * 7904!r}\n"
+            "print(write_file('js/util.js', util))\n"
+            "print(write_file('js/data.js', data))\n"
+            "print('files written', flush=True)")
+    left = _left_after_compact(tmp_path, code)
+    assert "the 1281 chars written to js/util.js" in left
+    assert "the 7904 chars written to js/data.js" in left
+    assert "write_file('js/util.js', util)" in left and "u" * 100 not in left
+    import ast
+    ast.parse(left)
+
+
+def test_a_body_added_from_a_bound_literal_is_stubbed(tmp_path):
+    """Turn 29 of the same run: a section plus a marker the next write appends after."""
+    code = (f"chunk1 = {'c' * 7143!r}\n"
+            "print(write_file('js/main.js', chunk1 + '\\n// __NEXT__\\n'))\n"
+            "print(check_syntax(['js/main.js']))")
+    left = _left_after_compact(tmp_path, code)
+    assert "the 7143 chars written to js/main.js" in left
+    assert "// __NEXT__" in left and "c" * 100 not in left
+
+
+def test_a_name_that_refers_to_itself_is_left_whole():
+    """Bound once, but only to itself: it has no literal to reach, and must not be chased forever."""
+    for code in (f"x = x + {'y' * 900!r}\nwrite_file('a.js', x)",
+                 f"a = b + {'y' * 900!r}\nb = a + ''\nwrite_file('a.js', a)"):
+        assert build_steps._stub_call(_program(code, 0), "on disk") is None
+
+
+def test_a_body_read_back_and_replaced_is_left_whole():
+    """The live build's edits-by-write: a name assigned more than once is built at runtime."""
+    code = ("t = read_file('src/nav.js')\n"
+            f"t = t.replace('old', {'n' * 900!r})\n"
+            "write_file('src/nav.js', t)")
+    assert build_steps._stub_call(_program(code, 0), "on disk") is None
+
+
 def test_compact_is_a_noop_when_nothing_is_superseded_and_it_fits(tmp_path):
     (tmp_path / "game").mkdir()
     h = [{"role": "user", "content": "go"}]
@@ -908,6 +963,27 @@ def test_compaction_fires_when_the_window_has_less_than_the_room_left(tmp_path, 
     cursor.prompt_tokens = 131_072 - build_steps._COMPACT_ROOM + 1
     build_steps._infer(tmp_path, cursor)
     assert cursor.compacted == 1
+
+
+def test_the_server_count_sets_the_chars_per_token(tmp_path, tools):
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    sent = len(cursor.system) + sum(len(json.dumps(m)) for m in cursor.history)
+    build_steps.step({}, tmp_path, tools, cursor,
+                     _reply(code="print(1)", usage={"prompt_tokens": 1000}))
+    assert cursor.chars_per_token == sent / 1000
+
+
+def test_the_keep_target_is_a_third_of_the_window_in_tokens(tmp_path, monkeypatch):
+    """Measured 2026-09-11: a build's transcript ran at 2.9 chars a token, so a target counted at
+    4 kept ~60K of a 131K window instead of a third."""
+    seen = []
+    monkeypatch.setattr(build_steps, "compact",
+                        lambda run_dir, cursor, keep_chars: seen.append(keep_chars) or 0)
+    build_steps._compact(tmp_path, _cursor(chars_per_token=1.9), 131_072)
+    build_steps._compact(tmp_path, _cursor(), 131_072)       # nothing counted yet
+    assert seen == [int(131_072 * build_steps._COMPACT_KEEP * 1.9),
+                    int(131_072 * build_steps._COMPACT_KEEP * 3)]
 
 
 def test_the_compaction_note_carries_the_code_map(tmp_path):

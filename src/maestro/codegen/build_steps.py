@@ -19,7 +19,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from llm_clients.message_builder import MessageBuilder
 from maestro.codegen import asset_use, code_map, file_state, turn_log
@@ -185,6 +185,9 @@ def step(spec, run_dir, tools, cursor, result, error: Optional[str] = None) -> O
 
     usage = result.get("usage") or {}
     cursor.prompt_tokens = usage.get("prompt_tokens") or cursor.prompt_tokens
+    if usage.get("prompt_tokens"):
+        sent = len(cursor.system) + sum(len(json.dumps(m)) for m in cursor.history)
+        cursor.chars_per_token = sent / usage["prompt_tokens"]
     message = (result.get("choices") or [{}])[0].get("message", {}) or {}
     content = message.get("content") or ""
     calls = [tc for tc in (message.get("tool_calls") or []) if tc.get("function", {}).get("name")]
@@ -392,7 +395,9 @@ def _estimate(cursor) -> int:
 
 
 def _compact(run_dir, cursor, ctx: int) -> None:
-    if compact(run_dir, cursor, int(ctx * _COMPACT_KEEP) * 4):
+    # A build's transcript runs nearer 3 chars a token than 4; a guessed 4 kept ~60K of a 131K
+    # window instead of a third.
+    if compact(run_dir, cursor, int(ctx * _COMPACT_KEEP * (cursor.chars_per_token or 3))):
         cursor.compacted += 1
         cursor.prompt_tokens = 0   # unknown until the server reports the trimmed prompt back
 
@@ -455,31 +460,51 @@ def _program_of(tc: dict) -> Optional[str]:
 
 
 def _written_in(code: str) -> List[tuple]:
-    """Every `write_file(path=..., content=<a literal>)` in the program, as (path, span, chars).
+    """Every literal file body the program writes, as (path, span, chars) — one per literal.
 
-    The span is where the literal SITS in the source, so it can be cut out and the rest of the
-    program left exactly as the model wrote it. A body built at runtime — joined, formatted,
-    a variable — has no span and is left alone: the program is the only record of how it was
-    made."""
+    `write_file` takes either argument by position or by name, and a body is a string literal, a
+    name bound once to one, or those added together: a model writes a big file in named sections
+    and passes them in, so the literal usually sits in an assignment, not in the call. The span is
+    where the literal SITS in the source, so it can be cut out and the rest of the program left
+    exactly as the model wrote it. A body built at runtime — formatted, joined, read back and
+    replaced, a name assigned twice — has no span and is left alone: the program is the only record
+    of how it was made."""
     try:
         tree = ast.parse(code)
     except SyntaxError:
         return []
+    stores: Dict[str, int] = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store):
+            stores[n.id] = stores.get(n.id, 0) + 1
+    bound = {t.id: n.value for n in ast.walk(tree) if isinstance(n, ast.Assign)
+             for t in n.targets if isinstance(t, ast.Name)}
+
+    def literals(node, through=frozenset()) -> Optional[list]:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return [node]
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left, right = literals(node.left, through), literals(node.right, through)
+            return None if left is None or right is None else left + right
+        if (isinstance(node, ast.Name) and stores.get(node.id) == 1 and node.id in bound
+                and node.id not in through):   # `x = x + "..."` is bound once and never resolves
+            return literals(bound[node.id], through | {node.id})
+        return None
+
     out = []
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                 and node.func.id == "write_file"):
             continue
         args = {kw.arg: kw.value for kw in node.keywords}
-        path, body = args.get("path"), args.get("content")
-        if not (isinstance(path, ast.Constant) and isinstance(path.value, str)):
+        path = node.args[0] if node.args else args.get("path")
+        body = node.args[1] if len(node.args) > 1 else args.get("content")
+        if not (isinstance(path, ast.Constant) and isinstance(path.value, str)) or body is None:
             continue
-        if not (isinstance(body, ast.Constant) and isinstance(body.value, str)):
-            continue
-        if len(body.value) < _BODY:
-            continue
-        out.append((path.value, (body.lineno, body.col_offset,
-                                 body.end_lineno, body.end_col_offset), len(body.value)))
+        for lit in literals(body) or []:
+            if len(lit.value) >= _BODY:
+                out.append((path.value, (lit.lineno, lit.col_offset,
+                                         lit.end_lineno, lit.end_col_offset), len(lit.value)))
     return out
 
 
@@ -503,8 +528,9 @@ def _stub_call(tc: dict, why: str) -> Optional[dict]:
     code = _program_of(tc)
     if not code:
         return None
-    spans = [(span, json.dumps(f"[the {n} chars written to {path} — {why}]"))
-             for path, span, n in _written_in(code)]
+    # One bound literal can feed two writes; it is cut once.
+    spans = list({span: (span, json.dumps(f"[the {n} chars written to {path} — {why}]"))
+                  for path, span, n in reversed(_written_in(code))}.values())
     if not spans:
         return None
     args = parse_args(tc["function"].get("arguments"))

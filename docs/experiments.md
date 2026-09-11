@@ -2208,3 +2208,36 @@ carry-back for the cache; what it gains is the model's default.
 **Not measured.** Whether seeing its own earlier thinking changes what the model does over a long
 build — it now sees why it did something instead of only that it did. The published gains are
 modest for coding (2–5 points) and none of them is a 100–200-turn loop under compaction.
+
+## 2026-09-11 — a cut kept two thirds of the window, not one (local 5090, qwen3.8_27b quasar)
+
+**What we found.** A design build compacted seven times in 95 turns, the cuts 5 to 17 turns apart,
+where the same design had cut three and seven times in whole builds. Each cut took the prompt from
+~112K to ~83K and the build refilled it in a handful of turns.
+
+**Why.** The keep target is a third of the window, but `compact` measures characters, and the
+target was converted at a fixed 4 chars a token. This transcript ran at 2.9, so "a third" was
+~60K tokens, not ~43K. Two things kept the cuts shallower still: when superseded bodies and
+read-only rounds alone recover 30%, a cut stops there, and the trim tier never ran (below), so
+past that the only deeper cut is dropping whole rounds. The thinking now kept between cuts was not
+it: stripping it saved 2–11% at each cut and changed no cut's outcome.
+
+**What changed.** The ratio is measured: every turn the server counts sets chars-per-token from
+what was sent, and the target is converted at that. 3 until the first count.
+
+**Not measured.** The build that follows.
+
+## 2026-09-11 — the trim tier reads the writes a model actually makes
+
+**What changed.** The stub matcher takes `write_file`'s path and body by position or by name, and
+a body that is a literal, a name bound once to one, or those added together; the literal is cut
+where it sits, in the call or in the one assignment that names it. A name assigned twice, a body
+read back and replaced, a formatted or joined body stays whole. The fixtures are the shapes of real
+transcripts: turn 9 and turn 29 of 8988a28a746e and the read-modify-write of f7f816519d16.
+
+**Measured, by matcher alone.** 8988a28a746e (30 compactions, every one `trimmed: 0`): 14 of 192
+programs stubbable, 138 KB of 652 KB of program bytes (21%) — what the entry above predicted.
+f7f816519d16 (nine compactions by turn 133, every one `trimmed: 0`): 18 of 149 programs, 312 KB of
+360 KB (87%). Every stubbed program still parses.
+
+**Not measured.** A build with the tier working.

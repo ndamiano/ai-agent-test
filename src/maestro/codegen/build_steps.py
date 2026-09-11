@@ -200,22 +200,28 @@ def step(spec, run_dir, tools, cursor, result, error: Optional[str] = None) -> O
         return _infer(run_dir, cursor, report="the reply ran out of room — sending the turn again",
                       full_window=True)
 
+    reply = {"role": "assistant", "content": content}
+    if message.get("reasoning_content"):
+        # The server's cached sequence ends in this thinking; a history that sends it back extends
+        # that sequence exactly, so the next turn prefills its own tail instead of the whole window.
+        reply["reasoning_content"] = message["reasoning_content"]
+
     if not calls:
         # The same nudge produces the same reply, so each one differs and the streak gives up.
         cursor.no_call_streak += 1
-        cursor.history.append({"role": "assistant", "content": content})
+        cursor.history.append(reply)
         cursor.history.append({"role": "user", "content":
                                _nudge(cursor.no_call_streak, run_dir)})
         if cursor.no_call_streak >= _NO_CALL_GIVE_UP:
             return Done(f"stalled: {cursor.no_call_streak} turns with no tool call")
     else:
         if len(content) > 2000:
-            content = "[…analysis truncated…]\n" + content[-2000:]
+            reply["content"] = "[…analysis truncated…]\n" + content[-2000:]
         cursor.no_call_streak = 0
         # One program is the whole of a turn. A model that emits two calls means the second to run
         # after the first, and running both without showing it the first's output would be acting
         # on a result it never saw — so the rest are answered, unrun, and it decides.
-        cursor.history.append({"role": "assistant", "content": content, "tool_calls": calls[:1]})
+        cursor.history.append({**reply, "tool_calls": calls[:1]})
         _apply(tools, cursor, calls[0], run_dir)
         if len(calls) > 1:
             cursor.history.append({"role": "user", "content":
@@ -561,6 +567,12 @@ def trim_bodies(history: List[dict], rounds_to_trim: int) -> List[dict]:
     return out
 
 
+def strip_reasoning(history: List[dict]) -> List[dict]:
+    """Every turn's thinking gone. A cut already breaks the server's cached prefix, so this is the
+    one moment losing it costs no re-prefill — and kept past it, thinking would fill the window."""
+    return [{k: v for k, v in m.items() if k != "reasoning_content"} for m in history]
+
+
 def dedupe_bodies(history: List[dict]) -> List[dict]:
     """The newest written body of each file wins: every older write of the same path becomes a
     stub pointing at the newer copy.
@@ -586,9 +598,9 @@ def dedupe_bodies(history: List[dict]) -> List[dict]:
 
 
 def compact(run_dir, cursor, keep_chars: int) -> int:
-    """Stub every superseded file body and drop the rounds that only looked at files; then,
-    oldest round first, stub the bodies out of rounds until the tail fits `keep_chars`; only if
-    it still does not fit, drop the OLDEST whole rounds. Every compaction ends with a note
+    """Drop every turn's thinking, stub every superseded file body and drop the rounds that only
+    looked at files; then, oldest round first, stub the bodies out of rounds until the tail fits
+    `keep_chars`; only if it still does not fit, drop the OLDEST whole rounds. Every compaction ends with a note
     carrying the CODE MAP — each file, its imports, every declaration with its line range — so
     the model regains the whole picture without a read, and reads by range when it needs one.
 
@@ -596,10 +608,11 @@ def compact(run_dir, cursor, keep_chars: int) -> int:
     file loses the model's memory of having written it. Trimmed, the round still says what the
     model did; the bytes come back on `read_file`. The newest rounds are the last to lose their
     bodies, because they are what the model is about to edit against. Returns the rounds trimmed
-    or dropped, 1 when only superseded bodies or read-only rounds went, 0 when nothing changed."""
+    or dropped, 1 when only thinking, superseded bodies or read-only rounds went, 0 when nothing
+    changed."""
     size = lambda msgs: sum(len(json.dumps(m)) for m in msgs)
     was = size(cursor.history)
-    history = drop_read_only_rounds(dedupe_bodies(cursor.history))
+    history = drop_read_only_rounds(dedupe_bodies(strip_reasoning(cursor.history)))
     deduped = history != cursor.history
     # Superseded bodies and read-only rounds cost the model NOTHING to lose — the newest copy of
     # every file is still there and the rounds that went looked at files without changing any. When

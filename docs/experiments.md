@@ -2172,3 +2172,39 @@ fix needs fixtures taken from a real transcript, not from how we would have writ
 
 **Not measured.** What a build looks like with the tier actually working. The next run raised the
 window from 131,072 to 400,000 instead and never compacted at all, so the tier has still never run.
+
+## 2026-09-11 — every turn re-prefilled the whole window (local 5090, qwen3.8_27b quasar via ninfer)
+
+**What we found.** Timing a compaction arm, a branch of 94 turns spent 21 minutes, half of it in
+prefill, on prompts that only ever grew. The server reported 14% of prompt tokens cached, and on
+nearly every request of a build the cached count was the same number (16,377): the request and
+nothing after it. Every ninfer log back to August shows the same shape — 0 to 6K cached.
+
+**Why.** The server's cached sequence is the turn as the model generated it, thinking included.
+The build stored each reply without its `reasoning_content`, so the next prompt diverged from that
+sequence at the first assistant turn. Qwen3.8's recurrent layers cannot resume from an arbitrary
+prefix, only from a checkpoint the engine saved, and without `--preserve-thinking` ninfer saves
+its one checkpoint at the first assistant turn after the latest user message — right after the
+request.
+
+**Measured.** One real turn of a 49K-token build prompt, replayed on an idle server: with the
+thinking sent back and `preserve_thinking` on, the next request reused 49,361 of 49,378 tokens
+(`append_frontier`) and returned its first token in 90 ms; the same pair without it reused 7,134
+and took 6.7 s. Estimated over the branch above, prefill falls from 10.6 minutes to ~0.7.
+`preserve_thinking` alone, with the thinking still stripped, reused nothing.
+
+**What changed.** Each turn's thinking rides the transcript until the next compaction, which
+drops all of it: a cut already breaks the prefix, and kept past it the thinking — ~91K tokens
+against 220K of everything else on one 112-turn change build, 4–10% of what a design build added
+between cuts — would fill the window. ninfer runs with `--preserve-thinking`. This is also the
+model's own default: Qwen3.8's card enables preserved thinking for all workloads, and the vendors
+that train with it (OpenAI, DeepSeek, MiniMax) require or recommend sending it back.
+
+**Prod never hit the wall.** Its builds dropped the thinking too, but over 951 prod turns turn time
+tracked only the tokens added since the last turn (~7.7K tok/s), not prompt size: a 70K+ prompt
+turned as fast as a 20K one. SGLang resumes from the end of every prompt, so it never needed the
+carry-back for the cache; what it gains is the model's default.
+
+**Not measured.** Whether seeing its own earlier thinking changes what the model does over a long
+build — it now sees why it did something instead of only that it did. The published gains are
+modest for coding (2–5 points) and none of them is a 100–200-turn loop under compaction.

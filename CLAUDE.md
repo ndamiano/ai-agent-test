@@ -110,6 +110,15 @@ tells the model to read them again. The re-grounding matters more than the trim:
 rounds are where the model watched itself write the files, so without it the model edits code it
 no longer remembers.
 
+Each turn's THINKING rides the transcript until the next cut, and the cut drops all of it —
+preserved thinking is the model's own default (Qwen3.8's card). The server's cache holds the sequence the model generated, thinking included, so a history that sends
+the thinking back extends that sequence and the turn prefills only its own tail; a history
+without it diverges right after the request, and every turn re-prefilled the whole window
+(measured 2026-09-11 on ninfer: 14% of prompt tokens cached and half a branch's time spent in
+prefill; sent back, 49,361 of 49,378 reused and the first token in 90 ms instead of 7 s). A cut
+already breaks the prefix, so it is the one moment losing the thinking costs nothing — kept past
+it, a build's thinking would fill the window.
+
 The map alone does not stop the re-reading. Measured 2026-09-08 on a build with ten compactions:
 90 of 95 post-compaction reads were of files ALREADY read, and a quarter of the reads were ranged.
 A map says what the project contains; it does not say that reading a file again returns what the

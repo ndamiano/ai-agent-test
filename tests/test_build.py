@@ -26,9 +26,11 @@ def _done(tmp_path, tools, cursor):
     build_steps.step({}, tmp_path, tools, cursor, _reply(code='done(summary="first pass")'))
 
 
-def _reply(content="", code=None, usage=None, programs=None):
+def _reply(content="", code=None, usage=None, programs=None, reasoning=None):
     """A turn: the model's reply carrying one `python` call whose `code` is the program."""
     msg = {"role": "assistant", "content": content}
+    if reasoning:
+        msg["reasoning_content"] = reasoning
     bodies = programs if programs is not None else ([code] if code is not None else [])
     if bodies:
         msg["tool_calls"] = [
@@ -776,6 +778,31 @@ def test_compaction_replays_the_trim_from_the_turn_log(tmp_path):
     record = json.loads(turn_log.path(tmp_path).read_text().splitlines()[-1])
     assert record["kind"] == "compact" and record["trimmed"] > 0 and record["dropped"] == 0
     assert turn_log._compacted(_file_history(), record) == cursor.history
+
+
+def test_a_turns_thinking_rides_the_transcript(tmp_path, tools):
+    """The server's cached sequence ends in the thinking it generated; a history without it
+    diverges there and the next turn re-prefills the whole window."""
+    cursor = _cursor()
+    build_steps.step({}, tmp_path, tools, cursor, {})
+    build_steps.step({}, tmp_path, tools, cursor, _reply(code="print(1)", reasoning="plan it"))
+    build_steps.step({}, tmp_path, tools, cursor, _reply(content="hm", reasoning="no call"))
+    replies = [m for m in cursor.history if m["role"] == "assistant"]
+    assert [m["reasoning_content"] for m in replies] == ["plan it", "no call"]
+
+
+def test_compaction_drops_every_turns_thinking(tmp_path):
+    """Kept past a cut, thinking would fill the window; the cut already breaks the cached prefix,
+    so it is where the thinking goes — even when nothing else needed to."""
+    (tmp_path / "game").mkdir()
+    history = [{**m, "reasoning_content": "why"} if m["role"] == "assistant" else m
+               for m in _history()]
+    cursor = _cursor(history=list(history))
+    assert build_steps.compact(tmp_path, cursor, keep_chars=10_000_000) > 0
+    assert not any("reasoning_content" in m for m in cursor.history)
+    from maestro.codegen import turn_log
+    record = json.loads(turn_log.path(tmp_path).read_text().splitlines()[-1])
+    assert turn_log._compacted(history, record) == cursor.history
 
 
 def test_replies_cut_off_at_the_cap_count_toward_the_stall(tmp_path, tools):

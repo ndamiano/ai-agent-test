@@ -87,7 +87,8 @@ tok/s), compiled for `sm_120a` alone. It serves `chat` only.
   --presence-penalty 0 \
   --cors \
   --vision \
-  --kv-dtype int8
+  --kv-dtype int8 \
+  --preserve-thinking
 ```
 
 `--vision` is what lets a worldgen build show the model its own renders — the refine stages send
@@ -101,6 +102,11 @@ thinking is `llm.reasoning` (below), sent as `reasoning_effort` on every call, a
 thinking-budget flag — the build's per-turn output cap, `n_ctx − prompt`, is what bounds it,
 because ninfer admits a request only when prompt + max_tokens fits `--max-context`. `--model-id`
 must match `llm.model` in settings.json.
+`--preserve-thinking` is what makes a build's turns hit the cache. The build sends each turn's
+thinking back, so the next request extends the sequence the server already holds and prefills
+only the new tail. Without the flag ninfer renders every assistant turn before the latest user
+message — a nudge, a compaction note — without its thinking, the prefix diverges there, and each
+turn re-prefills the window from that point. The log line's `reuse=append_frontier` is a hit.
 
 ### LLM — llama.cpp
 

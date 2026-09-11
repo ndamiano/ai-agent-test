@@ -73,7 +73,9 @@ src/
                          runs it — the LEDGER of what that program called (which is what the feed
                          line, the repeat note and the `done` signal are all read off, since a
                          program's calls are not in its arguments),
-                         the transcript, compaction (`CLAUDE.md`; the note it ends with carries
+                         the transcript (each turn's thinking kept until the next cut, because the
+                         server's cache is the sequence as generated), compaction (`CLAUDE.md`; the
+                         note it ends with carries
                          `code_map`), the DONE-NUDGE (`cursor.done_nudged` — asked
                          once, then the next `done` is taken), and
                          every way a reply TOO BIG TO LAND arrives. A reply cut off before any tool
@@ -110,7 +112,8 @@ src/
                          and a `turn` record carries only what that turn ADDED — turn k is
                          `system + tools + concat(added[0..k])`. A `compact` record carries the
                          rounds `build_steps.compact` trimmed to stubs and dropped, and the note
-                         it ended with; the newest-copy-wins pass and the read-only-round drop are
+                         it ended with; the thinking drop, the newest-copy-wins pass and the
+                         read-only-round drop are
                          functions of the transcript alone, so a replay shows what was really
                          sent. A FIX appends its own meta and never truncates.
       file_state.py      what the build has READ and whether it still says the same thing: every

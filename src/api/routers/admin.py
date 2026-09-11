@@ -58,8 +58,7 @@ def _usd_per_hour(gpu_type) -> Optional[float]:
 
 
 def _workers(queue: str, now: float, freshness: float) -> List[Dict[str, Any]]:
-    """Every worker the queue has: the live ones and the pods created for it that no worker has
-    registered from yet — billed, and fleet, from the create."""
+    """Returns a list of live workers."""
     held = {j["worker_id"]: j for j in db_store.claimed_jobs(queue)}
     rows = []
     for w in db_store.booting_workers(queue) + db_store.live_workers(queue, freshness):
@@ -83,9 +82,7 @@ def _workers(queue: str, now: float, freshness: float) -> List[Dict[str, Any]]:
 
 @router.get("/queues")
 async def get_queues(_: User = Depends(require_admin)) -> Dict[str, Any]:
-    """Per-queue snapshot: depth and backlog, the next jobs in claim order, the fleet with
-    what each worker holds, and the provider's stock refusals. Pure visualization — no spend
-    here."""
+    """Returns a queue snapshot: depth and backlog, current scaled fleet."""
     now = time.time()
     freshness = _freshness()
 
@@ -119,7 +116,7 @@ async def get_queues(_: User = Depends(require_admin)) -> Dict[str, Any]:
 
 @router.get("/analytics")
 async def get_analytics(days: int = 14, _: User = Depends(require_admin)) -> Dict[str, Any]:
-    """Usage funnel: per day, event counts by kind plus distinct active users. Newest day first."""
+    """Returns the usage funnel: per day, event counts by kind plus distinct active users."""
     days = max(1, min(days, 90))
     rollup = db_store.user_event_rollup(time.time() - days * _DAY_SECONDS)
     by_day: Dict[str, Dict[str, int]] = {}
@@ -135,8 +132,7 @@ async def get_analytics(days: int = 14, _: User = Depends(require_admin)) -> Dic
 
 @router.get("/violations")
 async def list_violations(_: User = Depends(require_admin)) -> Dict[str, Any]:
-    """Safety refusals, newest first, with the offending account's handle — the repeat-offender
-    view. Rows carry the matched term(s) only, never the flagged text."""
+    """Safety refusals, with the offending account's handle."""
     handles = {u.id: u.handle for u in auth_store.list_users()}
     rows = db_store.list_violations()
     for r in rows:

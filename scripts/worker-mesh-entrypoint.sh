@@ -63,7 +63,8 @@ python -m worker.agent \
     --queue mesh \
     --target "http://127.0.0.1:$TRELLIS_PORT" \
     --source runpod \
-    ${IDLE_EXIT_SECONDS:+--idle-exit-seconds "$IDLE_EXIT_SECONDS"} &
+    ${IDLE_EXIT_SECONDS:+--idle-exit-seconds "$IDLE_EXIT_SECONDS"} \
+    "$@" &
 agent_pid=$!
 
 trap 'kill -TERM "$agent_pid" 2>/dev/null || true' TERM INT

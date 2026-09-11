@@ -25,7 +25,7 @@ class RunPodClient:
         return r
 
     def create_pod(self, name: str, template_id: str, gpu_type_ids: List[str],
-                   network_volume_id: str, env: Dict[str, str],
+                   network_volume_id: str, env: Dict[str, str], args: str,
                    cloud_type: str = "SECURE", gpu_count: int = 1,
                    allowed_cuda_versions: Optional[List[str]] = None) -> Dict:
         """Create a runpod pod with the defined parameters"""
@@ -41,6 +41,7 @@ class RunPodClient:
                 "mounts": {"network": [{"volumeId": network_volume_id,
                                         "path": VOLUME_MOUNT_PATH}]},
                 "env": env,
+                "args": args,
                 "cloud": cloud_type,
             }
             try:

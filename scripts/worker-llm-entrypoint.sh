@@ -88,7 +88,8 @@ mark "pennyroyal up as $LLM_MODEL"
     --target "$target" \
     --source runpod \
     --slots "${WORKER_SLOTS:-1}" \
-    ${IDLE_EXIT_SECONDS:+--idle-exit-seconds "$IDLE_EXIT_SECONDS"} &
+    ${IDLE_EXIT_SECONDS:+--idle-exit-seconds "$IDLE_EXIT_SECONDS"} \
+    "$@" &
 agent_pid=$!
 
 trap 'kill -TERM "$agent_pid" 2>/dev/null || true' TERM INT

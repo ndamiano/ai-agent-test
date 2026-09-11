@@ -28,7 +28,8 @@ def test_create_pod_payload_shape():
     c = _client()
     c.session.post.return_value = _resp(201, {"id": "pod1"})
     out = c.create_pod("maestro-mesh-a1", "tpl1", ["NVIDIA GeForce RTX 5090"], "vol1",
-                       {"CP_URL": "https://cp", "WORKER_TOKEN": "t"}, allowed_cuda_versions=["12.8"])
+                       {"CP_URL": "https://cp", "WORKER_TOKEN": "t"}, "--worker-id w1",
+                       allowed_cuda_versions=["12.8"])
     assert out == {"id": "pod1"}
     url = c.session.post.call_args.args[0]
     body = c.session.post.call_args.kwargs["json"]
@@ -39,13 +40,14 @@ def test_create_pod_payload_shape():
     assert body["mounts"] == {"network": [{"volumeId": "vol1", "path": "/workspace"}]}
     assert body["cloud"] == "SECURE"
     assert body["env"]["WORKER_TOKEN"] == "t"
+    assert body["args"] == "--worker-id w1"
 
 
 def test_create_pod_asks_each_preferred_card_in_order_until_one_is_granted():
     c = _client()
     c.session.post.side_effect = [_resp(500, text="no instances currently available"),
                                   _resp(201, {"id": "pod1"})]
-    assert c.create_pod("n", "tpl", ["a", "b", "c"], "vol", {}) == {"id": "pod1"}
+    assert c.create_pod("n", "tpl", ["a", "b", "c"], "vol", {}, "") == {"id": "pod1"}
     assert [k.kwargs["json"]["gpu"]["id"] for k in c.session.post.call_args_list] == ["a", "b"]
 
 
@@ -53,7 +55,7 @@ def test_create_pod_refused_on_every_card_raises_every_refusal():
     c = _client()
     c.session.post.side_effect = [_resp(500, text="no a"), _resp(500, text="no b")]
     with pytest.raises(RunPodError, match="no a.*no b"):
-        c.create_pod("n", "tpl", ["a", "b"], "vol", {})
+        c.create_pod("n", "tpl", ["a", "b"], "vol", {}, "")
 
 
 def test_list_pods_unwraps_the_envelope():
@@ -80,7 +82,7 @@ def test_non_2xx_raises_runpod_error():
     c = _client()
     c.session.post.return_value = _resp(401, text="unauthorized")
     with pytest.raises(RunPodError, match="401"):
-        c.create_pod("n", "tpl", ["gpu"], "vol", {})
+        c.create_pod("n", "tpl", ["gpu"], "vol", {}, "")
     c.session.delete.return_value = _resp(500, text="boom")
     with pytest.raises(RunPodError, match="500"):
         c.terminate_pod("p1")

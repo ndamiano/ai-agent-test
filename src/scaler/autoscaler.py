@@ -129,7 +129,7 @@ class Autoscaler:
                     env["LLM_N_CTX"] = str(llm["n_ctx"])
                     env["SGLANG_ARGS_EXTRA"] = llm.get("sglang_args") or ""
                     env["WORKER_SLOTS"] = str(llm.get("slots", 1))
-                self._start_pod(name, queue, qcfg, rp, env)
+                self._start_pod(name, queue, qcfg, rp, env, uuid.uuid4().hex)
                 self._last_scale_up[queue] = now
             elif isinstance(action, TerminatePod):
                 self._client.terminate_pod(action.pod_id)
@@ -140,7 +140,8 @@ class Autoscaler:
         except RunPodError as e:
             logger.error("action %r on queue %s failed: %s", action, queue, e)
 
-    def _start_pod(self, name: str, queue: str, qcfg: Dict, rp: Dict, env: Dict) -> None:
+    def _start_pod(self, name: str, queue: str, qcfg: Dict, rp: Dict, env: Dict,
+                   worker_id: str) -> None:
         """Create a GPU pod, preferring the first gpu_type_ids entry."""
         ids = list(qcfg["gpu_type_ids"])
         cuda = qcfg.get("allowed_cuda_versions")
@@ -156,6 +157,7 @@ class Autoscaler:
                     gpu_type_ids=attempt,
                     network_volume_id=volume,
                     env=env,
+                    args=f"--worker-id {worker_id}",
                     cloud_type=rp.get("cloud_type", "SECURE"),
                     allowed_cuda_versions=cuda,
                 )
@@ -174,6 +176,6 @@ class Autoscaler:
             self._stats.record_pod_created(queue)
             rate = pod.get("cost")
             self._stats.record_worker_created(
-                pod["id"], queue, (pod.get("gpu") or {}).get("id"),
+                worker_id, pod["id"], queue, (pod.get("gpu") or {}).get("id"),
                 float(rate) if rate is not None else None)
             return

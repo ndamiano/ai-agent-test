@@ -37,8 +37,8 @@ class StatsSource(Protocol):
     def terminated_workers_with_pods(self, queue: str) -> List[WorkerInfo]: ...
     def mark_worker_terminated(self, worker_id: str) -> None: ...
     def mark_pod_terminated(self, pod_id: str) -> None: ...
-    def record_worker_created(self, pod_id: str, queue: str, gpu_type: Optional[str],
-                              usd_per_hour: Optional[float]) -> None: ...
+    def record_worker_created(self, worker_id: str, pod_id: str, queue: str,
+                              gpu_type: Optional[str], usd_per_hour: Optional[float]) -> None: ...
     def record_pod_refusal(self, queue: str, kind: str, attempts: List[Dict],
                            error: str) -> None: ...
     def record_pod_created(self, queue: str) -> None: ...
@@ -72,9 +72,9 @@ class SqliteStatsSource:
     def mark_pod_terminated(self, pod_id: str) -> None:
         store.set_pod_terminated(pod_id)
 
-    def record_worker_created(self, pod_id: str, queue: str, gpu_type: Optional[str],
-                              usd_per_hour: Optional[float]) -> None:
-        store.worker_created(pod_id, queue, gpu_type, usd_per_hour)
+    def record_worker_created(self, worker_id: str, pod_id: str, queue: str,
+                              gpu_type: Optional[str], usd_per_hour: Optional[float]) -> None:
+        store.worker_created(worker_id, pod_id, queue, gpu_type, usd_per_hour)
 
     def record_pod_refusal(self, queue: str, kind: str, attempts: List[Dict],
                            error: str) -> None:

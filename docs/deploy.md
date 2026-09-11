@@ -496,7 +496,7 @@ Create-time `env` OVERRIDES the template's (verified 2026-09-04: every fleet pod
 is what a pod started by hand gets, so keep it current anyway.
 
 First full cycle to watch (mesh, `max_workers: 1`): enqueue a mesh job → pod appears in the RunPod
-console with its worker row already `booting` → the worker registers under the pod id → job done → queue drains → worker exits + deregisters → pod
+console with its worker row already `booting` → the worker registers under the worker id it was started with → job done → queue drains → worker exits + deregisters → pod
 disappears (self-terminate or reaper within `stale_worker_seconds`).
 
 A run renting cards nobody wants is ended at its source, not in the console: a pending job is what

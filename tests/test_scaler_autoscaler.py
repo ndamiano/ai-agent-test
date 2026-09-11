@@ -1,6 +1,6 @@
 """Pod creation: the preferred card is asked for ALONE, and the fallback list is a second ask."""
 
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 from scaler.autoscaler import Autoscaler, refusal_kind
 from scaler.policy import StartPod
@@ -230,15 +230,17 @@ def test_a_successful_create_writes_the_worker_row_with_the_pods_price():
     client.create_pod.return_value = {"id": "pod1", "cost": 1.89,
                                       "gpu": {"id": "NVIDIA RTX PRO 6000 Blackwell", "count": 1}}
     _start(a)
+    worker_id = a._stats.record_worker_created.call_args.args[0]
     a._stats.record_worker_created.assert_called_once_with(
-        "pod1", "llm", "NVIDIA RTX PRO 6000 Blackwell", 1.89)
+        worker_id, "pod1", "llm", "NVIDIA RTX PRO 6000 Blackwell", 1.89)
+    assert client.create_pod.call_args.kwargs["args"] == f"--worker-id {worker_id}"
 
 
 def test_a_create_that_states_no_price_leaves_the_row_unpriced():
     a, client = _scaler()
     client.create_pod.return_value = {"id": "pod1"}
     _start(a)
-    a._stats.record_worker_created.assert_called_once_with("pod1", "llm", None, None)
+    a._stats.record_worker_created.assert_called_once_with(ANY, "pod1", "llm", None, None)
 
 
 def test_a_refused_create_writes_no_row():

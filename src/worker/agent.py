@@ -63,9 +63,8 @@ class Agent:
         # The dialect this worker's target speaks. Known only here — a queue owns its backend.
         self.api = api
         self.queue = queue
-        # On a pod the worker IS the pod: its row was written at create, keyed on the pod id.
         self.pod_id = os.environ.get("RUNPOD_POD_ID")
-        self.worker_id = worker_id or self.pod_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
+        self.worker_id = worker_id or f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
         self.gpu_type = gpu_type
         self.source = source
         self.idle_exit_seconds = idle_exit_seconds
@@ -224,6 +223,8 @@ def main(argv=None) -> int:
                         help="wire format the target serves (llm queue only)")
     parser.add_argument("--token", default=os.environ.get("WORKER_TOKEN", ""))
     parser.add_argument("--source", default="local")
+    parser.add_argument("--worker-id", default=None,
+                        help="The id the scaler wrote this pod's worker row under at create")
     parser.add_argument("--idle-exit-seconds", type=float,
                         default=float(os.environ.get("IDLE_EXIT_SECONDS", "0")),
                         help="Exit 0 after the queue stays empty this long (0 = never, the "
@@ -238,7 +239,7 @@ def main(argv=None) -> int:
     # Detected here and nowhere else: there is no --gpu-type, because the card is a fact about the
     # box this process woke up on and nothing outside it is entitled to say otherwise.
     agent = Agent(args.server, args.target, args.queue, args.token, api=args.api,
-                  gpu_type=detect_gpu(), source=args.source,
+                  worker_id=args.worker_id, gpu_type=detect_gpu(), source=args.source,
                   idle_exit_seconds=args.idle_exit_seconds, slots=args.slots)
 
     def _stop(signum, frame):

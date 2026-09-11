@@ -760,31 +760,29 @@ def batches_awaiting_finalize(grace_seconds: float) -> List[str]:
     return [r["batch_id"] for r in rows]
 
 
-def worker_created(pod_id: str, queue: str, gpu_type: Optional[str],
+def worker_created(worker_id: str, pod_id: str, queue: str, gpu_type: Optional[str],
                    usd_per_hour: Optional[float]) -> None:
     """A pod the scaler just created is a worker from that moment — billed, counted as capacity,
-    shown as booting — keyed on the pod id its worker will register under. started_at is the
-    create, so a boot is inside the row's life."""
+    shown as booting — under the worker id the pod was started with. started_at is the create,
+    so a boot is inside the row's life."""
     now = time.time()
     with _db() as conn:
         conn.execute(
             "INSERT INTO workers (id, queue, gpu_type, source, pod_id, usd_per_hour, started_at) "
             "VALUES (?, ?, ?, 'runpod', ?, ?, ?)",
-            (pod_id, queue, gpu_type, pod_id, usd_per_hour, now))
+            (worker_id, queue, gpu_type, pod_id, usd_per_hour, now))
 
 
 def worker_seen(worker_id: str, queue: str, gpu_type: Optional[str] = None,
                 source: Optional[str] = None, pod_id: Optional[str] = None) -> None:
     now = time.time()
     with _db() as conn:
-        # terminated_at is cleared on re-register: RunPod restarts an exited container, and a
-        # restarted worker that still looked terminated would be reaped mid-work. The card is the
-        # worker's to report (nvidia-smi's name), over whatever the create guessed.
+        # The card is the worker's to report (nvidia-smi's name), over whatever the create guessed.
         cur = conn.execute(
             "UPDATE workers SET queue = ?, last_seen_at = ?, registered_at = COALESCE(registered_at, ?), "
-            "gpu_type = COALESCE(?, gpu_type), source = COALESCE(?, source), "
-            "pod_id = COALESCE(?, pod_id), terminated_at = NULL WHERE id = ?",
-            (queue, now, now, gpu_type, source, pod_id, worker_id))
+            "gpu_type = COALESCE(?, gpu_type), source = COALESCE(?, source) "
+            "WHERE id = ? AND pod_id IS ?",
+            (queue, now, now, gpu_type, source, worker_id, pod_id))
         if cur.rowcount == 0:
             conn.execute(
                 "INSERT INTO workers (id, queue, gpu_type, source, pod_id, started_at, "

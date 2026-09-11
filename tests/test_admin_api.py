@@ -95,13 +95,13 @@ def test_workers_report_state_and_the_job_they_hold(app_client, monkeypatch):
 
 
 def test_a_created_pod_is_booting_until_its_worker_registers(app_client):
-    db_store.worker_created("p-new", "llm", None, 1.89)
-    db_store.worker_created("p-live", "llm", None, 1.89)
-    db_store.worker_seen("p-live", "llm", gpu_type="BIG", source="runpod", pod_id="p-live")
+    db_store.worker_created("w-new", "p-new", "llm", None, 1.89)
+    db_store.worker_created("w-live", "p-live", "llm", None, 1.89)
+    db_store.worker_seen("w-live", "llm", gpu_type="BIG", source="runpod", pod_id="p-live")
     llm, _ = _queue(app_client, "llm")
 
     states = {w["id"]: w["state"] for w in llm["workers"]}
-    assert states == {"p-live": "idle", "p-new": "booting"}
+    assert states == {"w-live": "idle", "w-new": "booting"}
     booting = next(w for w in llm["workers"] if w["state"] == "booting")
     assert booting["pod_id"] == "p-new"
     assert booting["uptime_seconds"] == pytest.approx(0, abs=5)
@@ -137,8 +137,8 @@ def test_costs_joins_runpod_billing_against_our_logs_per_card(app_client, monkey
              # Billed before any worker row existed: predates tracking, NOT a ghost.
              {"podId": "prehistoric", "startTime": iso(now - 29 * 24 * 3600), "totalAmount": 9.0}]
     monkeypatch.setattr(admin, "_billing_rows", lambda _now: _billing(hourly, daily))
-    db_store.worker_created("p5090", "llm", "NVIDIA GeForce RTX 5090", 0.5)
-    db_store.worker_created("p4500", "llm", "NVIDIA RTX PRO 4500 Blackwell", 0.25)
+    db_store.worker_created("w5090", "p5090", "llm", "NVIDIA GeForce RTX 5090", 0.5)
+    db_store.worker_created("w4500", "p4500", "llm", "NVIDIA RTX PRO 4500 Blackwell", 0.25)
     admin._cost_cache.update(at=0.0, data=None)
 
     db_store.worker_seen("w1", "llm", gpu_type="NVIDIA GeForce RTX 5090", source="runpod",

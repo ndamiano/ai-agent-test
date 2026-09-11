@@ -127,16 +127,24 @@ the app first serves traffic with them.
 
 Never point `sqlite3` (or anything else) at the live files under `/data` — a stray query takes
 locks against the app's connections, and reading the DB without its WAL shows a stale or torn
-view. Pull a snapshot and inspect that (the volume name carries the compose project prefix, as in
-the drill above):
+view. Take a snapshot and inspect that. The droplet has no `sqlite3` CLI, so the snapshot is made
+by the container's Python and copied out — to a local machine, from the dev box:
 
 ```bash
-sqlite3 "file:$(docker volume inspect maestro_maestro-data -f '{{ .Mountpoint }}')/platform.db?mode=ro" \
-    ".backup /tmp/platform-snap.db" && scripts/db.py cost --db /tmp/platform-snap.db
+ssh maestro 'cd /opt/maestro && sudo docker compose exec -T app python -c "
+import sqlite3
+src = sqlite3.connect(\"file:/data/platform.db?mode=ro\", uri=True)
+dst = sqlite3.connect(\"/tmp/platform-snap.db\")
+src.backup(dst); dst.close()
+" && sudo docker compose cp app:/tmp/platform-snap.db /tmp/platform-snap.db && sudo chmod a+r /tmp/platform-snap.db'
+scp maestro:/tmp/platform-snap.db ./platform-prod.db
+ssh maestro 'sudo rm /tmp/platform-snap.db; cd /opt/maestro && sudo docker compose exec -T app rm /tmp/platform-snap.db'
+scripts/db.py cost --db ./platform-prod.db
 ```
 
-(`.backup` uses SQLite's online-backup API — the same mechanism the backup thread runs — so the
-copy is consistent under concurrent writers.) Or just pull the bucket's `latest` snapshot, which
+(`backup()` is SQLite's online-backup API — the same mechanism the backup thread runs — so the
+copy is consistent under concurrent writers.) The copy holds real accounts and ledger rows: keep
+it out of the repo's `data/`, and delete it when done. Or just pull the bucket's `latest` snapshot, which
 doubles as a check that the backup is restorable. `scripts/db.py` is stdlib-only and carries the
 named queries (`cost`, `builds`, `models`, `failures`) plus `sql "<text>"`, so it runs on the
 droplet with nothing installed; `--db` is the snapshot path.

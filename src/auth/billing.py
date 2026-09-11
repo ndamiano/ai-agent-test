@@ -1,16 +1,9 @@
-"""Build pricing — the one swappable cost function, and the storefront's package catalog.
-
-A build costs a flat 1 credit today. Metered/tiered variants (by spec size, module set, or
-the scaleout S3 usage hook) drop in HERE, leaving the ledger and the build gate untouched.
-"""
+"""Build pricing"""
 
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
-# One credit buys this much GPU-execution budget, in micros ($3.00).
 MICROS_PER_CREDIT = 3_000_000
-
-USD_CENTS_PER_CREDIT = 500
 
 
 def cost(spec: Dict) -> int:
@@ -23,10 +16,14 @@ class Package:
     credits: int
     usd_cents: int
 
+    def to_json(self):
+        return {"id": self.id, "credits": self.credits, "usd_cents": self.usd_cents}
 
-# Flat $5/credit at every size — a bulk discount is not a decided policy.
-PACKAGES: Tuple[Package, ...] = tuple(
-    Package(id=str(n), credits=n, usd_cents=n * USD_CENTS_PER_CREDIT) for n in (1, 5, 10)
+
+PACKAGES: Tuple[Package, ...] = (
+    Package(id="one-credit", credits=1, usd_cents=500),
+    Package(id="five-credits", credits=5, usd_cents=2500),
+    Package(id="ten-credits", credits=10, usd_cents=5000),
 )
 
 

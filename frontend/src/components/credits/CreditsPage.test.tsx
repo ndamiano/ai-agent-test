@@ -11,12 +11,12 @@ afterEach(() => {
 })
 
 const PACKAGES = [
-    { id: '1', credits: 1, usd_cents: 500 },
-    { id: '5', credits: 5, usd_cents: 2500 },
-    { id: '10', credits: 10, usd_cents: 5000 },
+    { id: 'one-credit', credits: 1, usd_cents: 500 },
+    { id: 'five-credits', credits: 5, usd_cents: 2500 },
+    { id: 'ten-credits', credits: 10, usd_cents: 5000 },
 ]
 
-const catalog = (enabled = true) => ({ enabled, packages: enabled ? PACKAGES : [] })
+const catalog = () => ({ packages: PACKAGES })
 
 const me = (balance: number) =>
     ({ id: 'u1', handle: 'alice', role: 'user', email: 'alice@example.com', balance })
@@ -42,15 +42,6 @@ describe('CreditsPage', () => {
         expect(screen.getByText(/no purchases yet/i)).toBeTruthy()
     })
 
-    it('a disabled store shows no packages and says so plainly', async () => {
-        vi.spyOn(api, 'listPackages').mockResolvedValue(catalog(false))
-        vi.spyOn(api, 'listPurchases').mockResolvedValue([])
-        mount()
-
-        await waitFor(() => expect(screen.getByText(/aren't available yet/i)).toBeTruthy())
-        expect(screen.queryByRole('button', { name: 'Buy' })).toBeNull()
-    })
-
     it('buying sends the user to the provider checkout page', async () => {
         vi.spyOn(api, 'listPackages').mockResolvedValue(catalog())
         vi.spyOn(api, 'listPurchases').mockResolvedValue([])
@@ -70,7 +61,7 @@ describe('CreditsPage', () => {
             fireEvent.click(screen.getAllByRole('button', { name: 'Buy' })[1])
 
             await waitFor(() => expect(go).toHaveBeenCalledWith('https://checkout.stripe.com/c/cs_1'))
-            expect(start).toHaveBeenCalledWith('5')
+            expect(start).toHaveBeenCalledWith('five-credits')
         } finally {
             Object.defineProperty(window, 'location', { configurable: true, value: realLocation })
         }
@@ -86,7 +77,7 @@ describe('CreditsPage', () => {
         vi.spyOn(api, 'listPurchases')
             .mockResolvedValueOnce([])
             .mockResolvedValue([{
-                id: 'p1', package_id: '5', credits: 5, usd_cents: 2500,
+                id: 'p1', package_id: 'five-credits', credits: 5, usd_cents: 2500,
                 status: 'completed', created_at: 1754200000, completed_at: 1754200001,
             }])
         const complete = vi.spyOn(api, 'completePurchase')

@@ -314,8 +314,10 @@ autoscaled llm image serves `pennyroyal` and refuses to boot under any other nam
 
 ### `payments`
 
-`stripe_secret_key`, `stripe_webhook_secret` — the storefront (`api/routers/billing.py`). Empty
-means no purchases; credits still arrive by `auth.cli grant`.
+`stripe_secret_key`, `stripe_webhook_secret` — the storefront (`api/routers/billing.py`). Both
+are required: a box missing either 500s every billing call, and the webhook signs under the
+second, so it is never empty where the webhook is reachable. Checkout returns the payer to
+`play.app_origin`. Credits also arrive by `auth.cli grant`.
 
 ### `demo_games`
 

@@ -10,10 +10,9 @@ Two paths reach the ledger through the active `CreditProvider`:
   returns who to credit and how much. An event that fails verification yields None and credits
   nothing.
 
-The provider is Stripe when `payments.stripe_secret_key` is set, and NOTHING otherwise: with no
-key, checkouts refuse, the packages endpoint reports the store disabled, and the SPA shows no
-storefront. There is no fake — a provider that granted real credits without payment would be a
-free-compute endpoint.
+The provider is Stripe, and both keys are required: the webhook signature is an HMAC under
+`stripe_webhook_secret`, so an empty secret is one anyone can sign with — a forged completion
+would be free credits. A box missing either key refuses every billing call instead.
 
 Stripe rides plain HTTPS over the `requests` we already pin (no SDK): checkout is two
 form-encoded calls, and the webhook signature is one documented HMAC — the same loud-failure
@@ -56,10 +55,6 @@ class RefundEvent:
     payment_intent: str
 
 
-class NoPurchasesError(RuntimeError):
-    """Raised by checkout paths when no payment provider is configured."""
-
-
 class CreditProvider(ABC):
     @abstractmethod
     def start_checkout(self, purchase_id: str, package: Package,
@@ -76,22 +71,6 @@ class CreditProvider(ABC):
                headers: Mapping[str, str]) -> "Optional[PurchaseEvent | RefundEvent]":
         """Verify a raw webhook event against the provider's signature. Return the paid or
         refunded purchase it announces, or None if it doesn't verify (nothing moves)."""
-
-
-class NoProvider(CreditProvider):
-    """The default: purchases do not exist. Checkout refuses loudly; the public webhook refuses
-    quietly (None), like any unverifiable event."""
-
-    def start_checkout(self, purchase_id: str, package: Package,
-                       success_url: str, cancel_url: str) -> Checkout:
-        raise NoPurchasesError("no payment provider is configured")
-
-    def confirm_checkout(self, provider_ref: str) -> Optional[str]:
-        return None
-
-    def verify(self, payload: bytes,
-               headers: Mapping[str, str]) -> "Optional[PurchaseEvent | RefundEvent]":
-        return None
 
 
 STRIPE_API = "https://api.stripe.com/v1"
@@ -177,17 +156,14 @@ class StripeProvider(CreditProvider):
 _active: Optional[CreditProvider] = None
 
 
-def store_enabled() -> bool:
-    return not isinstance(get_provider(), NoProvider)
-
-
 def get_provider() -> CreditProvider:
     global _active
-    cfg = settings_manager.get_settings().get("payments") or {}
-    key = cfg.get("stripe_secret_key") or ""
-    if not key:
-        if not isinstance(_active, NoProvider):
-            _active = NoProvider()
-    elif not (isinstance(_active, StripeProvider) and _active._key == key):
-        _active = StripeProvider(key, cfg.get("stripe_webhook_secret") or "")
+    if _active is None:
+        cfg = settings_manager.get_settings().get("payments") or {}
+        key = cfg.get("stripe_secret_key") or ""
+        webhook_secret = cfg.get("stripe_webhook_secret") or ""
+        if not key or not webhook_secret:
+            raise RuntimeError("payments.stripe_secret_key and payments.stripe_webhook_secret "
+                               "must both be set")
+        _active = StripeProvider(key, webhook_secret)
     return _active

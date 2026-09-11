@@ -91,18 +91,6 @@ def test_webhook_rejects_an_unverified_event_and_credits_nothing(app_client, mon
     assert _ledger_rows(user.id, "purchase") == []
 
 
-def test_webhook_refuses_cleanly_with_no_provider_configured(app_client):
-    """The default `NoProvider`, unpatched — it verifies no webhook. The route is public, so its
-    refusal must be the same clean 400 an unverified event gets — a raise would hand any caller
-    a 500 + traceback."""
-    user = store.create_user("alice", "pw-pass1234", email="alice4@example.com")
-
-    r = app_client.post("/api/billing/webhook", content=b"anything")
-    assert r.status_code == 400
-    assert store.balance(user.id) == 0
-    assert _ledger_rows(user.id, "purchase") == []
-
-
 def test_webhook_is_not_blocked_by_the_user_auth_gate(app_client, monkeypatch):
     # No Authorization header — a gated route 401s, but the webhook reaches its handler (here a
     # clean 400 from the provider refusing) rather than being turned away at the gate.

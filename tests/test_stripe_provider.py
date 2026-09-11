@@ -4,11 +4,13 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from auth.billing import PACKAGES
-from auth.credits import NoProvider, StripeProvider, get_provider
+from auth.credits import StripeProvider, get_provider
 import auth.credits as credits
 
 
@@ -120,20 +122,25 @@ def test_confirm_checkout_answers_the_payment_id_iff_paid(monkeypatch):
 
 # ---------------------------------------------------------------- provider selection
 
-def test_no_key_means_no_provider(monkeypatch):
+@pytest.mark.parametrize("payments", [
+    {},
+    {"stripe_secret_key": "sk_test_x", "stripe_webhook_secret": ""},
+    {"stripe_secret_key": "", "stripe_webhook_secret": "whsec_y"},
+])
+def test_a_missing_key_refuses_to_build_a_provider(monkeypatch, payments):
+    """An empty webhook secret is an HMAC key anyone can sign with — a forged completion is
+    free credits, so no provider is ever built without it."""
     from config.settings_manager import settings_manager
-    monkeypatch.setattr(settings_manager, "get_settings",
-                        lambda: {"payments": {"stripe_secret_key": ""}})
-    credits._active = None
-    assert isinstance(get_provider(), NoProvider)
-    assert credits.store_enabled() is False
+    monkeypatch.setattr(settings_manager, "get_settings", lambda: {"payments": payments})
+    monkeypatch.setattr(credits, "_active", None)
+    with pytest.raises(RuntimeError):
+        get_provider()
 
 
-def test_a_key_selects_stripe(monkeypatch):
+def test_both_keys_select_stripe(monkeypatch):
     from config.settings_manager import settings_manager
     monkeypatch.setattr(settings_manager, "get_settings",
                         lambda: {"payments": {"stripe_secret_key": "sk_test_x",
                                               "stripe_webhook_secret": "whsec_y"}})
-    credits._active = None
+    monkeypatch.setattr(credits, "_active", None)
     assert isinstance(get_provider(), StripeProvider)
-    assert credits.store_enabled() is True

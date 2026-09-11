@@ -1,16 +1,4 @@
-"""Billing — the credits storefront and the payment-provider webhook.
-
-The storefront routes are user-authed like any other /api surface: list the package catalog,
-open a purchase (answering with the provider's hosted checkout URL), complete it, list past
-purchases. With no provider configured the store is disabled: packages report it, purchase
-refuses 503. Money moves inside the active `CreditProvider`; credits move only through the
-ledger, via the purchase row's started→completed flip (`store.complete_purchase`), so
-completing twice grants once.
-
-The webhook is the one PUBLIC path here (registered in `auth.deps.PUBLIC_PATHS`): a provider
-POSTs server-to-server with no user token, authenticated instead by its signature, verified
-inside the `CreditProvider`. An event that fails verification credits nothing and is rejected 400.
-"""
+"""Billing — the credits storefront and the payment-provider webhook."""
 
 import logging
 
@@ -19,7 +7,7 @@ from pydantic import BaseModel
 
 from auth import store
 from auth.billing import PACKAGES, package_by_id
-from auth.credits import RefundEvent, get_provider, store_enabled
+from auth.credits import RefundEvent, get_provider
 from auth.deps import get_current_user
 from auth.store import User
 from config.settings_manager import settings_manager
@@ -33,29 +21,21 @@ class PurchaseBody(BaseModel):
 
 
 @router.get("/packages")
-def list_packages(user: User = Depends(get_current_user)):
-    if not store_enabled():
-        return {"enabled": False, "packages": []}
-    return {"enabled": True,
-            "packages": [{"id": p.id, "credits": p.credits, "usd_cents": p.usd_cents}
-                         for p in PACKAGES]}
+def list_packages():
+    return {
+        "packages": [
+            p.to_json() for p in PACKAGES
+        ]
+    }
 
 
 @router.post("/purchase")
-def start_purchase(body: PurchaseBody, request: Request,
-                   user: User = Depends(get_current_user)):
-    if not store_enabled():
-        raise HTTPException(status_code=503, detail="purchases are not available")
+def start_purchase(body: PurchaseBody, user: User = Depends(get_current_user)):
     package = package_by_id(body.package_id)
     if package is None:
         raise HTTPException(status_code=404, detail="unknown package")
     purchase = store.create_purchase(user.id, package.id, package.credits, package.usd_cents)
-    # Where Stripe sends the payer back: the configured app origin in prod; in dev, the SPA's
-    # own origin from the request (the vite server, not the API it proxies to) — landing on the
-    # API port is a different origin whose localStorage holds no session.
-    origin = ((settings_manager.get_settings().get("play") or {}).get("app_origin", "").rstrip("/")
-              or (request.headers.get("origin") or "").rstrip("/")
-              or str(request.base_url).rstrip("/"))
+    origin = (settings_manager.get_settings().get("play") or {}).get("app_origin", "").rstrip("/")
     checkout = get_provider().start_checkout(
         purchase.id, package,
         success_url=f"{origin}/credits?purchase={purchase.id}&result=success",
@@ -83,8 +63,7 @@ def complete_purchase(purchase_id: str, user: User = Depends(get_current_user)):
 
 @router.get("/purchases")
 def purchase_history(user: User = Depends(get_current_user)):
-    """Money that moved: completed and refunded rows. A `started` row is an abandoned checkout
-    the user cannot act on — listing it reads as an unfinishable obligation."""
+    """Returns completed / refunded purchases only."""
     return [{"id": p.id, "package_id": p.package_id, "credits": p.credits,
              "usd_cents": p.usd_cents, "status": p.status, "created_at": p.created_at,
              "completed_at": p.completed_at}
@@ -93,11 +72,7 @@ def purchase_history(user: User = Depends(get_current_user)):
 
 @router.post("/webhook")
 async def purchase_webhook(request: Request):
-    """Stripe's push, both directions of money. Completion: the redirect-return also completes,
-    whichever lands first wins and the other is the idempotent no-op — the started→completed
-    flip is the exactly-once gate. Refunds and chargebacks: the credits come back out through
-    the mirrored completed→refunded flip, negative balance allowed — a negative balance is what
-    blocks further builds."""
+    """Stripe webhook handler"""
     payload = await request.body()
     event = get_provider().verify(payload, request.headers)
     if event is None:

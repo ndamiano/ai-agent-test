@@ -16,14 +16,13 @@ const when = (epochSeconds: number): string =>
 
 const CreditsPage: React.FC = () => {
     const { balance, refreshBalance } = useAuth()
-    const [enabled, setEnabled] = useState<boolean | null>(null)
     const [packages, setPackages] = useState<CreditPackage[]>([])
     const [history, setHistory] = useState<PurchaseRow[]>([])
     const [buying, setBuying] = useState<string | null>(null)
     const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null)
 
     useEffect(() => {
-        api.listPackages().then(r => { setEnabled(r.enabled); setPackages(r.packages) }).catch(() => {})
+        api.listPackages().then(r => setPackages(r.packages)).catch(() => {})
         api.listPurchases().then(setHistory).catch(() => {})
 
         // Back from the provider's payment page: the result params say which purchase and how
@@ -74,10 +73,7 @@ const CreditsPage: React.FC = () => {
 
                 <section className="flex flex-col gap-3">
                     <SectionLabel>Buy credits</SectionLabel>
-                    {enabled === false && (
-                        <p className="text-sm text-dim">Purchases aren't available yet.</p>
-                    )}
-                    {enabled && <p className="text-sm text-slate">One credit summons one game build.</p>}
+                    <p className="text-sm text-slate">One credit summons one game build.</p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         {packages.map(pkg => (
                             <div key={pkg.id}

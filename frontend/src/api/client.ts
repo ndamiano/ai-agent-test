@@ -207,9 +207,8 @@ export const api = {
     submitGrade: (runId: string, grade: Grade) =>
         request<{ saved: string }>(`/api/admin/grades/${runId}`, { method: 'POST', body: JSON.stringify(grade) }),
 
-    // `enabled: false` (no payment provider configured) hides the storefront.
     listPackages: () =>
-        request<{ enabled: boolean; packages: CreditPackage[] }>('/api/billing/packages'),
+        request<{ packages: CreditPackage[] }>('/api/billing/packages'),
     // Answers with the provider's hosted checkout URL; the user pays there and returns to
     // /credits, where the result params drive completePurchase.
     startPurchase: (packageId: string) =>

@@ -464,11 +464,6 @@ Settings block (`settings.json` → `runpod`, the full key list in `docs/local_d
   this long is dead.
   A create RunPod refuses on every volume/card combination is recorded durably (`pod_refusals`,
   one row per refused scale-up, kept 30 days) with the combos tried and the provider's text;
-  `pod_request_days` keeps forever, per queue and UTC day, how many pods the scaler asked for
-  and how many asks were refused by kind — the "N requests, M out of stock" for the provider. And
-  a refusal for lack of stock ("no instances currently available", "could not find any pods with
-  required specifications") is what the admin Queues page counts as a stock-out — an outage is
-  "now" while the last one is within two ticks.
 - `queues.<name>` — per-queue policy: `template_id`, `gpu_type_ids` (a PRIORITY-ORDERED list: the
   scaler creates with the first entry alone, and retries with the whole list only if RunPod refuses
   — asking for all of them at once gets whichever card RunPod prefers to hand out, and the cards are

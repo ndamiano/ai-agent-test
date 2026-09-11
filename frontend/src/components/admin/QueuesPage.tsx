@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api, ApiError } from '../../api/client'
 import type { AdminQueues, QueueRow, Stockouts, WorkerRow } from '../../types'
-import { Stat, fmtAge, fmtClock, fmtSecs, fmtStamp, fmtUsd, shortGpu } from './format'
+import { Stat, fmtAge, fmtSecs, fmtStamp, fmtUsd, shortGpu } from './format'
 
 const POLL_MS = 5000
 
@@ -83,17 +83,13 @@ const Workers: React.FC<{ row: QueueRow }> = ({ row }) => {
     </div>
 }
 
-// Shows nothing at all when the provider has never refused for stock: the line exists to make a
-// stock-out visible, not to reassure.
-export const StockoutLines: React.FC<{ s: Stockouts }> = ({ s }) => {
-    if (s.last_7d === 0 && !s.active && s.totals_all.attempts === 0) return null
-    const ratio = (t: Stockouts['totals_all']) => `${t.stock_refusals.toLocaleString()} of ${t.attempts.toLocaleString()} pod requests refused for stock`
+export const StockoutLines: React.FC<{ s: Stockouts, now: number }> = ({ s, now }) => {
+    const outOfStock = s.last_at != null && s.last_at > Math.floor(now - 30)
     return (
         <div className="space-y-1 text-xs">
-            {s.active && s.active_since != null && (
-                <div className="text-fail font-semibold" title={s.last_error ?? ''}>
-                    Out of stock now — {s.active_count} refusal{s.active_count === 1 ? '' : 's'} since {fmtClock(s.active_since)}
-                    {s.last_error ? ` (last: '${s.last_error}')` : ''}
+            {outOfStock && (
+                <div className="text-fail font-semibold">
+                    Out of stock now
                 </div>
             )}
             {s.last_7d > 0 && s.last_at != null && (
@@ -101,16 +97,11 @@ export const StockoutLines: React.FC<{ s: Stockouts }> = ({ s }) => {
                     {s.last_7d} stock-out{s.last_7d === 1 ? '' : 's'} in the last 7 days, last {fmtStamp(s.last_at)}
                 </div>
             )}
-            {s.totals_all.attempts > 0 && (
-                <div className="text-slate" title={`other refusals: ${s.totals_60d.other_refusals} in 60 days · ${s.totals_all.other_refusals} all time`}>
-                    Last 60 days: {ratio(s.totals_60d)} · all time since {s.totals_all.since}: {ratio(s.totals_all)}
-                </div>
-            )}
         </div>
     )
 }
 
-const QueueCard: React.FC<{ row: QueueRow }> = ({ row }) => {
+const QueueCard: React.FC<{ row: QueueRow, now: number }> = ({ row, now }) => {
     const active = row.pending + row.claimed > 0
     return (
         <div className="bg-panel border border-edge rounded-lg p-4 space-y-3">
@@ -128,7 +119,7 @@ const QueueCard: React.FC<{ row: QueueRow }> = ({ row }) => {
                 <Stat label="Backlog" value={fmtSecs(row.backlog_seconds)}
                     hint={`projected GPU-s to clear (est ${row.est_seconds}s/job)`} />
             </div>
-            <StockoutLines s={row.stockouts} />
+            <StockoutLines s={row.stockouts} now={now} />
             <div className="overflow-x-auto"><NextJobs row={row} /></div>
             <div className="overflow-x-auto"><Workers row={row} /></div>
         </div>
@@ -137,11 +128,13 @@ const QueueCard: React.FC<{ row: QueueRow }> = ({ row }) => {
 
 const QueuesPage: React.FC = () => {
     const [data, setData] = useState<AdminQueues | null>(null)
+    const [fetchedAt, setFetchedAt] = useState(0)
     const [error, setError] = useState<string | null>(null)
 
     const load = useCallback(async () => {
         try {
             setData(await api.getAdminQueues())
+            setFetchedAt(Date.now() / 1000)
             setError(null)
         } catch (e) {
             // A 403 shouldn't happen (the tab is role-gated) but surface it rather than spin silently.
@@ -167,7 +160,7 @@ const QueuesPage: React.FC = () => {
             </div>
 
             <div className="grid gap-3">
-                {data.queues.map(q => <QueueCard key={q.queue} row={q} />)}
+                {data.queues.map(q => <QueueCard key={q.queue} row={q} now={fetchedAt} />)}
             </div>
 
             <div className="bg-ink border border-edge rounded-lg p-4">

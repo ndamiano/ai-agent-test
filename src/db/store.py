@@ -844,21 +844,6 @@ def stale_workers(queue: str, staleness_seconds: float, boot_deadline_seconds: f
     return [dict(r) for r in rows]
 
 
-def unpriced_pod_workers() -> List[Dict]:
-    """Live pod-backed workers whose row does not yet carry the rate RunPod charges for the
-    pod — the scaler stamps it from the pod listing, which the worker itself cannot see."""
-    with _db() as conn:
-        rows = conn.execute(
-            "SELECT * FROM workers WHERE terminated_at IS NULL AND pod_id IS NOT NULL "
-            "AND usd_per_hour IS NULL").fetchall()
-    return [dict(r) for r in rows]
-
-
-def set_worker_rate(worker_id: str, usd_per_hour: float) -> None:
-    with _db() as conn:
-        conn.execute("UPDATE workers SET usd_per_hour = ? WHERE id = ?", (usd_per_hour, worker_id))
-
-
 def terminated_workers_with_pods(queue: str) -> List[Dict]:
     with _db() as conn:
         rows = conn.execute(
@@ -1001,20 +986,6 @@ def record_pod_created(queue: str) -> None:
         _bump_pod_day(conn, queue, time.time(), None)
 
 
-def pod_request_totals(queue: str, days: Optional[int] = None) -> Dict:
-    """Attempts and refusals by kind over the last `days` UTC days (today included), or all time
-    when None; `since` is the earliest day in the window with a row, None when there is none."""
-    first = (time.strftime("%Y-%m-%d", time.gmtime(time.time() - (days - 1) * _DAY))
-             if days else "")
-    with _db() as conn:
-        row = conn.execute(
-            "SELECT COALESCE(SUM(attempts), 0) AS attempts, "
-            "COALESCE(SUM(stock_refusals), 0) AS stock_refusals, "
-            "COALESCE(SUM(other_refusals), 0) AS other_refusals, MIN(day) AS since "
-            "FROM pod_request_days WHERE queue = ? AND day >= ?", (queue, first)).fetchone()
-    return dict(row)
-
-
 def record_pod_refusal(queue: str, kind: str, attempts: List[Dict], error: str) -> None:
     """One StartPod the provider refused on every volume/GPU combination — one row per scaler
     decision, not per combination, because the question the row answers is "how often could we
@@ -1046,18 +1017,13 @@ def pod_stockout_stats(queue: str, now: float) -> Dict:
             "FROM pod_refusals WHERE queue = ? AND kind = 'stock' AND created_at >= ?",
             (now - 3600, now - _DAY, queue, now - 7 * _DAY)).fetchone()
         last = conn.execute(
-            "SELECT created_at, error FROM pod_refusals WHERE queue = ? AND kind = 'stock' "
+            "SELECT created_at FROM pod_refusals WHERE queue = ? AND kind = 'stock' "
             "ORDER BY id DESC LIMIT 1", (queue,)).fetchone()
-        recent = conn.execute(
-            "SELECT created_at, error FROM pod_refusals WHERE queue = ? AND kind = 'stock' "
-            "AND created_at >= ? ORDER BY id", (queue, now - 3600)).fetchall()
     return {
         "last_1h": counts["last_1h"] or 0,
         "last_24h": counts["last_24h"] or 0,
         "last_7d": counts["last_7d"],
         "last_at": last["created_at"] if last else None,
-        "last_error": last["error"] if last else None,
-        "recent": [dict(r) for r in recent],
     }
 
 

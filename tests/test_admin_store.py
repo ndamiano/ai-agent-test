@@ -122,12 +122,9 @@ def test_pod_refusals_count_stock_only_per_window_and_keep_the_latest():
                      (now - 2 * 24 * 3600,))
     s = store.pod_stockout_stats("llm", now)
     assert (s["last_1h"], s["last_24h"], s["last_7d"]) == (1, 1, 1)
-    assert s["last_error"] == "no instances"
     assert abs(s["last_at"] - now) < 5
-    assert [r["error"] for r in s["recent"]] == ["no instances"]
     image = store.pod_stockout_stats("image", now)
     assert (image["last_1h"], image["last_24h"], image["last_7d"]) == (0, 0, 1)
-    assert image["recent"] == []
     assert store.pod_stockout_stats("mesh", now)["last_at"] is None
 
 
@@ -139,32 +136,3 @@ def test_pod_refusals_older_than_thirty_days_are_pruned_on_insert():
     with store._db() as conn:
         assert [r["error"] for r in conn.execute("SELECT error FROM pod_refusals")] == ["new"]
 
-
-def test_pod_request_days_count_every_attempt_and_refusals_by_kind():
-    store.record_pod_created("llm")
-    store.record_pod_refusal("llm", "stock", [], "no instances")
-    store.record_pod_refusal("llm", "other", [], "401")
-    store.record_pod_created("image")
-    assert store.pod_request_totals("llm", 60) == {
-        "attempts": 3, "stock_refusals": 1, "other_refusals": 1,
-        "since": time.strftime("%Y-%m-%d", time.gmtime())}
-    assert store.pod_request_totals("mesh") == {
-        "attempts": 0, "stock_refusals": 0, "other_refusals": 0, "since": None}
-
-
-def test_pod_request_totals_window_against_all_time():
-    store.record_pod_created("llm")
-    with store._db() as conn:
-        conn.execute("INSERT INTO pod_request_days (queue, day, attempts, stock_refusals) "
-                     "VALUES ('llm', '2020-01-01', 10, 4)")
-    assert store.pod_request_totals("llm", 60)["attempts"] == 1
-    assert store.pod_request_totals("llm") == {
-        "attempts": 11, "stock_refusals": 4, "other_refusals": 0, "since": "2020-01-01"}
-
-
-def test_pod_request_days_survive_the_detail_prune():
-    store.record_pod_refusal("llm", "stock", [], "old")
-    with store._db() as conn:
-        conn.execute("UPDATE pod_refusals SET created_at = ?", (time.time() - 31 * 24 * 3600,))
-    store.record_pod_refusal("llm", "stock", [], "new")
-    assert store.pod_request_totals("llm")["stock_refusals"] == 2

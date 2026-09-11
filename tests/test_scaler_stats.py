@@ -76,16 +76,6 @@ def test_worker_seen_keeps_pod_id_when_not_resent():
     assert SqliteStatsSource().live_workers("mesh", 60) == [("w1", "p1")]
 
 
-def test_a_pod_worker_is_unpriced_until_the_scaler_stamps_its_rate():
-    store.worker_seen("w1", "mesh", pod_id="p1")
-    store.worker_seen("home", "mesh")
-    src = SqliteStatsSource()
-    assert src.unpriced_pod_workers() == [("w1", "p1")]
-    src.record_worker_rate("w1", 0.89)
-    assert src.unpriced_pod_workers() == []
-    assert store.live_workers("mesh", 60)[0]["usd_per_hour"] == 0.89
-
-
 def test_a_created_pod_is_booting_until_its_worker_registers():
     src = SqliteStatsSource()
     store.worker_created("p1", "mesh", "NVIDIA GeForce RTX 5090", 0.89)

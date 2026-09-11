@@ -99,29 +99,11 @@ export interface WorkerRow {
            running_seconds: number; est_seconds: number } | null
 }
 
-// Provider stock refusals (the scaler wanted a pod and RunPod had none to give), from the durable
-// record: counts per window, the latest, and the outage under way — active when the last refusal
-// is within two scaler ticks, active_since/active_count describing the unbroken run.
-// Every StartPod the scaler executed, by kind of outcome, from a daily rollup that is never
-// pruned; since is the earliest day with a row (null when none).
-export interface PodRequestTotals {
-    attempts: number
-    stock_refusals: number
-    other_refusals: number
-    since: string | null
-}
-
 export interface Stockouts {
-    totals_60d: PodRequestTotals
-    totals_all: PodRequestTotals
     last_1h: number
     last_24h: number
     last_7d: number
     last_at: number | null
-    last_error: string | null
-    active: boolean
-    active_since: number | null
-    active_count: number
 }
 
 export interface QueueRow {

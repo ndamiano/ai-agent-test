@@ -82,12 +82,6 @@ class Autoscaler:
         for pod_id in self._pod_first_seen.keys() - listed:
             del self._pod_first_seen[pod_id]
 
-        # A create that did not state the price leaves the row unpriced; the listing states it.
-        rate_by_pod = {p["id"]: p["costPerHr"] for p in pods if p.get("costPerHr") is not None}
-        for w in self._stats.unpriced_pod_workers():
-            if w.pod_id in rate_by_pod:
-                self._stats.record_worker_rate(w.id, float(rate_by_pod[w.pod_id]))
-
         for queue, qcfg in (rp.get("queues") or {}).items():
             prefix = f"maestro-{queue}-"
             created = {b.pod_id: b.started_at for b in self._stats.booting_workers(queue)}

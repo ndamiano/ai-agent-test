@@ -36,11 +36,7 @@ def test_admin_gets_a_snapshot_of_every_queue(app_client):
 
 
 def _queue(app_client, name):
-    return _queue_again(app_client, name, _token("root", "admin"))
-
-
-def _queue_again(app_client, name, token=None):
-    token = token or store.issue_token(store.get_user_by_handle("root").id)
+    token = _token("root", "admin")
     body = app_client.get("/api/admin/queues",
                           headers={"Authorization": f"Bearer {token}"}).json()
     return next(q for q in body["queues"] if q["queue"] == name), body["totals"]
@@ -71,7 +67,7 @@ def test_next_is_capped_at_ten(app_client):
     assert (image["pending"], len(image["next"])) == (12, 10)
 
 
-def test_workers_report_state_card_price_and_the_job_they_hold(app_client, monkeypatch):
+def test_workers_report_state_and_the_job_they_hold(app_client, monkeypatch):
     monkeypatch.setattr(
         "config.settings_manager.settings_manager.get_settings",
         lambda s=settings_manager.get_settings(): {
@@ -82,26 +78,20 @@ def test_workers_report_state_card_price_and_the_job_they_hold(app_client, monke
     jid = db_store.enqueue_job("mesh", {}, game_id="g1", build_id="b1")
     db_store.worker_seen("busy", "mesh", gpu_type="BIG", source="runpod", pod_id="p1")
     db_store.worker_seen("idle", "mesh", gpu_type="NVIDIA GeForce RTX 5090", source="local")
-    db_store.worker_seen("priced", "mesh", gpu_type="BIG", source="runpod", pod_id="p2")
-    db_store.set_worker_rate("priced", 2.11)
     db_store.claim_job("mesh", "busy", 60)
 
     mesh, totals = _queue(app_client, "mesh")
     by_id = {w["id"]: w for w in mesh["workers"]}
     assert by_id["busy"]["state"] == "busy"
-    assert by_id["busy"]["usd_per_hour"] == 2.5
     assert by_id["busy"]["pod_id"] == "p1"
     assert by_id["busy"]["job"]["id"] == jid
     assert by_id["busy"]["job"]["game_id"] == "g1"
     assert 0 <= by_id["busy"]["job"]["running_seconds"] < 5
     assert by_id["idle"]["state"] == "idle"
-    assert by_id["idle"]["usd_per_hour"] == 1.0
-    # The provider's quoted price for the pod, once the scaler has stamped it, beats the table.
-    assert by_id["priced"]["usd_per_hour"] == 2.11
     assert by_id["idle"]["job"] is None
-    assert (mesh["workers_live"], mesh["claimed"], mesh["pending"]) == (3, 1, 0)
+    assert (mesh["workers_live"], mesh["claimed"], mesh["pending"]) == (2, 1, 0)
     assert mesh["next"] == []
-    assert totals["workers_live"] == 3
+    assert totals["workers_live"] == 2
 
 
 def test_a_created_pod_is_booting_until_its_worker_registers(app_client):
@@ -233,39 +223,9 @@ def test_costs_without_a_reachable_ledger_still_reports_our_half(app_client, mon
 
 def test_a_queue_never_refused_carries_an_empty_stock_out_block(app_client):
     llm, _ = _queue(app_client, "llm")
-    assert llm["stockouts"] == {"last_1h": 0, "last_24h": 0, "last_7d": 0, "last_at": None,
-                                "last_error": None, "active": False, "active_since": None,
-                                "active_count": 0,
-                                "totals_60d": {"attempts": 0, "stock_refusals": 0,
-                                               "other_refusals": 0, "since": None},
-                                "totals_all": {"attempts": 0, "stock_refusals": 0,
-                                               "other_refusals": 0, "since": None}}
-
-
-def test_each_queue_carries_its_stock_outs_and_the_outage_under_way(app_client):
-    db_store.record_pod_refusal("llm", "other", [], "401 unauthorized")
-    db_store.record_pod_refusal("llm", "stock", [], "no instances currently available")
-    db_store.record_pod_refusal("llm", "stock", [], "no instances currently available")
-    llm, _ = _queue(app_client, "llm")
-    s = llm["stockouts"]
-    assert (s["last_1h"], s["last_24h"], s["last_7d"]) == (2, 2, 2)
-    assert s["last_error"] == "no instances currently available"
-    assert s["active"] and s["active_count"] == 2
-    assert s["active_since"] <= s["last_at"]
-    db_store.record_pod_created("llm")
-    llm, _ = _queue_again(app_client, "llm")
-    s = llm["stockouts"]
-    assert (s["totals_60d"]["attempts"], s["totals_60d"]["stock_refusals"],
-            s["totals_60d"]["other_refusals"]) == (4, 2, 1)
-    assert s["totals_all"]["attempts"] == 4 and s["totals_all"]["since"] is not None
-
-
-def test_a_stock_out_older_than_two_ticks_is_history_not_an_outage(app_client):
-    db_store.record_pod_refusal("image", "stock", [], "no instances currently available")
-    tick = settings_manager.get_settings()["runpod"]["tick_seconds"]
-    with db_store._db() as conn:
-        conn.execute("UPDATE pod_refusals SET created_at = created_at - ?", (3 * tick,))
-    image, _ = _queue(app_client, "image")
-    s = image["stockouts"]
-    assert (s["active"], s["active_count"], s["active_since"]) == (False, 0, None)
-    assert s["last_7d"] == 1
+    assert llm["stockouts"] == {
+        "last_1h": 0,
+        "last_24h": 0,
+        "last_7d": 0,
+        "last_at": None
+    }

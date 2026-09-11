@@ -39,8 +39,6 @@ class StatsSource(Protocol):
     def mark_pod_terminated(self, pod_id: str) -> None: ...
     def record_worker_created(self, pod_id: str, queue: str, gpu_type: Optional[str],
                               usd_per_hour: Optional[float]) -> None: ...
-    def unpriced_pod_workers(self) -> List[WorkerInfo]: ...
-    def record_worker_rate(self, worker_id: str, usd_per_hour: float) -> None: ...
     def record_pod_refusal(self, queue: str, kind: str, attempts: List[Dict],
                            error: str) -> None: ...
     def record_pod_created(self, queue: str) -> None: ...
@@ -77,12 +75,6 @@ class SqliteStatsSource:
     def record_worker_created(self, pod_id: str, queue: str, gpu_type: Optional[str],
                               usd_per_hour: Optional[float]) -> None:
         store.worker_created(pod_id, queue, gpu_type, usd_per_hour)
-
-    def unpriced_pod_workers(self) -> List[WorkerInfo]:
-        return [WorkerInfo(w["id"], w["pod_id"]) for w in store.unpriced_pod_workers()]
-
-    def record_worker_rate(self, worker_id: str, usd_per_hour: float) -> None:
-        store.set_worker_rate(worker_id, usd_per_hour)
 
     def record_pod_refusal(self, queue: str, kind: str, attempts: List[Dict],
                            error: str) -> None:

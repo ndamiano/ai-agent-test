@@ -1,9 +1,4 @@
-"""Operator-only surfaces. Everything here is gated by `require_admin`, so a signed-in ordinary
-user gets a 403: the inference-queue snapshot (depth, next jobs, fleet) the operator watches to
-size the fleet, the effective-cost join against RunPod's ledger, the usage rollup (user-action
-events by kind by day — see routers/events.py for the intake), and the stop that reaches ANY
-run, which is the operator's hand on a run burning cards for somebody else.
-"""
+"""Admin only APIs. These are gated by `require_admin`."""
 
 import calendar
 import logging
@@ -26,12 +21,12 @@ logger = logging.getLogger("admin")
 
 router = APIRouter()
 
-_DAY_SECONDS = 24 * 3600
+_DAY_SECONDS = 86400
 _NEXT_LIMIT = 10
 
 
 def _max_workers(queue: str) -> int:
-    """The configured pod ceiling for a queue, or 0 when RunPod isn't scaling it (home box)."""
+    """The maximum workers to spin up for a queue"""
     rp = settings_manager.get_settings().get("runpod") or {}
     if not rp.get("enabled"):
         return 0
@@ -39,40 +34,19 @@ def _max_workers(queue: str) -> int:
 
 
 def _freshness() -> float:
-    """How recently a worker must have checked in to count as live — the same staleness the scaler
-    reaps on, so the admin count and the scaler agree on who's alive."""
+    """How many seconds after a worker heartbeat before it's considered stale."""
     rp = settings_manager.get_settings().get("runpod") or {}
     return float(rp.get("stale_worker_seconds", 180))
 
 
-def _outage_window() -> float:
-    """How recently a stock refusal must be for the scaler to count as wanting a pod it cannot get
-    NOW: two ticks — one tick's refusal is still the standing answer until the next tick asks."""
-    rp = settings_manager.get_settings().get("runpod") or {}
-    return 2.0 * float(rp.get("tick_seconds", 15))
-
-
 def _stockouts(queue: str, now: float) -> Dict[str, Any]:
-    """Provider stock refusals for the queue, from the scaler's durable record: counts per window,
-    the latest one, the attempts/refusals rollup for the provider conversation (60 days and all
-    time), and the current outage — active when the last refusal is within two ticks,
-    with its start being the earliest refusal of the unbroken run (a gap wider than two ticks
-    means the scaler got a pod, or stopped wanting one, in between)."""
+    """Returns stock refusal counts per window, and whether there's an active stock outage."""
     stats = db_store.pod_stockout_stats(queue, now)
-    window = _outage_window()
-    active = stats["last_at"] is not None and now - stats["last_at"] <= window
-    since, n = None, 0
-    if active:
-        for r in reversed(stats["recent"]):
-            if since is not None and since - r["created_at"] > window:
-                break
-            since, n = r["created_at"], n + 1
     return {
-        "last_1h": stats["last_1h"], "last_24h": stats["last_24h"], "last_7d": stats["last_7d"],
-        "last_at": stats["last_at"], "last_error": stats["last_error"],
-        "active": active, "active_since": since, "active_count": n,
-        "totals_60d": db_store.pod_request_totals(queue, 60),
-        "totals_all": db_store.pod_request_totals(queue),
+        "last_1h": stats["last_1h"],
+        "last_24h": stats["last_24h"],
+        "last_7d": stats["last_7d"],
+        "last_at": stats["last_at"],
     }
 
 
@@ -94,8 +68,7 @@ def _workers(queue: str, now: float, freshness: float) -> List[Dict[str, Any]]:
             "id": w["id"],
             "state": "booting" if w["registered_at"] is None else "busy" if job else "idle",
             "gpu_type": w["gpu_type"],
-            "usd_per_hour": w["usd_per_hour"] if w["usd_per_hour"] is not None
-                            else _usd_per_hour(w["gpu_type"]),
+            "usd_per_hour": w["usd_per_hour"],
             "source": w["source"],
             "pod_id": w["pod_id"],
             "uptime_seconds": now - w["started_at"],

@@ -16,7 +16,6 @@ RP = {"cp_url": "https://cp", "network_volume_id": "vol1"}
 def _scaler():
     a = Autoscaler(MagicMock(), MagicMock(), lambda: {})
     a._stats.booting_workers.return_value = []
-    a._stats.unpriced_pod_workers.return_value = []
     return a, a._client
 
 
@@ -310,15 +309,3 @@ def test_a_refused_create_is_not_also_counted_as_created():
     client.create_pod.side_effect = [STOCK_CARD, STOCK_DC]
     _start(a)
     a._stats.record_pod_created.assert_not_called()
-
-
-def test_tick_stamps_the_pods_actual_hourly_price_on_its_worker():
-    """The rate the provider quotes for the pod it handed us — not the rate table's guess."""
-    stats = MagicMock()
-    stats.booting_workers.return_value = []
-    stats.unpriced_pod_workers.return_value = [WorkerInfo("w1", "p1"), WorkerInfo("w2", "p-gone")]
-    a = Autoscaler(stats, MagicMock(), lambda: {"runpod": {}, "workqueue": {}, "llm": {}})
-    a._client.list_pods.return_value = [{"id": "p1", "name": "maestro-llm-1", "costPerHr": 1.89},
-                                        {"id": "p2", "name": "maestro-llm-2"}]
-    a.tick()
-    stats.record_worker_rate.assert_called_once_with("w1", 1.89)

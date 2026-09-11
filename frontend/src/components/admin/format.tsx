@@ -6,9 +6,6 @@ export const fmtSecs = (s: number): string =>
 export const fmtAge = (s: number | null): string =>
     s == null ? '—' : s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`
 
-export const fmtClock = (ts: number): string =>
-    new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-
 export const fmtStamp = (ts: number): string =>
     new Date(ts * 1000).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 

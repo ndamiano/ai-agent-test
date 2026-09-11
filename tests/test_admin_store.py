@@ -56,19 +56,43 @@ def _finish(queue, exec_seconds, *, game_id, gpu_type=None, build_id="b1"):
                        exec_seconds=exec_seconds, gpu_type=gpu_type)
 
 
-def test_exec_seconds_by_gpu_groups_finished_jobs_by_card():
+def test_pod_ledger_counts_each_pods_jobs_and_what_its_games_were_debited():
     _game()
-    _finish("llm", 10.0, game_id="g1", gpu_type="A")
-    _finish("llm", 5.0, game_id="g1", gpu_type="A")
-    _finish("mesh", 7.0, game_id="g1", gpu_type="B")
-    _finish("llm", 1.0, game_id=None)
+    store.worker_created("wp", "p1", "llm", "A", 1.0)
+    store.worker_seen("wp", "llm", gpu_type="A", source="runpod", pod_id="p1")
+    for game_id, error, secs in [("g1", None, 36.0), ("g1", "boom", 18.0), (None, None, 9.0)]:
+        store.enqueue_job("llm", {}, game_id=game_id, build_id="b1")
+        claimed = store.claim_job("llm", "wp", 60)
+        store.complete_job(claimed["id"], "wp", None if error else {"ok": True}, error,
+                           exec_seconds=secs)
+    _finish("llm", 5.0, game_id="g1")
 
-    cost = lambda *s: sum(job_micros(x, None) for x in s)
-    assert store.exec_seconds_by_gpu(0.0) == {
-        "A": {"seconds": 15.0, "micros": cost(10.0, 5.0)},
-        "B": {"seconds": 7.0, "micros": cost(7.0)},
-        "unknown": {"seconds": 1.0, "micros": cost(1.0)}}
-    assert store.exec_seconds_by_gpu(time.time() + 10) == {}
+    [row] = store.pod_ledger(0.0)
+    assert (row["worker_id"], row["pod_id"]) == ("wp", "p1")
+    assert (row["queue"], row["gpu_type"], row["usd_per_hour"]) == ("llm", "A", 1.0)
+    assert (row["jobs"], row["failed"], row["exec_seconds"]) == (3, 1, 63.0)
+    assert row["customer_micros"] == job_micros(36.0, 1.0)
+    assert store.pod_ledger(time.time() + 10) == []
+    assert store.pod_lives() == {"p1": [(row["started_at"], "wp")]}
+
+
+def test_pod_ledger_is_one_row_per_life_when_runpod_reuses_a_pod_id():
+    _game()
+    store.worker_created("tue", "p1", "llm", "A", 2.0)
+    store.worker_created("wed", "p1", "llm", "A", 1.0)
+    with store._db() as conn:
+        conn.execute("UPDATE workers SET started_at = started_at - 86400 WHERE id = 'tue'")
+    for worker in ("tue", "wed"):
+        store.worker_seen(worker, "llm", gpu_type="A", source="runpod", pod_id="p1")
+        store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
+        claimed = store.claim_job("llm", worker, 60)
+        store.complete_job(claimed["id"], worker, {"ok": True}, None, exec_seconds=10.0)
+
+    rows = store.pod_ledger(0.0)
+    assert [(r["worker_id"], r["pod_id"], r["usd_per_hour"], r["jobs"]) for r in rows] == [
+        ("wed", "p1", 1.0, 1), ("tue", "p1", 2.0, 1)]
+    assert [r["worker_id"] for r in store.pod_ledger(time.time() - 3600)] == ["wed"]
+    assert [wid for _, wid in store.pod_lives()["p1"]] == ["tue", "wed"]
 
 
 def test_games_exec_seconds_is_everything_the_games_ever_ran():

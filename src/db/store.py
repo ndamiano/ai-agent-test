@@ -916,14 +916,32 @@ _WORK_BY_GPU = ("SELECT COALESCE(gpu_type, 'unknown') AS gpu, "
                 "COALESCE(SUM(billed_micros), 0) AS micros FROM jobs ")
 
 
-def exec_seconds_by_gpu(since: float) -> Dict[str, Dict[str, float]]:
-    """GPU-seconds worked per card over jobs finished since `since`, and what they cost at the
-    rate of the pod that ran each — done AND failed, since the card ran either way. A job with no
-    recorded card lands under 'unknown'."""
+def pod_ledger(since: float) -> List[Dict]:
+    """Returns each pod life (worker row) created since `since`, with its jobs and customer spend."""
     with _db() as conn:
-        rows = conn.execute(_WORK_BY_GPU + "WHERE finished_at >= ? GROUP BY gpu",
-                            (since,)).fetchall()
-    return {r["gpu"]: {"seconds": r["seconds"], "micros": r["micros"]} for r in rows}
+        rows = conn.execute(
+            "SELECT w.id AS worker_id, w.pod_id, w.queue, w.gpu_type, w.usd_per_hour, "
+            "w.started_at, w.terminated_at, "
+            "COUNT(j.id) AS jobs, "
+            "COALESCE(SUM(j.status = 'failed'), 0) AS failed, "
+            "COALESCE(SUM(j.exec_seconds), 0) AS exec_seconds, "
+            "COALESCE(SUM(CASE WHEN j.status = 'done' AND j.game_id IS NOT NULL "
+            "THEN j.billed_micros END), 0) AS customer_micros "
+            "FROM workers w LEFT JOIN jobs j ON j.worker_id = w.id AND j.finished_at IS NOT NULL "
+            "WHERE w.pod_id IS NOT NULL AND w.started_at >= ? "
+            "GROUP BY w.id ORDER BY w.started_at DESC", (since,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def pod_lives() -> Dict[str, List[tuple]]:
+    """Returns each pod id's lives as (started_at, worker_id), oldest first."""
+    with _db() as conn:
+        rows = conn.execute("SELECT pod_id, started_at, id FROM workers WHERE pod_id IS NOT NULL "
+                            "ORDER BY started_at").fetchall()
+    out: Dict[str, List[tuple]] = {}
+    for r in rows:
+        out.setdefault(r["pod_id"], []).append((r["started_at"], r["id"]))
+    return out
 
 
 def games_exec_seconds_by_gpu(game_ids: List[str]) -> Dict[str, Dict[str, float]]:
@@ -958,17 +976,6 @@ def games_change_count(game_ids: List[str]) -> int:
             "SELECT COUNT(*) AS n FROM builds WHERE kind = 'change' "
             f"AND game_id IN ({','.join('?' * len(game_ids))})", game_ids).fetchone()
     return row["n"]
-
-
-def workers_since(since: float) -> List[Dict]:
-    """Worker rows alive at any point after `since` — for wall-clock and ghost accounting."""
-    with _db() as conn:
-        rows = conn.execute(
-            "SELECT id, queue, gpu_type, source, pod_id, usd_per_hour, started_at, last_seen_at, "
-            "terminated_at "
-            "FROM workers WHERE COALESCE(terminated_at, last_seen_at) >= ? OR terminated_at IS NULL",
-            (since,)).fetchall()
-    return [dict(r) for r in rows]
 
 
 _DAY = 24 * 3600

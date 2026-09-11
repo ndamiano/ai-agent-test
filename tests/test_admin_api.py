@@ -106,110 +106,120 @@ def test_a_created_pod_is_booting_until_its_worker_registers(app_client):
     assert llm["workers_live"] == 1
 
 
-def _billing(rows_hourly, rows_daily):
-    return {"hourly_24h": rows_hourly, "daily_30d": rows_daily}
-
-
-def test_costs_joins_runpod_billing_against_our_logs_per_card(app_client, monkeypatch):
+def test_costs_split_a_reused_pod_id_into_its_lives(app_client, monkeypatch):
     from api.routers import admin
+    from db.estimates import job_micros
 
     now = time.time()
-    iso = admin._iso
-    # The wire format: space-separated, NOT the ISO "T" the docs imply.
-    wire = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(now - 3600))
-    # One record per pod per bucket, money only: the card and the rate come from our worker rows.
-    hourly = [{"podId": "p5090", "startTime": wire, "totalAmount": 0.5}]
-    daily = [{"podId": "p5090", "startTime": iso(now - 2 * 24 * 3600), "totalAmount": 2.0},
-             {"podId": "p4500", "startTime": iso(now - 20 * 24 * 3600), "totalAmount": 4.0},
-             {"podId": "boot-looper", "startTime": iso(now + 60), "totalAmount": 1.5},
-             # Billed before any worker row existed: predates tracking, NOT a ghost.
-             {"podId": "prehistoric", "startTime": iso(now - 29 * 24 * 3600), "totalAmount": 9.0}]
-    monkeypatch.setattr(admin, "_billing_rows", lambda _now: _billing(hourly, daily))
-    db_store.worker_created("w5090", "p5090", "llm", "NVIDIA GeForce RTX 5090", 0.5)
-    db_store.worker_created("w4500", "p4500", "llm", "NVIDIA RTX PRO 4500 Blackwell", 0.25)
-    admin._cost_cache.update(at=0.0, data=None)
+    day = 86400
+    # RunPod reused qwieur: one life Tuesday, another Wednesday.
+    lives = {"w-tue": ("qwieur", 2.0, now - 3 * day), "w-wed": ("qwieur", 1.0, now - day),
+             "w-old": ("p-old", 1.0, now - 10 * day)}
+    for worker, (pod, rate, started) in lives.items():
+        db_store.worker_created(worker, pod, "image", "NVIDIA GeForce RTX 5090", rate)
+        db_store.worker_seen(worker, "image", gpu_type="NVIDIA GeForce RTX 5090",
+                             source="runpod", pod_id=pod)
+        with db_store._db() as conn:
+            conn.execute("UPDATE workers SET started_at = ? WHERE id = ?", (started, worker))
 
-    db_store.worker_created("w1", "known", "llm", None, 1.0)
-    db_store.worker_seen("w1", "llm", gpu_type="NVIDIA GeForce RTX 5090", source="runpod",
-                         pod_id="known")
-    db_store.worker_created("w2", "known2", "llm", None, 0.5)
-    db_store.worker_seen("w2", "llm", gpu_type="NVIDIA RTX PRO 4500 Blackwell", source="runpod",
-                         pod_id="known2")
+    def hour(pod, end, total, gpu, disk=0.0):
+        return {"pod_id": pod, "end": end, "total": total, "gpu": gpu, "disk": disk}
+
+    monkeypatch.setattr(admin, "_ledger", lambda _since, _now: [
+        hour("qwieur", now - 5 * day, 0.25, 0.25),        # before any life we know of: ghost
+        hour("qwieur", now - 3 * day + 3600, 2.0, 2.0),
+        hour("qwieur", now - day + 3600, 0.6, 0.5, 0.1),
+        hour("p-old", now - 6 * day, 3.0, 3.0),           # a life created before the window
+        hour("boot-looper", now - 3600, 1.5, 1.5)])
+    admin._cost_cache.clear()
     db_store.create_game("g1", "u1")
     db_store.charge_game("g1", 1, 10_000_000)
     build = db_store.create_build("g1")
-    job_id = db_store.enqueue_job("llm", {"p": 1}, game_id="g1", build_id=build)
-    db_store.claim_job("llm", "w1", lease_seconds=120)
-    db_store.complete_job(job_id, "w1", {"ok": True}, None, exec_seconds=600,
-                          gpu_type="NVIDIA GeForce RTX 5090")
+    for worker, game_id, error, secs in [("w-tue", "g1", None, 100.0),
+                                         ("w-wed", "g1", None, 360.0),
+                                         ("w-wed", "g1", "boom", 36.0),
+                                         ("w-wed", None, None, 72.0)]:
+        db_store.enqueue_job("image", {}, game_id=game_id, build_id=build)
+        claimed = db_store.claim_job("image", worker, 60)
+        db_store.complete_job(claimed["id"], worker, None if error else {"ok": True}, error,
+                              exec_seconds=secs)
     db_store.build_finished(build, "built")
-    # The game's design ran before the window opened, on another card: it still costs the game.
-    design = db_store.enqueue_job("llm", {"p": 0}, game_id="g1", build_id="b1")
-    db_store.claim_job("llm", "w2", lease_seconds=120)
-    db_store.complete_job(design, "w2", {"ok": True}, None, exec_seconds=1800,
-                          gpu_type="NVIDIA RTX PRO 4500 Blackwell")
-    with db_store._db() as conn:
-        conn.execute("UPDATE jobs SET finished_at = ? WHERE id = ?", (now - 2 * 24 * 3600, design))
-    db_store.build_finished(db_store.create_build("g1", kind="change"), "built")
-    # A platform job (no game) on a card RunPod has no row for in the 24h bucket.
-    pj = db_store.enqueue_job("llm", {"p": 2})
-    db_store.claim_job("llm", "w2", lease_seconds=120)
-    db_store.complete_job(pj, "w2", {"ok": True}, None, exec_seconds=360,
-                          gpu_type="NVIDIA RTX PRO 4500 Blackwell")
 
     token = _token("root", "admin")
-    body = app_client.get("/api/admin/costs",
+    body = app_client.get("/api/admin/costs?days=7",
                           headers={"Authorization": f"Bearer {token}"}).json()
 
-    assert body["runpod_reachable"] is True
-    day = next(w for w in body["windows"] if w["label"] == "24h")
-    by_gpu = {g["gpu"]: g for g in day["gpus"]}
-    # $0.50 at the pod's $0.50/h is 1 billed GPU-hour; 600 exec seconds of it worked, on w1's $1/h pod.
-    assert by_gpu["NVIDIA GeForce RTX 5090"] == {
-        "gpu": "NVIDIA GeForce RTX 5090", "alive_seconds": 3600.0, "alive_usd": 0.5,
-        "worked_seconds": 600.0, "worked_usd": round(600 / 3600, 4)}
-    # Worked with no ledger row: alive unknown, worked still priced at w2's $0.50/h.
-    assert by_gpu["NVIDIA RTX PRO 4500 Blackwell"] == {
-        "gpu": "NVIDIA RTX PRO 4500 Blackwell", "alive_seconds": None, "alive_usd": None,
-        "worked_seconds": 360.0, "worked_usd": 0.05}
-    # One game built in the window; the average is over everything it ever ran — the 600 s
-    # build turn at $1/h plus the 1800 s design from before the window at $0.50/h.
-    assert day["games"] == {"n": 1, "avg_gpu_hours": round(2400 / 3600, 4),
-                            "avg_usd": round(600 / 3600 + 1800 / 3600 * 0.5, 4),
-                            "avg_changes": 1.0}
-    assert day["games"]["avg_usd"] == round(db_store.game("g1")["spent_micros"] / 1e6, 4)
+    assert (body["runpod_reachable"], body["days"]) == (True, 7)
+    tracked = {p["worker_id"]: p for p in body["pods"] if p["tracked"]}
+    assert set(tracked) == {"w-tue", "w-wed"}
+    wed = tracked["w-wed"]
+    assert (wed["pod_id"], wed["runpod_usd"], wed["disk_usd"]) == ("qwieur", 0.6, 0.1)
+    assert wed["billed_seconds"] == pytest.approx(1800.0)
+    assert (wed["jobs"], wed["failed"], wed["exec_seconds"]) == (3, 1, 468.0)
+    assert wed["customer_usd"] == round(job_micros(360.0, 1.0) / 1e6, 4)
+    tue = tracked["w-tue"]
+    assert (tue["pod_id"], tue["runpod_usd"], tue["jobs"]) == ("qwieur", 2.0, 1)
+    assert tue["billed_seconds"] == pytest.approx(3600.0)
+    assert tue["customer_usd"] == round(job_micros(100.0, 2.0) / 1e6, 4)
 
-    month = next(w for w in body["windows"] if w["label"] == "30d")
-    by_gpu = {g["gpu"]: g for g in month["gpus"]}
-    assert by_gpu["NVIDIA GeForce RTX 5090"]["alive_usd"] == 2.0
-    assert by_gpu["NVIDIA RTX PRO 4500 Blackwell"]["alive_usd"] == 4.0
-
-    # The boot-looper pod billed money but never registered a worker: ghost spend.
-    ghost = body["ghost_30d"]
-    assert (ghost["pods"], ghost["amount_usd"]) == (1, 1.5)
+    ghosts = {p["pod_id"]: p for p in body["pods"] if not p["tracked"]}
+    assert {pid: g["runpod_usd"] for pid, g in ghosts.items()} == {"boot-looper": 1.5,
+                                                                   "qwieur": 0.25}
+    assert all(g["worker_id"] is None and g["jobs"] == 0 for g in ghosts.values())
+    assert body["games"]["n"] == 1
 
 
 def test_costs_without_a_reachable_ledger_still_reports_our_half(app_client, monkeypatch):
     from api.routers import admin
 
-    monkeypatch.setattr(admin, "_billing_rows", lambda _now: None)
-    admin._cost_cache.update(at=0.0, data=None)
-    db_store.worker_seen("w1", "llm", gpu_type="NVIDIA GeForce RTX 5090")
+    monkeypatch.setattr(admin, "_ledger", lambda _since, _now: None)
+    admin._cost_cache.clear()
+    db_store.worker_created("w1", "p1", "llm", "NVIDIA GeForce RTX 5090", 1.0)
+    db_store.worker_seen("w1", "llm", gpu_type="NVIDIA GeForce RTX 5090", source="runpod",
+                         pod_id="p1")
     jid = db_store.enqueue_job("llm", {"p": 1})
     db_store.claim_job("llm", "w1", lease_seconds=120)
-    db_store.complete_job(jid, "w1", {"ok": True}, None, exec_seconds=60,
-                          gpu_type="NVIDIA GeForce RTX 5090")
+    db_store.complete_job(jid, "w1", {"ok": True}, None, exec_seconds=60)
 
     token = _token("root2", "admin")
     body = app_client.get("/api/admin/costs",
                           headers={"Authorization": f"Bearer {token}"}).json()
-    assert body["runpod_reachable"] is False
-    assert body["ghost_30d"] is None
-    for w in body["windows"]:
-        assert [g["alive_usd"] for g in w["gpus"]] == [None]
-        assert w["gpus"][0]["worked_seconds"] == 60.0
-        assert w["games"] == {"n": 0, "avg_gpu_hours": None, "avg_usd": None,
-                              "avg_changes": None}
+    assert (body["runpod_reachable"], body["days"]) == (False, 7)
+    [pod] = body["pods"]
+    assert (pod["worker_id"], pod["pod_id"], pod["runpod_usd"]) == ("w1", "p1", None)
+    assert pod["billed_seconds"] is None
+    assert (pod["jobs"], pod["exec_seconds"], pod["customer_usd"]) == (1, 60.0, 0.0)
+
+
+def test_ledger_reads_runpods_hour_buckets_and_fails_soft(monkeypatch):
+    import calendar
+    from api.routers import admin
+
+    monkeypatch.setattr(admin.settings_manager, "get_settings",
+                        lambda: {"runpod": {"api_key": "k"}})
+    buckets = []
+
+    class Client:
+        def __init__(self, key):
+            pass
+
+        def billing_pods(self, start, end, bucket):
+            buckets.append(bucket)
+            return [{"podId": "p1", "startTime": "2026-09-01T10:00:00Z",
+                     "endTime": "2026-09-01T11:00:00Z", "totalAmount": 0.6, "gpuAmount": 0.5,
+                     "cpuAmount": 0, "diskAmount": 0.1}]
+
+    monkeypatch.setattr(admin, "RunPodClient", Client)
+    assert admin._ledger(0.0, 30 * 86400.0) == [
+        {"pod_id": "p1", "end": calendar.timegm((2026, 9, 1, 11, 0, 0)),
+         "total": 0.6, "gpu": 0.5, "disk": 0.1}]
+    assert buckets == ["hour"]
+
+    def refused(self, start, end, bucket):
+        raise RuntimeError("429")
+
+    monkeypatch.setattr(Client, "billing_pods", refused)
+    assert admin._ledger(0.0, 1.0) is None
 
 
 def test_a_queue_never_refused_carries_an_empty_stock_out_block(app_client):

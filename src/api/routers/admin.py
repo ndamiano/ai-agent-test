@@ -3,7 +3,7 @@
 import calendar
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import asyncio
 
@@ -133,141 +133,110 @@ async def list_violations(_: User = Depends(require_admin)) -> Dict[str, Any]:
     return {"violations": rows}
 
 
-# ── Costs: RunPod's ledger joined against our job/worker logs ────────────────────────────────
-#
-# Our jobs record EXEC time; RunPod bills pod WALL-CLOCK — cold starts, idle linger, warmup and
-# boot-loop pods that never worked at all. The join is the point: per card, the gap between the
-# two IS the overhead, and a pod RunPod billed that no worker row ever claimed is GHOST spend
-# (measured 2026-08-01: two ninfer boot-loops billed ~15 min each, invisible to every
-# jobs-derived number). Worked seconds are priced at the rate of the pod that ran each job, so a
-# card's worked_usd beside its alive_usd is what the same hours would have cost with zero overhead.
-
-_WINDOWS = [("24h", 24), ("7d", 7 * 24), ("30d", 30 * 24)]
 _COST_CACHE_TTL = 300.0
-_cost_cache: Dict[str, Any] = {"at": 0.0, "data": None}
+_MAX_COST_DAYS = 30
+_cost_cache: Dict[int, Dict[str, Any]] = {}
+
+Spend = Dict[str, float]
 
 
 def _iso(ts: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
 
 
-def _billing_rows(now: float):
-    """Two fetches: hourly for the 24h window (day buckets truncate it), daily for 7d/30d and
-    ghost accounting. None ⇒ no key or the API refused — the panel still shows our half."""
+def _ledger(since: float, now: float) -> Optional[List[Dict[str, Any]]]:
+    """Returns RunPod's hourly billing records since `since`, or None if unreachable."""
     key = (settings_manager.get_settings().get("runpod") or {}).get("api_key")
     if not key:
         return None
-    client = RunPodClient(key)
     try:
-        return {
-            "hourly_24h": client.billing_pods(_iso(now - 24 * 3600), _iso(now), bucket="hour"),
-            "daily_30d": client.billing_pods(_iso(now - 30 * 24 * 3600), _iso(now), bucket="day"),
-        }
+        return [{"pod_id": r["podId"],
+                 "end": calendar.timegm(time.strptime(r["endTime"], "%Y-%m-%dT%H:%M:%SZ")),
+                 "total": float(r.get("totalAmount") or 0),
+                 "gpu": float(r.get("gpuAmount") or 0),
+                 "disk": float(r.get("diskAmount") or 0)}
+                for r in RunPodClient(key).billing_pods(_iso(since), _iso(now), bucket="hour")]
     except Exception:
         return None
 
 
-def _parse_time(value: str) -> float:
-    """RunPod's docs say date-time; the wire says '2026-08-01 19:00:00' — accept both. 0.0 (never
-    inside any window) for anything else, so a format surprise shows as missing spend, not a 500."""
-    try:
-        return calendar.timegm(time.strptime(value[:19].replace(" ", "T"), "%Y-%m-%dT%H:%M:%S"))
-    except (ValueError, TypeError):
-        return 0.0
+def _attribute(records: List[Dict[str, Any]],
+               lives: Dict[str, List[Tuple[float, str]]]) -> Tuple[Dict[str, Spend], Dict[str, Spend]]:
+    """Returns spend per worker id, and ghost spend per pod id."""
+    by_life: Dict[str, Spend] = {}
+    ghosts: Dict[str, Spend] = {}
+    for r in records:
+        # RunPod reuses pod ids, so an hour belongs to the life that last started before it ended.
+        owner = next((wid for started, wid in reversed(lives.get(r["pod_id"], []))
+                      if started < r["end"]), None)
+        slot = (by_life.setdefault(owner, {"total": 0.0, "gpu": 0.0, "disk": 0.0}) if owner
+                else ghosts.setdefault(r["pod_id"], {"total": 0.0, "gpu": 0.0, "disk": 0.0}))
+        for k in slot:
+            slot[k] += r[k]
+    return by_life, ghosts
 
 
-def _billed_seconds(usd: float, usd_per_hour: Optional[float]) -> float:
-    """RunPod's ledger states money, not time: the wall-clock is the amount over the pod's rate,
-    and a pod with no rate on record contributes none."""
-    return usd / usd_per_hour * 3600.0 if usd_per_hour else 0.0
+def _pod_row(pod: Dict[str, Any], spend: Optional[Spend]) -> Dict[str, Any]:
+    """Returns one pod life's costs row."""
+    rate = pod.get("usd_per_hour")
+    return {
+        "worker_id": pod.get("worker_id"),
+        "pod_id": pod["pod_id"],
+        "tracked": pod.get("worker_id") is not None,
+        "queue": pod.get("queue"),
+        "gpu_type": pod.get("gpu_type"),
+        "usd_per_hour": rate,
+        "started_at": pod.get("started_at"),
+        "terminated_at": pod.get("terminated_at"),
+        "runpod_usd": round(spend["total"], 4) if spend else None,
+        "disk_usd": round(spend["disk"], 4) if spend else None,
+        # RunPod's v2 ledger bills money only.
+        "billed_seconds": spend["gpu"] / rate * 3600.0 if spend and rate else None,
+        "jobs": pod.get("jobs", 0),
+        "failed": pod.get("failed", 0),
+        "exec_seconds": pod.get("exec_seconds", 0.0),
+        "customer_usd": round(pod.get("customer_micros", 0) / 1e6, 4),
+    }
 
 
-def _alive_by_gpu(rows: List[Dict], since: float,
-                  pods: Dict[str, Dict]) -> Dict[str, Dict[str, float]]:
-    out: Dict[str, Dict[str, float]] = {}
-    for r in rows:
-        if _parse_time(r.get("startTime", "")) < since:
-            continue
-        pod = pods.get(r.get("podId")) or {}
-        usd = float(r.get("totalAmount") or 0)
-        slot = out.setdefault(pod.get("gpu_type") or "unknown", {"seconds": 0.0, "usd": 0.0})
-        slot["seconds"] += _billed_seconds(usd, pod.get("usd_per_hour"))
-        slot["usd"] += usd
-    return out
-
-
-def _window(label: str, since: float, billing_rows, pods: Dict[str, Dict]) -> Dict[str, Any]:
-    """One window: per card, the wall-clock RunPod billed beside the seconds our jobs ran on it —
-    the gap is boot, idle and warmup — and what a game cost on average. A game belongs to the
-    window its full build finished in, and costs everything it ever ran: design, art, changes."""
-    alive = _alive_by_gpu(billing_rows, since, pods) if billing_rows is not None else None
-    worked = db_store.exec_seconds_by_gpu(since)
-    gpus = []
-    for gpu in sorted(set(worked) | set(alive or {})):
-        a = (alive or {}).get(gpu)
-        w = worked.get(gpu, {"seconds": 0.0, "micros": 0})
-        gpus.append({
-            "gpu": gpu,
-            "alive_seconds": a["seconds"] if a else None,
-            "alive_usd": round(a["usd"], 4) if a else None,
-            "worked_seconds": w["seconds"],
-            "worked_usd": round(w["micros"] / 1e6, 4),
-        })
+def _games(since: float) -> Dict[str, Any]:
+    """Returns the count and per-game averages of games built since `since`."""
     game_ids = db_store.games_built_since(since)
     per_game = db_store.games_exec_seconds_by_gpu(game_ids).values()
     n = len(game_ids)
     seconds = sum(g["seconds"] for g in per_game)
     usd = sum(g["micros"] for g in per_game) / 1e6
-    return {
-        "label": label,
-        "gpus": gpus,
-        "games": {"n": n,
-                  "avg_gpu_hours": round(seconds / 3600.0 / n, 4) if n else None,
-                  "avg_usd": round(usd / n, 4) if n else None,
-                  "avg_changes": round(db_store.games_change_count(game_ids) / n, 2) if n else None},
-    }
+    return {"n": n,
+            "avg_gpu_hours": round(seconds / 3600.0 / n, 4) if n else None,
+            "avg_usd": round(usd / n, 4) if n else None,
+            "avg_changes": round(db_store.games_change_count(game_ids) / n, 2) if n else None}
 
 
 @router.get("/costs")
-async def get_costs(_: User = Depends(require_admin)) -> Dict[str, Any]:
-    """Effective cost, three windows. Cached: RunPod's billing API must not ride the panel's
-    5-second poll."""
+async def get_costs(days: int = 7, _: User = Depends(require_admin)) -> Dict[str, Any]:
+    """Returns every pod life created in the last `days`, plus ghost spend."""
+    days = max(1, min(days, _MAX_COST_DAYS))
     now = time.time()
-    if _cost_cache["data"] is not None and now - _cost_cache["at"] < _COST_CACHE_TTL:
-        return _cost_cache["data"]
+    hit = _cost_cache.get(days)
+    if hit is not None and now - hit["generated_at"] < _COST_CACHE_TTL:
+        return hit
 
-    billing = _billing_rows(now)
-    all_workers = db_store.workers_since(0.0)
-    pods = {w["pod_id"]: w for w in all_workers if w.get("pod_id")}
-    windows = []
-    for label, hours in _WINDOWS:
-        rows = None
-        if billing is not None:
-            rows = billing["hourly_24h"] if hours <= 24 else billing["daily_30d"]
-        windows.append(_window(label, now - hours * 3600, rows, pods))
+    since = now - days * _DAY_SECONDS
+    records = await asyncio.to_thread(_ledger, since, now)
+    by_life, ghosts = _attribute(records or [], db_store.pod_lives())
+    pods = [_pod_row(p, by_life.get(p["worker_id"])) for p in db_store.pod_ledger(since)]
+    pods += [_pod_row({"pod_id": pid}, spend)
+             for pid, spend in sorted(ghosts.items(), key=lambda kv: -kv[1]["total"])]
 
-    ghost = None
-    if billing is not None:
-        # Pods billed before the first worker row existed aren't ghosts — they predate pod
-        # tracking entirely. The metric only judges the era it can see.
-        tracking_from = min((float(w["started_at"]) for w in all_workers), default=now)
-        ghost_rows = [r for r in billing["daily_30d"] if r.get("podId") not in pods
-                      and _parse_time(r.get("startTime", "")) >= tracking_from]
-        ghost = {"pods": len({r.get("podId") for r in ghost_rows}),
-                 "amount_usd": round(sum(float(r.get("totalAmount") or 0) for r in ghost_rows), 4),
-                 "tracking_from": tracking_from}
-
-    data = {"generated_at": now, "cache_seconds": _COST_CACHE_TTL,
-            "runpod_reachable": billing is not None, "windows": windows, "ghost_30d": ghost}
-    _cost_cache.update(at=now, data=data)
+    data = {"generated_at": now, "cache_seconds": _COST_CACHE_TTL, "days": days,
+            "runpod_reachable": records is not None, "pods": pods, "games": _games(since)}
+    _cost_cache[days] = data
     return data
 
 
 @router.post("/games/{run_id}/stop")
 async def stop_any_game(run_id: str, admin: User = Depends(require_admin)) -> Dict[str, Any]:
-    """Stop any run, whoever owns it — the owner's own `/api/games/{id}/stop` reaches only their
-    games, and a run renting cards for a stranger is the operator's to end. Same machinery, so
-    what it keeps and what it cancels are the same; 409 when the run has nothing in flight."""
+    """Stop any run, no matter what."""
     owner = db_store.owner_of(run_id)
     if owner is None:
         raise HTTPException(status_code=404, detail=f"no game {run_id!r}")

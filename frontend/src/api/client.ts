@@ -223,8 +223,8 @@ export const api = {
 
     getAdminQueues: () =>
         request<AdminQueues>('/api/admin/queues'),
-    getAdminCosts: () =>
-        request<AdminCosts>('/api/admin/costs'),
+    getAdminCosts: (days: number) =>
+        request<AdminCosts>(`/api/admin/costs?days=${days}`),
     getAdminAnalytics: (days = 14) =>
         request<AdminAnalytics>(`/api/admin/analytics?days=${days}`),
     getAdminViolations: () =>

@@ -120,29 +120,30 @@ export interface QueueRow {
     stockouts: Stockouts
 }
 
-// Effective cost (GET /api/admin/costs), per window and per card. alive_* is RunPod's ledger
-// (pod wall-clock and what it billed), null when the ledger is unreachable or has no row for the
-// card; worked_* is the seconds our jobs ran on it, priced at the rate of the pod that ran each. games counts games
-// whose full build finished in the window, averaged over every job they ever ran and every
-// change round they asked for.
-export interface CostGpu {
-    gpu: string
-    alive_seconds: number | null
-    alive_usd: number | null
-    worked_seconds: number
-    worked_usd: number
-}
-
-export interface CostWindow {
-    label: string
-    gpus: CostGpu[]
-    games: { n: number; avg_gpu_hours: number | null; avg_usd: number | null; avg_changes: number | null }
+// One pod life (worker row); RunPod reuses pod ids, so a pod_id can repeat. Untracked = ghost spend.
+export interface CostPod {
+    worker_id: string | null
+    pod_id: string
+    tracked: boolean
+    queue: string | null
+    gpu_type: string | null
+    usd_per_hour: number | null
+    started_at: number | null
+    terminated_at: number | null
+    runpod_usd: number | null
+    disk_usd: number | null
+    billed_seconds: number | null
+    jobs: number
+    failed: number
+    exec_seconds: number
+    customer_usd: number
 }
 
 export interface AdminCosts {
+    days: number
     runpod_reachable: boolean
-    windows: CostWindow[]
-    ghost_30d: { pods: number; amount_usd: number } | null
+    pods: CostPod[]
+    games: { n: number; avg_gpu_hours: number | null; avg_usd: number | null; avg_changes: number | null }
 }
 
 export interface AdminAnalytics {

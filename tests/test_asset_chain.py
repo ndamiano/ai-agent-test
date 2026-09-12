@@ -9,22 +9,22 @@ finalize is claimed exactly once no matter who gets there first.
 
 import pytest
 
-from billing.utils import QUEUE_MICRO_ESTIMATES, calculate_job_cost
-from db import store
+from billing.estimates import QUEUE_MICRO_ESTIMATES, calculate_job_cost
+from db import events, games, jobs, workers
 
 RATE = 0.99   # the rate every test worker is created at
 
 
 def _game(micros: int = 1_000_000, game_id: str = "g1") -> str:
-    store.create_game(game_id, "u1")
-    store.charge_game(game_id, 1, micros)
+    games.create_game(game_id, "u1")
+    games.charge_game(game_id, 1, micros)
     for worker in ("w1", "w2"):
-        store.worker_created(worker, None, "llm", None, RATE)
+        workers.worker_created(worker, None, "llm", None, RATE)
     return game_id
 
 
 def _image_job(batch: str, asset_id: str = "goblin", game_id: str = "g1") -> str:
-    return store.enqueue_job(
+    return jobs.enqueue_job(
         "image", {"kind": "comfy_image"}, game_id=game_id, build_id="b1", batch_id=batch,
         metadata={"run_id": game_id, "asset_id": asset_id, "kind": "mesh",
                   "then": {"enqueue": "mesh_from_image", "finalize": "assets"}})
@@ -35,8 +35,8 @@ _MESH = {"queue": "mesh", "payload": {"kind": "trellis_mesh", "image_b64": "x"},
 
 
 def _complete(job_id: str, worker: str = "w1", continuation=None, error=None):
-    store.claim_job(store.get_job(job_id)["queue"], worker, lease_seconds=60)
-    return store.complete_job(job_id, worker, {"ok": True}, error, 5.0,
+    jobs.claim_job(jobs.get_job(job_id)["queue"], worker, lease_seconds=60)
+    return jobs.complete_job(job_id, worker, {"ok": True}, error, 5.0,
                               continuation=continuation)
 
 
@@ -66,7 +66,7 @@ def test_only_one_completion_of_a_batch_sees_it_complete():
 
 def test_a_job_outside_any_batch_never_reports_complete():
     _game()
-    job = store.enqueue_job("llm", {"n": 1}, game_id="g1", build_id="b1")
+    job = jobs.enqueue_job("llm", {"n": 1}, game_id="g1", build_id="b1")
     out = _complete(job)
     assert out["batch_id"] is None
     assert out["batch_complete"] is False
@@ -77,10 +77,10 @@ def test_a_continuation_inherits_its_parent_game_batch_and_build():
     game can come from — the attribution hole that let the platform's most expensive work run off
     the books."""
     _game()
-    parent = store.enqueue_job("image", {"k": 1}, game_id="g1", build_id="bld1", batch_id="b1",
+    parent = jobs.enqueue_job("image", {"k": 1}, game_id="g1", build_id="bld1", batch_id="b1",
                                metadata={"then": {"finalize": "assets"}})
     out = _complete(parent, continuation=_MESH)
-    child = store.get_job(out["continuation_id"])
+    child = jobs.get_job(out["continuation_id"])
     assert (child["game_id"], child["build_id"], child["batch_id"]) == ("g1", "bld1", "b1")
     assert child["queue"] == "mesh"
 
@@ -88,10 +88,10 @@ def test_a_continuation_inherits_its_parent_game_batch_and_build():
 def test_a_continuations_cost_debits_the_parents_game():
     _game()
     out = _complete(_image_job("b1"), continuation=_MESH)
-    before = store.game("g1")["spent_micros"]
-    store.claim_job("mesh", "w2", lease_seconds=60)
-    store.complete_job(out["continuation_id"], "w2", {"glb_file": "/x.glb"}, None, 30.0)
-    assert store.game("g1")["spent_micros"] == before + calculate_job_cost(30.0, RATE)
+    before = games.game("g1")["spent_micros"]
+    jobs.claim_job("mesh", "w2", lease_seconds=60)
+    jobs.complete_job(out["continuation_id"], "w2", {"glb_file": "/x.glb"}, None, 30.0)
+    assert games.game("g1")["spent_micros"] == before + calculate_job_cost(30.0, RATE)
 
 
 def test_a_failed_job_enqueues_no_continuation():
@@ -113,70 +113,70 @@ def test_a_refused_continuation_still_finishes_the_batch():
 def test_a_batch_finalize_is_claimed_exactly_once():
     _game()
     _complete(_image_job("b1"))
-    assert store.claim_batch_finalize("b1") is True
-    assert store.claim_batch_finalize("b1") is False
+    assert jobs.claim_batch_finalize("b1") is True
+    assert jobs.claim_batch_finalize("b1") is False
 
 
 def test_batch_jobs_returns_parsed_metadata():
     _game()
     _image_job("b1", "goblin")
-    jobs = store.batch_jobs("b1")
-    assert [j["metadata"]["asset_id"] for j in jobs] == ["goblin"]
+    rows = jobs.batch_jobs("b1")
+    assert [j["metadata"]["asset_id"] for j in rows] == ["goblin"]
 
 
 def test_a_game_with_queued_batch_work_reads_as_active():
     _game()
     _image_job("b1")
-    assert store.has_active_batch("g1") is True
-    _complete(store.batch_jobs("b1")[0]["id"])
-    assert store.has_active_batch("g1") is False
+    assert jobs.has_active_batch("g1") is True
+    _complete(jobs.batch_jobs("b1")[0]["id"])
+    assert jobs.has_active_batch("g1") is False
 
 
 def test_unbatched_work_does_not_count_as_an_active_batch():
     _game()
-    store.enqueue_job("llm", {"n": 1}, game_id="g1", build_id="b1")
-    assert store.has_active_batch("g1") is False
+    jobs.enqueue_job("llm", {"n": 1}, game_id="g1", build_id="b1")
+    assert jobs.has_active_batch("g1") is False
 
 
 def test_a_lapsed_lease_is_requeued_without_any_claim_traffic():
     """claim_job requeues these too, but only when a claim arrives. A queue that goes quiet would
     otherwise hold a dead job and its reservation forever."""
     _game()
-    job = store.enqueue_job("mesh", {"k": 1}, game_id="g1", build_id="b1")
-    store.claim_job("mesh", "w1", lease_seconds=-1)
-    assert store.requeue_lapsed_leases() == 1
-    assert store.get_job(job)["status"] == "pending"
+    job = jobs.enqueue_job("mesh", {"k": 1}, game_id="g1", build_id="b1")
+    jobs.claim_job("mesh", "w1", lease_seconds=-1)
+    assert jobs.requeue_lapsed_leases() == 1
+    assert jobs.get_job(job)["status"] == "pending"
 
 
 def test_stale_pending_jobs_fail_and_release_their_reservation():
     _game()
-    store.enqueue_job("mesh", {"k": 1}, game_id="g1", build_id="b1")
-    reserved = store.compute_remaining("g1")
-    failed = store.fail_stale_pending(-1.0)
+    jobs.enqueue_job("mesh", {"k": 1}, game_id="g1", build_id="b1")
+    reserved = games.compute_remaining("g1")
+    failed = jobs.fail_stale_pending(-1.0)
     assert len(failed) == 1
-    assert store.compute_remaining("g1") > reserved
+    assert games.compute_remaining("g1") > reserved
 
 
 def test_a_stranded_batch_is_offered_for_finalize_after_the_grace_window():
     _game()
     _complete(_image_job("b1"))
-    assert store.batches_awaiting_finalize(3600.0) == []
-    assert store.batches_awaiting_finalize(-1.0) == ["b1"]
+    assert jobs.batches_awaiting_finalize(3600.0) == []
+    assert jobs.batches_awaiting_finalize(-1.0) == ["b1"]
 
 
 def test_a_finalized_batch_is_never_offered_again():
     _game()
     _complete(_image_job("b1"))
-    store.claim_batch_finalize("b1")
-    assert store.batches_awaiting_finalize(-1.0) == []
+    jobs.claim_batch_finalize("b1")
+    assert jobs.batches_awaiting_finalize(-1.0) == []
 
 
 def test_a_batch_with_work_left_is_never_offered():
     _game()
     _image_job("b1", "one")
     _image_job("b1", "two")
-    _complete(store.batch_jobs("b1")[0]["id"])
-    assert store.batches_awaiting_finalize(-1.0) == []
+    _complete(jobs.batch_jobs("b1")[0]["id"])
+    assert jobs.batches_awaiting_finalize(-1.0) == []
 
 
 @pytest.fixture
@@ -201,7 +201,7 @@ def test_early_finalize_mid_build_defers_staging(_asset_env):
     build finalize's job — and the outcome is a success, not a failure."""
     asset_chain, staged, events = _asset_env
     _game()
-    store.set_status("g1", "building")
+    games.set_status("g1", "building")
     asset_chain._finalize_assets(_md(), [{"metadata": {}, "build_id": None}])
     assert staged == []
     assert events == [("assets_done", {"build_id": None, "ok": True, "rendered": []})]
@@ -212,7 +212,7 @@ def test_finalize_after_a_built_game_stages(_asset_env):
     finalize must stage, or the art never reaches /play."""
     asset_chain, staged, events = _asset_env
     _game()
-    store.set_status("g1", "built")
+    games.set_status("g1", "built")
     asset_chain._finalize_assets(_md(), [{"metadata": {}, "build_id": None}])
     assert staged == ["g1"]
     assert events[0][1]["ok"] is True
@@ -221,7 +221,7 @@ def test_finalize_after_a_built_game_stages(_asset_env):
 def test_finalize_on_a_failed_build_neither_stages_nor_claims_ok(_asset_env):
     asset_chain, staged, events = _asset_env
     _game()
-    store.set_status("g1", "failed")
+    games.set_status("g1", "failed")
     asset_chain._finalize_assets(_md(), [{"metadata": {}, "build_id": None}])
     assert staged == []
     assert events[0][1]["ok"] is False
@@ -232,11 +232,11 @@ def test_a_build_turns_art_lands_without_ending_the_build(_asset_env):
     build's row to the build machine — the model is still writing the game."""
     asset_chain, staged, events = _asset_env
     _game()
-    bid = store.create_build("g1", kind="build")
-    store.build_started(bid)
-    store.set_status("g1", "building")
+    bid = games.create_build("g1", kind="build")
+    games.build_started(bid)
+    games.set_status("g1", "building")
     asset_chain.FINALIZERS["assets"](_md(), [{"metadata": {}, "build_id": bid}])
-    (b,) = store.builds_for("g1")
+    (b,) = games.builds_for("g1")
     assert b["status"] == "running" and b["finished_at"] is None
     assert events == [("assets_done", {"build_id": bid, "ok": True, "rendered": []})]
 
@@ -244,11 +244,11 @@ def test_a_build_turns_art_lands_without_ending_the_build(_asset_env):
 def test_a_standalone_art_batch_is_its_own_build_and_ends_it(_asset_env):
     asset_chain, staged, events = _asset_env
     _game()
-    bid = store.create_build("g1", kind="assets")
-    store.build_started(bid)
-    store.set_status("g1", "built")
+    bid = games.create_build("g1", kind="assets")
+    games.build_started(bid)
+    games.set_status("g1", "built")
     asset_chain.FINALIZERS["art_build"](_md(), [{"metadata": {}, "build_id": bid}])
-    (b,) = store.builds_for("g1")
+    (b,) = games.builds_for("g1")
     assert b["status"] == "succeeded" and b["finished_at"] is not None
     assert staged == ["g1"]
 
@@ -300,7 +300,7 @@ def test_an_explicit_verdict_refuses_and_marks_the_manifest(_policy_env):
     assert not (tmp_path / "game" / "assets" / "goblin.webp").exists()
     assert not src.exists()   # the blob is deleted, not left on disk
     assert "explicit" in read_manifest(tmp_path)[0]["refused"]
-    rows = store.list_violations()
+    rows = events.list_violations()
     assert rows and rows[0]["category"] == "nsfw_render"
 
 
@@ -354,6 +354,7 @@ def _flat_env(monkeypatch, tmp_path):
 
 def test_a_tile_save_quilts_to_a_384_webp(_flat_env):
     from PIL import Image
+
     from maestro.codegen.assets import read_manifest
     asset_chain, tmp_path = _flat_env
     src, result = _flat_render(tmp_path)
@@ -473,7 +474,7 @@ def test_finalize_reports_an_image_asset_as_rendered(_asset_env):
     from maestro.codegen.assets import asset_path, ext_for
     asset_chain, staged, events = _asset_env
     _game()
-    store.set_status("g1", "building")
+    games.set_status("g1", "building")
     asset_path("g1", "goblin", ext_for("sprite")).write_bytes(b"webp")
     asset_chain._finalize_assets(
         _md(), [{"metadata": {"asset_id": "goblin", "kind": "sprite"}, "build_id": None}])

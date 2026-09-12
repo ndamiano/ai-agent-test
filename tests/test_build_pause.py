@@ -4,6 +4,7 @@ A build is a chain of jobs: the driver holds nothing between turns, so a control
 restarted mid-build must still be able to park the run its workers keep feeding. Leaving the queued
 turn in place would pay a GPU for a reply the paused driver then throws away.
 """
+
 import pytest
 
 from maestro.codegen import build_chain, build_state, build_steps
@@ -23,7 +24,7 @@ def dequeued(monkeypatch):
     """How many pending turns pause found. A claimed one is not cancellable, so 0 is the case where
     the worker is already running the turn."""
     count = {"n": 1}
-    monkeypatch.setattr(build_chain.db_store, "cancel_pending_build_turn",
+    monkeypatch.setattr(build_chain.jobs, "cancel_pending_build_turn",
                         lambda bid, err: count["n"])
     return count
 
@@ -101,8 +102,8 @@ def test_the_landed_turn_does_not_burn_a_step(run, tmp_path, monkeypatch):
 
 def test_a_landed_done_ends_the_build_even_paused(run, tmp_path, monkeypatch):
     """Pause withholds the next turn; it does not un-finish a build that just called done."""
-    monkeypatch.setattr(build_chain.db_store, "set_status", lambda *a, **k: None)
-    monkeypatch.setattr(build_chain.db_store, "build_finished", lambda *a, **k: None)
+    monkeypatch.setattr(build_chain.games, "set_status", lambda *a, **k: None)
+    monkeypatch.setattr(build_chain.games, "build_finished", lambda *a, **k: None)
     monkeypatch.setattr(build_chain.build_steps, "step",
                         lambda *a, **k: build_steps.Done("done"))
     build_chain.pause(run)

@@ -13,6 +13,7 @@ import time
 import uuid
 from typing import Callable, Dict, List
 
+from billing.estimates import QUEUE_SECONDS_ESTIMATES
 from scaler.policy import (
     MarkWorkerTerminated,
     PodInfo,
@@ -21,7 +22,6 @@ from scaler.policy import (
     TerminatePod,
     decide,
 )
-from billing.utils import QUEUE_SECONDS_ESTIMATES
 from scaler.runpod_client import RunPodClient, RunPodError
 from scaler.stats import StatsSource
 

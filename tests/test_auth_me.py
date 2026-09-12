@@ -2,6 +2,7 @@
 gate; a valid token returns the user plus their live credit balance."""
 
 from auth import store
+from billing import ledger
 
 
 def test_me_rejects_anonymous(app_client):
@@ -11,7 +12,7 @@ def test_me_rejects_anonymous(app_client):
 def test_me_returns_the_balance_for_a_valid_token(app_client):
     store.create_user("alice", "pw-pass1234", email="alice@example.com")
     uid = store.get_user_by_handle("alice").id
-    store.grant(uid, 10, "admin_grant")
+    ledger.grant(uid, 10, "admin_grant")
     token = store.issue_token(uid)
 
     r = app_client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
@@ -20,7 +21,7 @@ def test_me_returns_the_balance_for_a_valid_token(app_client):
     assert body["handle"] == "alice"
     assert body["balance"] == 10
 
-    store.deduct(uid, 3, "test")
+    ledger.deduct(uid, 3, "test")
     r2 = app_client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert r2.json()["balance"] == 7
 

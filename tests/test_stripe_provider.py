@@ -1,17 +1,17 @@
 import hashlib
 import hmac
 import json
+import sys
 import time
 from pathlib import Path
 
 import pytest
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from auth.billing import PACKAGES
-from auth.credits import StripeProvider, get_provider
-import auth.credits as credits
+import billing.stripe as credits
+from billing.packages import PACKAGES
+from billing.stripe import StripeProvider, get_provider
 
 
 def _provider() -> StripeProvider:

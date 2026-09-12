@@ -10,6 +10,7 @@ from auth import store
 from auth.deps import bearer_token, get_current_user
 from auth.ratelimit import login_throttle, reset_throttle, signup_throttle
 from auth.store import User
+from billing import ledger
 from config.settings_manager import settings_manager
 from tools import mailer
 
@@ -221,5 +222,5 @@ async def me(user: User = Depends(get_current_user)):
         "handle": user.handle,
         "role": user.role,
         "email": user.email,
-        "balance": store.balance(user.id),
+        "balance": ledger.balance(user.id),
     }

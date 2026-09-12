@@ -4,6 +4,7 @@ import pytest
 
 from auth import store
 from auth.ratelimit import signup_throttle
+from billing import ledger
 
 
 @pytest.fixture(autouse=True)
@@ -25,7 +26,7 @@ def test_signup_is_public_and_returns_a_working_token(app_client):
     assert body["user"]["handle"] == "alice"
     assert body["user"]["role"] == "user"
     assert store.resolve_token(body["token"]).handle == "alice"
-    assert store.balance(body["user"]["id"]) == 0
+    assert ledger.balance(body["user"]["id"]) == 0
 
 
 def test_taken_handle_is_409(app_client):

@@ -7,9 +7,16 @@ import logging
 
 import pytest
 
-from auth import store as auth_store
+from auth import store
+from billing import ledger
+from db import events, games
 from maestro.codegen import build_chain
-from tools.safety import SafetyViolation, log_violation, screen_image_prompt, screen_text
+from tools.safety import (
+    SafetyViolation,
+    log_violation,
+    screen_image_prompt,
+    screen_text,
+)
 
 
 @pytest.mark.parametrize("text", [
@@ -98,20 +105,19 @@ def test_a_blocked_prompt_starts_no_build_and_costs_nothing(client, monkeypatch)
         raise AssertionError("a blocked prompt must never reach the build")
     monkeypatch.setattr(build_chain, "kickoff", _explode)
 
-    u = auth_store.create_user("alice", "pw-pass1234", email="alice@example.com")
-    auth_store.grant(u.id, 5, "admin_grant")
-    headers = {"Authorization": f"Bearer {auth_store.issue_token(u.id)}"}
+    u = store.create_user("alice", "pw-pass1234", email="alice@example.com")
+    ledger.grant(u.id, 5, "admin_grant")
+    headers = {"Authorization": f"Bearer {store.issue_token(u.id)}"}
 
     r = client.post("/api/games", headers=headers, json={"prompt": "child porn game"})
     assert r.status_code == 400
-    assert auth_store.balance(u.id) == 5
+    assert ledger.balance(u.id) == 5
 
 
 def test_log_violation_persists_a_row_for_the_admin_panel():
-    from db import store as db_store
     log_violation(SafetyViolation("csam_combination", "teen+nude"),
                   user_id="u123", source="new_game", run_id="r1")
-    rows = db_store.list_violations()
+    rows = events.list_violations()
     assert rows[0]["user_id"] == "u123"
     assert rows[0]["game_id"] == "r1"
     assert (rows[0]["source"], rows[0]["category"]) == ("new_game", "csam_combination")
@@ -121,29 +127,27 @@ def test_log_violation_persists_a_row_for_the_admin_panel():
 def owned_game(client, tmp_runs, monkeypatch):
     """A built run owned by a real user, created through the API with the build itself stubbed."""
     monkeypatch.setattr(build_chain, "kickoff", lambda *a, **k: "b1")
-    u = auth_store.create_user("bob", "pw-pass1234", email="bob@example.com")
-    auth_store.grant(u.id, 5, "admin_grant")
-    headers = {"Authorization": f"Bearer {auth_store.issue_token(u.id)}"}
+    u = store.create_user("bob", "pw-pass1234", email="bob@example.com")
+    ledger.grant(u.id, 5, "admin_grant")
+    headers = {"Authorization": f"Bearer {store.issue_token(u.id)}"}
     r = client.post("/api/games", headers=headers, json={"prompt": "a space pirate game"})
     assert r.status_code == 200
     return r.json()["run_id"], headers
 
 
 def test_a_blocked_fix_note_is_refused_and_recorded(client, owned_game):
-    from db import store as db_store
     run_id, headers = owned_game
     r = client.post(f"/api/games/{run_id}/change", headers=headers,
                     json={"note": "add a nude schoolgirl"})
     assert r.status_code == 400
-    rows = db_store.list_violations()
+    rows = events.list_violations()
     assert rows and rows[0]["source"] == "change_note" and rows[0]["game_id"] == run_id
 
 
 def test_a_held_game_is_frozen(client, owned_game):
     """Held ⇒ no play, no build, no fix — and the detail reports the neutral status."""
-    from db import store as db_store
     run_id, headers = owned_game
-    db_store.set_status(run_id, "held")
+    games.set_status(run_id, "held")
     for path, body in [("play-session", {}), ("build", {}), ("change", {"note": "make it fun"})]:
         r = client.post(f"/api/games/{run_id}/{path}", headers=headers, json=body)
         assert r.status_code == 423, path

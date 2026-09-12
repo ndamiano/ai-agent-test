@@ -2,13 +2,13 @@
 snapshot covers every queue — the next jobs in claim order and the fleet with what it holds."""
 
 import time
-
-import pytest
 from unittest.mock import MagicMock
 
+import pytest
+
 from auth import store
-from db import store as db_store
-from billing.utils import QUEUE_SECONDS_ESTIMATES
+from billing.estimates import QUEUE_SECONDS_ESTIMATES
+from db import connection, games, jobs, workers
 
 
 def _token(handle, role):
@@ -42,11 +42,11 @@ def _queue(app_client, name):
 
 
 def test_next_lists_pending_jobs_in_claim_order_with_their_wait(app_client):
-    db_store.create_game("g1", "u1")
-    db_store.charge_game("g1", 1, 1_000_000)
-    build = db_store.create_build("g1")
-    first = db_store.enqueue_job("mesh", {}, game_id="g1", build_id=build)
-    second = db_store.enqueue_job("mesh", {}, game_id="g1", build_id="b1")
+    games.create_game("g1", "u1")
+    games.charge_game("g1", 1, 1_000_000)
+    build = games.create_build("g1")
+    first = jobs.enqueue_job("mesh", {}, game_id="g1", build_id=build)
+    second = jobs.enqueue_job("mesh", {}, game_id="g1", build_id="b1")
 
     mesh, totals = _queue(app_client, "mesh")
     assert [j["id"] for j in mesh["next"]] == [first, second]
@@ -58,21 +58,21 @@ def test_next_lists_pending_jobs_in_claim_order_with_their_wait(app_client):
 
 
 def test_next_is_capped_at_ten(app_client):
-    db_store.create_game("g1", "u1")
-    db_store.charge_game("g1", 1, 10_000_000)
+    games.create_game("g1", "u1")
+    games.charge_game("g1", 1, 10_000_000)
     for _ in range(12):
-        db_store.enqueue_job("image", {}, game_id="g1", build_id="b1")
+        jobs.enqueue_job("image", {}, game_id="g1", build_id="b1")
     image, _ = _queue(app_client, "image")
     assert (image["pending"], len(image["next"])) == (12, 10)
 
 
 def test_workers_report_state_and_the_job_they_hold(app_client):
-    db_store.create_game("g1", "u1")
-    db_store.charge_game("g1", 1, 1_000_000)
-    jid = db_store.enqueue_job("mesh", {}, game_id="g1", build_id="b1")
-    db_store.worker_seen("busy", "mesh", gpu_type="BIG", source="runpod", pod_id="p1")
-    db_store.worker_seen("idle", "mesh", gpu_type="NVIDIA GeForce RTX 5090", source="local")
-    db_store.claim_job("mesh", "busy", 60)
+    games.create_game("g1", "u1")
+    games.charge_game("g1", 1, 1_000_000)
+    jid = jobs.enqueue_job("mesh", {}, game_id="g1", build_id="b1")
+    workers.worker_seen("busy", "mesh", gpu_type="BIG", source="runpod", pod_id="p1")
+    workers.worker_seen("idle", "mesh", gpu_type="NVIDIA GeForce RTX 5090", source="local")
+    jobs.claim_job("mesh", "busy", 60)
 
     mesh, totals = _queue(app_client, "mesh")
     by_id = {w["id"]: w for w in mesh["workers"]}
@@ -90,9 +90,9 @@ def test_workers_report_state_and_the_job_they_hold(app_client):
 
 
 def test_a_created_pod_is_booting_until_its_worker_registers(app_client):
-    db_store.worker_created("w-new", "p-new", "llm", None, 1.89)
-    db_store.worker_created("w-live", "p-live", "llm", None, 1.89)
-    db_store.worker_seen("w-live", "llm", gpu_type="BIG", source="runpod", pod_id="p-live")
+    workers.worker_created("w-new", "p-new", "llm", None, 1.89)
+    workers.worker_created("w-live", "p-live", "llm", None, 1.89)
+    workers.worker_seen("w-live", "llm", gpu_type="BIG", source="runpod", pod_id="p-live")
     llm, _ = _queue(app_client, "llm")
 
     states = {w["id"]: w["state"] for w in llm["workers"]}
@@ -108,7 +108,7 @@ def test_a_created_pod_is_booting_until_its_worker_registers(app_client):
 
 def test_costs_split_a_reused_pod_id_into_its_lives(app_client, monkeypatch):
     from api.routers import admin
-    from billing.utils import calculate_job_cost
+    from billing.estimates import calculate_job_cost
 
     RATE = 0.99
 
@@ -118,10 +118,10 @@ def test_costs_split_a_reused_pod_id_into_its_lives(app_client, monkeypatch):
     lives = {"w-tue": ("qwieur", 2.0, now - 3 * day), "w-wed": ("qwieur", 1.0, now - day),
              "w-old": ("p-old", 1.0, now - 10 * day)}
     for worker, (pod, rate, started) in lives.items():
-        db_store.worker_created(worker, pod, "image", "NVIDIA GeForce RTX 5090", rate)
-        db_store.worker_seen(worker, "image", gpu_type="NVIDIA GeForce RTX 5090",
+        workers.worker_created(worker, pod, "image", "NVIDIA GeForce RTX 5090", rate)
+        workers.worker_seen(worker, "image", gpu_type="NVIDIA GeForce RTX 5090",
                              source="runpod", pod_id=pod)
-        with db_store._db() as conn:
+        with connection.platform_db() as conn:
             conn.execute("UPDATE workers SET started_at = ? WHERE id = ?", (started, worker))
 
     def hour(pod, end, total, gpu, disk=0.0):
@@ -134,18 +134,18 @@ def test_costs_split_a_reused_pod_id_into_its_lives(app_client, monkeypatch):
         hour("p-old", now - 6 * day, 3.0, 3.0),           # a life created before the window
         hour("boot-looper", now - 3600, 1.5, 1.5)])
     admin._cost_cache.clear()
-    db_store.create_game("g1", "u1")
-    db_store.charge_game("g1", 1, 10_000_000)
-    build = db_store.create_build("g1")
+    games.create_game("g1", "u1")
+    games.charge_game("g1", 1, 10_000_000)
+    build = games.create_build("g1")
     for worker, game_id, error, secs in [("w-tue", "g1", None, 100.0),
                                          ("w-wed", "g1", None, 360.0),
                                          ("w-wed", "g1", "boom", 36.0),
                                          ("w-wed", None, None, 72.0)]:
-        db_store.enqueue_job("image", {}, game_id=game_id, build_id=build)
-        claimed = db_store.claim_job("image", worker, 60)
-        db_store.complete_job(claimed["id"], worker, None if error else {"ok": True}, error,
+        jobs.enqueue_job("image", {}, game_id=game_id, build_id=build)
+        claimed = jobs.claim_job("image", worker, 60)
+        jobs.complete_job(claimed["id"], worker, None if error else {"ok": True}, error,
                               exec_seconds=secs)
-    db_store.build_finished(build, "built")
+    games.build_finished(build, "built")
 
     token = _token("root", "admin")
     body = app_client.get("/api/admin/costs?days=7",
@@ -176,12 +176,12 @@ def test_costs_without_a_reachable_ledger_still_reports_our_half(app_client, mon
 
     monkeypatch.setattr(admin, "_ledger", lambda _since, _now: None)
     admin._cost_cache.clear()
-    db_store.worker_created("w1", "p1", "llm", "NVIDIA GeForce RTX 5090", 1.0)
-    db_store.worker_seen("w1", "llm", gpu_type="NVIDIA GeForce RTX 5090", source="runpod",
+    workers.worker_created("w1", "p1", "llm", "NVIDIA GeForce RTX 5090", 1.0)
+    workers.worker_seen("w1", "llm", gpu_type="NVIDIA GeForce RTX 5090", source="runpod",
                          pod_id="p1")
-    jid = db_store.enqueue_job("llm", {"p": 1})
-    db_store.claim_job("llm", "w1", lease_seconds=120)
-    db_store.complete_job(jid, "w1", {"ok": True}, None, exec_seconds=60)
+    jid = jobs.enqueue_job("llm", {"p": 1})
+    jobs.claim_job("llm", "w1", lease_seconds=120)
+    jobs.complete_job(jid, "w1", {"ok": True}, None, exec_seconds=60)
 
     token = _token("root2", "admin")
     body = app_client.get("/api/admin/costs",
@@ -195,6 +195,7 @@ def test_costs_without_a_reachable_ledger_still_reports_our_half(app_client, mon
 
 def test_ledger_reads_runpods_hour_buckets_and_fails_soft(monkeypatch):
     import calendar
+
     from api.routers import admin
 
     monkeypatch.setattr(admin.settings_manager, "get_settings",

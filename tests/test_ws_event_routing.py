@@ -8,12 +8,12 @@ from fastapi import WebSocket
 
 from api.websocket import manager as manager_mod
 from api.websocket.event_bus import EventBus
-from db import store as db_store
+from db import games
 
 
 def _own(owner):
     """Patch db ownership so every run resolves to `owner`."""
-    return patch.object(db_store, "owner_of", lambda rid: owner)
+    return patch.object(games, "owner_of", lambda rid: owner)
 
 
 def test_owner_of_reads_once_then_caches():
@@ -24,7 +24,7 @@ def test_owner_of_reads_once_then_caches():
         reads.append(1)
         return "u1"
 
-    with patch.object(db_store, "owner_of", _counting):
+    with patch.object(games, "owner_of", _counting):
         assert bus._owner_of("r1") == "u1"
         assert bus._owner_of("r1") == "u1"
     assert reads == [1]                       # second lookup served from cache

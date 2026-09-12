@@ -17,20 +17,32 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from auth import playgrants, store
-from auth.billing import MICROS_PER_CREDIT, cost
+from auth import playgrants
 from auth.deps import get_current_user
 from auth.store import User
+from billing import ledger
+from billing.packages import MICROS_PER_CREDIT, cost
 from config.settings_manager import settings_manager
-from db import store as db_store
+from db import events, games, jobs
 from maestro.codegen import archive, build_chain
-from maestro.codegen.assets import (AlreadyRendering, add_assets, entry_kind, ext_for, read_manifest,
-                                    regenerate_asset)
-from maestro.codegen.staging import game_dir, has_authored_files, is_staged, staged_title
+from maestro.codegen.assets import (
+    AlreadyRendering,
+    add_assets,
+    entry_kind,
+    ext_for,
+    read_manifest,
+    regenerate_asset,
+)
 from maestro.codegen.run import create_run, propose_prompt, set_prompt
-from tools.safety import log_violation, screen_text
+from maestro.codegen.staging import (
+    game_dir,
+    has_authored_files,
+    is_staged,
+    staged_title,
+)
 from maestro.state import RunState
 from tools.build_events import _emit
+from tools.safety import log_violation, screen_text
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -67,7 +79,7 @@ def _built(run_id: str) -> bool:
 
 def _require_state(run_id: str, user: User):
     """The run's state, scoped to its owner: 404 if there's no spec, 403 if it isn't this user's."""
-    owner = db_store.owner_of(run_id)
+    owner = games.owner_of(run_id)
     state = RunState(run_id)
     if owner is None or state.read_spec() is None:
         raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
@@ -80,7 +92,7 @@ def _require_compute(run_id: str) -> None:
     """Refuse work a game can't pay for, BEFORE it occupies the build queue. Enqueue enforces the
     same budget per job, so this is the fast, legible failure rather than the safety net: without
     it a broke run wins the GPU slot and then thrashes on refused jobs until its step cap."""
-    if not db_store.can_afford(run_id, "llm"):
+    if not games.can_afford(run_id, "llm"):
         raise HTTPException(status_code=402, detail={
             "reason": "compute_exhausted", "run_id": run_id})
 
@@ -89,7 +101,7 @@ def _require_not_held(run_id: str) -> None:
     """A held game is frozen — no play, no build, no change — until a human has looked at it. The
     message is deliberately neutral: what the screen matched is for the admin panel, not the
     person probing it."""
-    if (db_store.game(run_id) or {}).get("status") == "held":
+    if (games.game(run_id) or {}).get("status") == "held":
         raise HTTPException(status_code=423,
                             detail="something went wrong with this build — we're looking into it")
 
@@ -98,14 +110,14 @@ def _require_not_held(run_id: str) -> None:
 async def list_games(user: User = Depends(get_current_user)):
     """Lightweight summary of the caller's games. A built game is named by its own <title> — the
     name the model gave it — falling back to the prompt-derived row title."""
-    games: List[Dict] = []
-    for row in db_store.list_games(user.id):
+    out: List[Dict] = []
+    for row in games.list_games(user.id):
         if not row["title"] and row["status"] == "draft":
             continue   # created but has no prompt yet — nothing to show
         active = build_chain.status_of(row["id"])
         held = row["status"] == "held"
         built = _built(row["id"]) and not held
-        games.append({
+        out.append({
             "run_id": row["id"],
             "title": staged_title(row["id"]) or row["title"],
             "status": row["status"],
@@ -114,8 +126,8 @@ async def list_games(user: User = Depends(get_current_user)):
             "paused": bool(active and active["paused"]),
             "mtime": row["updated_at"],
         })
-    games.sort(key=lambda g: g["mtime"], reverse=True)
-    return games
+    out.sort(key=lambda g: g["mtime"], reverse=True)
+    return out
 
 
 @router.post("", response_model=Dict)
@@ -135,15 +147,15 @@ async def create_game(body: NewGameBody, user: User = Depends(get_current_user))
         raise HTTPException(status_code=400, detail="this prompt can't be built")
 
     price = cost({"request": text})
-    if store.balance(user.id) < price:
+    if ledger.balance(user.id) < price:
         raise HTTPException(status_code=402, detail={
-            "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
+            "reason": "insufficient_credits", "balance": ledger.balance(user.id), "cost": price})
 
     run_id = await asyncio.to_thread(create_run, user.id)
-    if not store.deduct(user.id, price, "build", run_id):
+    if not ledger.deduct(user.id, price, "build", run_id):
         raise HTTPException(status_code=402, detail={
-            "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
-    db_store.charge_game(run_id, price, price * MICROS_PER_CREDIT)
+            "reason": "insufficient_credits", "balance": ledger.balance(user.id), "cost": price})
+    games.charge_game(run_id, price, price * MICROS_PER_CREDIT)
     await asyncio.to_thread(propose_prompt, text, run_id)
     return {"run_id": run_id, "status": "designing"}
 
@@ -153,7 +165,7 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
     """Full detail for one game: the build prompt, built/building state, and live status."""
     state = _require_state(run_id, user)
     spec_data = state.read_spec()
-    row = db_store.game(run_id) or {}
+    row = games.game(run_id) or {}
     built = _built(run_id)
     active = build_chain.status_of(run_id)
     if active:
@@ -191,7 +203,7 @@ async def play_session(run_id: str, user: User = Depends(get_current_user)):
     parent page must verify reporter postMessages against ('' ⇒ games share the app origin)."""
     _require_state(run_id, user)
     _require_not_held(run_id)
-    if (db_store.game(run_id) or {}).get("status") == "revoked":
+    if (games.game(run_id) or {}).get("status") == "revoked":
         raise HTTPException(status_code=410, detail="this game was refunded and revoked")
     if not _built(run_id):
         raise HTTPException(status_code=409, detail="not built yet")
@@ -208,7 +220,7 @@ def _budget_pct(row: Dict, run_id: str) -> Optional[float]:
     granted = row.get("granted_micros", 0)
     if granted <= 0:
         return None
-    return max(0.0, min(1.0, db_store.compute_remaining(run_id) / granted))
+    return max(0.0, min(1.0, games.compute_remaining(run_id) / granted))
 
 
 _ASSET_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
@@ -226,7 +238,7 @@ async def game_assets(run_id: str, user: User = Depends(get_current_user)):
     bytes come from the sibling blob route, so the frontend never touches the public /play mount."""
     state = _require_state(run_id, user)
     assets_dir = game_dir(state.run_dir) / "assets"
-    rendering = db_store.has_active_batch(run_id)
+    rendering = jobs.has_active_batch(run_id)
     out: List[Dict] = []
     for entry in read_manifest(state.run_dir):
         aid = entry["id"]
@@ -289,7 +301,7 @@ async def game_events(run_id: str, after: int = 0, user: User = Depends(get_curr
     """The game's durable event log (spec/build lifecycle), for catch-up after a reconnect —
     the websocket only delivers what happens while a socket is open."""
     _require_state(run_id, user)
-    return db_store.events_for(run_id, after_id=after)
+    return events.events_for(run_id, after_id=after)
 
 
 @router.post("/{run_id}/build", response_model=Dict)
@@ -327,12 +339,12 @@ async def build_game(run_id: str, body: BuildBody = BuildBody(),
     spec_data = state.read_spec()
     if "request" not in spec_data:
         raise HTTPException(status_code=409, detail="the design is still being written")
-    if not db_store.is_charged(run_id):
+    if not games.is_charged(run_id):
         price = cost(spec_data)
-        if not store.deduct(user.id, price, "build", run_id):
+        if not ledger.deduct(user.id, price, "build", run_id):
             raise HTTPException(status_code=402, detail={
-                "reason": "insufficient_credits", "balance": store.balance(user.id), "cost": price})
-        db_store.charge_game(run_id, price, price * MICROS_PER_CREDIT)
+                "reason": "insufficient_credits", "balance": ledger.balance(user.id), "cost": price})
+        games.charge_game(run_id, price, price * MICROS_PER_CREDIT)
     _require_compute(run_id)
 
     # kickoff seeds the game folder before enqueueing the first llm turn, so it touches disk.
@@ -372,7 +384,7 @@ async def resume_game(run_id: str, user: User = Depends(get_current_user)):
     if build_chain.is_active(run_id):
         await asyncio.to_thread(build_chain.resume, run_id)
         return {"run_id": run_id, "status": "running"}
-    if not db_store.is_charged(run_id):
+    if not games.is_charged(run_id):
         raise HTTPException(status_code=409, detail="no build to resume for this run")
     # A finished/failed build has no cursor to re-drive: start a fresh one over the on-disk game.
     await asyncio.to_thread(build_chain.kickoff, run_id, kind="build")
@@ -408,7 +420,7 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
     # Two guards, because the stage outlives its thread: the key covers the plan-and-enqueue
     # half, the batch query covers the queued half. Without the second, a double-click enqueues a
     # second full set of image/mesh jobs and pays for them.
-    if db_store.has_active_batch(run_id):
+    if jobs.has_active_batch(run_id):
         raise HTTPException(status_code=409, detail="assets are already rendering for this run")
     with _active_lock:
         if key in _active:
@@ -416,7 +428,7 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
         _active.add(key)
 
     def _run(build_id: str):
-        db_store.build_started(build_id)
+        games.build_started(build_id)
         _emit("assets_started", run_id, build_id=build_id)
         try:
             # Returns once the asset jobs are ENQUEUED. assets_done and build_finished are the
@@ -424,11 +436,11 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
             add_assets(run_id, build_id=build_id)
         except AlreadyRendering:
             # Lost the race to the build's own asset lane — that batch owns the endgame.
-            db_store.build_finished(build_id, "failed")
+            games.build_finished(build_id, "failed")
         except Exception:
             logger.exception("asset render failed for %s", run_id)
             _emit("assets_done", run_id, build_id=build_id, ok=False, rendered=[])
-            db_store.build_finished(build_id, "failed")
+            games.build_finished(build_id, "failed")
         finally:
             with _active_lock:
                 _active.discard(key)
@@ -436,7 +448,7 @@ async def skin_assets(run_id: str, user: User = Depends(get_current_user)):
     # Anything that throws before the thread owns the key has to hand it back, or every later
     # skin of this run 409s until the process restarts.
     try:
-        build_id = db_store.create_build(run_id, kind="assets")
+        build_id = games.create_build(run_id, kind="assets")
         threading.Thread(target=_run, args=(build_id,), daemon=True, name=f"assets-{run_id}").start()
     except Exception:
         with _active_lock:

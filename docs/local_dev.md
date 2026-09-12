@@ -256,7 +256,7 @@ branch in `worker/handlers.llm`, never a settings change.
 
 exec_seconds are debited to the owning game by the `game_id` on the job row, and a job with none is
 neither metered nor gated. Build and asset enqueues pass it directly; the one blocking path
-(`queue_client.run_job`, what the connector's `generate_with_tools` rides) reads it off the
+(`workqueue/client.py`’s `run_job`, what the connector's `generate_with_tools` rides) reads it off the
 `run_scope` contextvar instead — a call there outside a scope spends GPU nobody is charged for.
 
 ### `data_dir`
@@ -336,7 +336,7 @@ bind, `WORKING_DIRECTORY`, `WORKQUEUE_TOKEN` + its timeouts, the `LLM_*` default
 
 - `MAESTRO_DATA_DIR` — above.
 - `MAESTRO_DEV=1` — uvicorn reload, `/docs` + `/redoc` served.
-- `MAESTRO_STALE_PENDING_SECONDS` (default 1800) — `db/reaper.py`: a job pending this long with
+- `MAESTRO_STALE_PENDING_SECONDS` (default 1800) — `workqueue/reaper.py`: a job pending this long with
   nobody claiming it is failed rather than left to hold its budget reservation forever.
 - `MAESTRO_LOCAL_LOGS` (default `/tmp/maestro-local`) — where `scripts/local_gpu.py` writes the
   model-server and worker logs it starts.

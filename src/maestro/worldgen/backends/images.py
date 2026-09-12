@@ -1,33 +1,7 @@
 """Text-to-image and image-editing, through the worker-pull queue.
-
-This builds a ComfyUI graph and drives two Qwen Image checkpoints:
-
-    generate()  Qwen Image 2512        text -> image
-    edit()      Qwen Image Edit 2511   text + up to three images -> image
-
-Nothing here talks to a GPU directly. `run()` lands the built graph on the
-`image` queue (`db.queue_client.run_job`) and blocks for the worker's answer —
-the queue is metered and budgeted, so this is the only path a worldgen call can
-reach a card by.
-
-    from worldgen.backends import ImageModel
-
-    images = ImageModel()
-    concept = images.generate("A high aerial photograph of a desert battlefield.",
-                              out="concept.png", width=1216, height=832)
-    layout = images.edit("Redraw this map with natural boundaries, same colours.",
-                         ["discs.png"], out="layout.png")
-
-Every finalized prompt is screened before it reaches the queue (`screen_image_prompt`) —
-a blocked prompt raises `ImageModelError` rather than being sent, because there is no
-job to degrade from. Every rendered image comes back with a worker-side NSFW verdict;
-`render_verdict` decides admission, and a refusal is logged and dropped from the
-result the same way asset_chain drops one — the caller sees one missing image, not
-a raised exception, because a batch losing one render is the ordinary case.
-
-Nothing here is aware of what a concept image or a layout map *is*. That
-vocabulary belongs to the stages that call this.
+Qwen Image 2512 generates, Qwen Image Edit 2511 edits; prompts are screened before the queue.
 """
+
 from __future__ import annotations
 
 import base64
@@ -35,11 +9,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Sequence
 
-from db.queue_client import run_job
-from maestro.worldgen import WORLD_JOB_TIMEOUT
 from maestro.codegen.assets import render_verdict
+from maestro.worldgen import WORLD_JOB_TIMEOUT
 from tools.execution_context import get_run_id
 from tools.safety import SafetyViolation, log_violation, screen_image_prompt
+from workqueue.client import run_job
 
 # The two checkpoints share a text encoder and a VAE and differ only in the
 # diffusion model, which is why one class covers both.
@@ -69,15 +43,9 @@ class ImageModelError(RuntimeError):
 
 
 class ImageModel:
-    """The image queue, addressed as if it were an image model.
-
-    One instance is reusable and holds no per-request state, so stages can share
-    it or make their own.
-    """
-
+    """The image queue, addressed as if it were an image model."""
     def __init__(self, *, timeout: float = WORLD_JOB_TIMEOUT) -> None:
         self.timeout = timeout
-
 
     def generate(
         self,
@@ -92,22 +60,14 @@ class ImageModel:
         cfg: float = CFG,
         cutout: bool = False,
     ) -> Path:
-        """Draw `prompt` from nothing and write it to `out`, which is returned.
-
-        `cutout` matters for anything destined for image-to-3D: it drops the
-        background and leaves the subject on alpha, which is the input the mesh
-        model wants. Leave it off for anything meant to be looked at as a scene.
-
-        `width` and `height` are snapped up to a multiple of 16; the latent grid
-        cannot represent anything else, and a silently-resized output is worse
-        than a slightly larger one.
-        """
         self._screen(prompt)
         width, height = _snap(width), _snap(height)
         graph = {
             "unet": _node("UNETLoader", unet_name=TXT2IMG_UNET, weight_dtype="default"),
             "clip": _node("CLIPLoader", clip_name=CLIP, type="qwen_image", device="default"),
             "vae": _node("VAELoader", vae_name=VAE),
+
+
             "sampling": _node("ModelSamplingAuraFlow", shift=SHIFT, model=["unet", 0]),
             "pos": _node("CLIPTextEncode", text=prompt, clip=["clip", 0]),
             "neg": _node("CLIPTextEncode", text=negative, clip=["clip", 0]),
@@ -146,16 +106,6 @@ class ImageModel:
         cfg: float = CFG,
         denoise: float = 1.0,
     ) -> Path:
-        """Redraw `images[0]` according to `prompt`, writing the result to `out`.
-
-        Every image in `images` conditions the text encoder; only the first also
-        seeds the latent, so the output takes its dimensions from that one and
-        the rest act purely as reference. At most `MAX_EDIT_IMAGES` of them.
-
-        `denoise` is how far the result may travel from the first image: 1.0
-        redraws it freely under the instruction, and lower values hold onto more
-        of the original composition.
-        """
         if not images:
             raise ValueError("edit() needs at least one image to edit")
         if len(images) > MAX_EDIT_IMAGES:
@@ -214,11 +164,7 @@ class ImageModel:
         return out
 
     def run(self, graph: dict[str, Any], *, uploads: list[dict] | None = None) -> list[bytes]:
-        """Queue `graph`, wait for it, and return the images it saved, admitted only.
-
-        Public because a stage with a genuinely unusual graph should be able to
-        reach the queue without this module growing a parameter for it.
-        """
+        """Queue `graph`, wait for it, and return the images it saved, admitted only."""
         payload = {"kind": "comfy_image", "workflow": graph, "uploads": uploads or []}
         job = run_job("image", payload, timeout_seconds=self.timeout)
         if job.get("status") != "done":
@@ -237,12 +183,6 @@ class ImageModel:
         return admitted
 
     def _upload(self, path: Path | str) -> dict[str, str]:
-        """A local image as one `uploads` entry the next payload carries.
-
-        LoadImage names an image in the worker's ComfyUI input directory, so a
-        file on this side has to travel with the job rather than being posted
-        ahead of it. The name is unique, so two jobs never collide there.
-        """
         path = Path(path)
         name = f"wc_{uuid.uuid4().hex}{path.suffix or '.png'}"
         return {"name": name, "b64": base64.b64encode(path.read_bytes()).decode("ascii")}

@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import Dict, Optional
 
-from maestro.codegen.staging import ENTRY, RUNTIME_DIR, _TITLE
+from maestro.codegen.staging import _TITLE, ENTRY, RUNTIME_DIR
 
 DEMOS_DIR = RUNTIME_DIR / "demos"
 META = "_demo.json"
@@ -54,7 +54,7 @@ def snapshot(run_id: str, replace: bool = False) -> Path:
     """Copy the run's staged game into the demos tree, with the person's ask beside it. Refuses
     to overwrite a snapshot that exists unless told to — a demo that quietly became a different
     game is the failure this tree exists to rule out."""
-    from db import store as db_store
+    from db import games
     from maestro.state import RunState
 
     src = RUNTIME_DIR / "games" / run_id
@@ -66,7 +66,7 @@ def snapshot(run_id: str, replace: bool = False) -> Path:
             raise FileExistsError(f"demo {run_id} exists; --replace to overwrite it")
         shutil.rmtree(dst)
     spec = RunState(run_id).read_spec() or {}
-    row = db_store.game(run_id) or {}
+    row = games.game(run_id) or {}
     shutil.copytree(src, dst)
     (dst / META).write_text(json.dumps({
         "run_id": run_id,

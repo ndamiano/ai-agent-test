@@ -454,12 +454,15 @@ src/
                          (`docs/local_dev.md`).
 ```
 
-The rest of the platform is build-path-agnostic: `auth/` (identity, bearer sessions, credits,
+The rest of the platform is build-path-agnostic: `auth/` (identity, bearer sessions,
 open signup — the only self-serve account path, per-IP throttled — the
 /play handoff + per-game grant-cookie gate, `playgrants.py`; an account carries an EMAIL, which
 exists to recover it: `/auth/forgot` mails a single-use link that answers identically for an address
-with no account, and setting a password ends every session the account has), `db/`
-(games/builds/events/jobs/workers + the compute budget), `worker/` (the pull-side GPU worker),
+with no account, and setting a password ends every session the account has), `billing/`
+(the credit ledger, the packages a credit is bought in, the Stripe provider, and what a job is
+estimated to cost), `db/`
+(games/builds/events/jobs/workers + the compute budget), `workqueue/` (the enqueue-side client
+and the queue reaper), `worker/` (the pull-side GPU worker),
 `scaler/` (the RunPod autoscaler), `api/` (FastAPI routers), `llm_clients/`, `tools/`, `config/`,
 and `frontend/` (the React SPA, served same-origin by the API).
 

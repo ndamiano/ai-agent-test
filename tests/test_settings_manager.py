@@ -3,9 +3,6 @@ from pathlib import Path
 
 from config.settings_manager import _merge, settings_manager
 
-# Callers subscript get_settings() directly (db/store._db_path reads working_directory), so a key
-# the file omits must resolve to its default, not raise KeyError three frames away.
-
 
 def test_merge_fills_keys_the_file_omits():
     defaults = {"working_directory": "outputs", "llm": {"model": "m", "n_ctx": 32768}}

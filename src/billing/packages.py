@@ -1,4 +1,4 @@
-"""Build pricing"""
+"""What a credit buys, and what a build costs."""
 
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple

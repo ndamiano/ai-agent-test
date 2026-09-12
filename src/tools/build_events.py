@@ -9,14 +9,14 @@ from typing import Optional
 
 from api.websocket.event_bus import event_bus
 from config.time_utils import get_utc_timestamp
-from db import store as db_store
+from db import events
 
 logger = logging.getLogger(__name__)
 
 
 def _emit(event_type: str, run_id: str, *, build_id: Optional[str] = None, **payload) -> None:
     try:
-        db_store.record_event(run_id, event_type, payload, build_id)
+        events.record_event(run_id, event_type, payload, build_id)
     except Exception:
         logger.exception("failed to persist event %s for %s", event_type, run_id)
     try:

@@ -1,30 +1,6 @@
 #!/usr/bin/env python3
 """Drain a queue on a one-card box: start the model, start the worker, wait, stop both.
-
-A build spreads its work across four queues and one 5090 holds ONE of these models
-at a time, so locally the queues are drained in turn rather than served at once.
-Nothing is lost by waiting — a job sits in the queue until a worker exists, which is
-the same thing that lets a pod come up late in production.
-
-    scripts/local_gpu.py llm            # drain the llm queue, then stop
-    scripts/local_gpu.py image mesh     # each leg in turn
-    scripts/local_gpu.py all            # llm, then image, then mesh, then video
-    scripts/local_gpu.py image --keep   # leave the model up when the queue empties
-    scripts/local_gpu.py auto           # hold whichever queue has work, forever
-    scripts/local_gpu.py auto --idle-exit 300   # stop and exit after 300s with nothing pending
-
-`auto` is the one to run for a world build: worldgen alternates llm/image/mesh jobs many
-times and blocks in `db.queue_client.run_job` until each completes, so there is no point at
-which the legs can be drained by hand one at a time. `auto` watches every queue's pending
-counts and swaps the card to whichever queue needs it, favoring the queue it already holds so
-a tie doesn't thrash it every poll.
-
-The control plane (`python run.py`) is NOT started here: it owns the queue this
-reads, and killing it between legs would fail the jobs waiting in it.
-
-Only processes this script started are stopped. Something already holding the card
-is REPORTED and the leg is refused — a script that kills whatever it finds is a
-script that kills the build you forgot was running.
+`auto` holds whichever queue has work, swapping the card as the queues need it.
 """
 
 import argparse
@@ -53,10 +29,7 @@ SAFETY_MODEL_DIR = os.environ.get("SAFETY_MODEL_DIR", "/home/nick/comfy-models/s
 
 
 def _worker_python(queue: str) -> str:
-    """Which interpreter runs a queue's worker. `image` and `video` classify every render before it
-    is saved, and the classifier needs torch and timm — which live in ComfyUI's environment, not
-    the control plane's. Run under the wrong one and every render is HELD with "safety classifier
-    failed to load", which is the seam failing closed exactly as it should and no art at all."""
+    """Which interpreter runs a queue's worker — image and video need ComfyUI's environment."""
     if queue in ("image", "video") and COMFY_PYTHON.exists():
         return str(COMFY_PYTHON)
     return sys.executable
@@ -90,11 +63,7 @@ def _model_id() -> str:
 
 
 def _ninfer_bin() -> Path:
-    """The engine built for the model VARIANT the settings ask for. The artifacts on this box are
-    `<model>_<variant>` and the engine beside each is `ninfer-<variant>`; an engine built for
-    another variant refuses the weights outright — a quasar artifact under the plain build answers
-    `tensor descriptor does not match target contract: text/token_embedding` and dies at launch.
-    NINFER_BIN overrides; a variant with no engine of its own falls back to the plain one."""
+    """The engine built for the model variant the settings ask for; NINFER_BIN overrides."""
     if os.environ.get("NINFER_BIN"):
         return Path(os.environ["NINFER_BIN"])
     variant = _model_id().rsplit("_", 1)[-1]
@@ -103,11 +72,6 @@ def _ninfer_bin() -> Path:
 
 
 def _ninfer_artifact() -> Path:
-    """The weights whose `--model-id` the settings ask for. A mismatch here answers
-    every request with a 404 the worker reports as a failed job. The `_nvfp4` artifact
-    is the one the worldgen pipeline was measured on; it costs 3.3 GB more than the
-    groupwise-int build, which is why `llm.n_ctx` is 65535 and not higher — at 98304 its
-    runtime reservation asks for 9.41 GB against 7.85 GB free and it dies at launch."""
     path = NINFER_MODELS / f"{_model_id().replace('.', '_')}_nvfp4.ninfer"
     if path.exists():
         return path
@@ -164,8 +128,7 @@ def _up(url: str, timeout: float = 2.0) -> bool:
 
 
 def _ready(queue: str, url: str, timeout: float = 2.0) -> bool:
-    """Readiness is server-specific past "answers the port": ninfer must actually list the
-    configured model id, not just be listening (a wrong-model 200 would fool a plain `_up`)."""
+    """Readiness is server-specific: ninfer must list the configured model id, not just listen."""
     import urllib.error
     import urllib.request
     try:
@@ -219,11 +182,7 @@ def _stop(name: str, process: subprocess.Popen, grace: float = 25) -> None:
 
 
 def hand_over(held: Optional[str], server, worker) -> None:
-    """Give the card up: the worker first, with time to finish the job it holds, then the server.
-    A worker signalled mid-job finishes that job and exits, so waiting for it keeps GPU seconds
-    that are already paid for; killing it throws the whole generation away and re-pays its prefill
-    when the job is re-driven (measured 2026-09-08: an llm turn cancelled at 27 s and 1,537 tokens
-    on a switch to the video queue). Nothing stops a server auto did not start."""
+    """Give the card up: the worker first, with time to finish its job, then the server."""
     if worker is not None:
         _stop(f"{held}-worker", worker, grace=HANDOFF_SECONDS)
     if server is not None:
@@ -243,8 +202,8 @@ def _await_ready(name: str, queue: str, url: str, process: subprocess.Popen, tim
 
 
 def _waiting(queue: str) -> int:
-    from db import store as db_store
-    with db_store._db() as conn:
+    from db import connection
+    with connection.platform_db() as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS n FROM jobs WHERE queue = ? AND status IN ('pending','claimed')",
             (queue,),
@@ -254,8 +213,8 @@ def _waiting(queue: str) -> int:
 
 def _oldest_wait(queue: str) -> float:
     """Seconds the queue's longest-unclaimed job has waited; 0 with nothing pending."""
-    from db import store as db_store
-    with db_store._db() as conn:
+    from db import connection
+    with connection.platform_db() as conn:
         row = conn.execute(
             "SELECT MIN(created_at) AS t FROM jobs WHERE queue = ? AND status = 'pending'",
             (queue,),
@@ -317,18 +276,6 @@ def drain(queue: str, *, keep: bool, ready_timeout: float) -> None:
 
 def choose_action(held: Optional[str], pending: dict, idle_ticks: dict,
                    idle_tick_limit: int, waits: Optional[dict] = None) -> Optional[str]:
-    """Pure decision function: given which queue currently holds the card (or None), the
-    pending count per queue, how many consecutive empty ticks each queue has racked up, and how
-    long each queue's oldest unclaimed job has waited, return the queue to hold next, or None
-    to keep the current state (including "hold nothing").
-
-    Priority: a queue whose oldest job has waited STARVE_SECONDS takes the card (the longest
-    wait first) — the held queue's job in flight finishes, its next ones wait. Otherwise stay
-    on the held queue while it has work or hasn't been empty long enough to count as drained
-    (this is what keeps a mid-build swap from thrashing on a momentary zero between a job
-    finishing and its continuation landing). Otherwise prefer the held queue's replacement in
-    fixed order llm -> image -> mesh -> video among queues with pending work. If nothing
-    anywhere has pending work, return None (holder should idle, not switch)."""
     starving = {q: w for q, w in (waits or {}).items() if w >= STARVE_SECONDS and q != held}
     if starving:
         return max(starving, key=starving.get)

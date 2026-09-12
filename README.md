@@ -111,9 +111,10 @@ runtime/
   decimate.mjs  node: a finished TRELLIS GLB decimated to game weight
 src/
   api/          FastAPI routers + WebSocket event bus
-  auth/         identity, sessions, credit ledger, play grants, admin CLI
+  auth/         identity, sessions, play grants, admin CLI
+  billing/      credit ledger, packages, Stripe provider, job cost estimates
   config/       settings manager + example
-  db/           games/builds/events/jobs/workers + the compute budget, queue client, reaper
+  db/           games/builds/events/jobs/workers + the compute budget
   grading.py    where a filled-in game grade is stored
   llm_clients/  connector, message builder, wire translation
   maestro/
@@ -126,6 +127,7 @@ src/
   scaler/       the RunPod autoscaler
   tools/        ComfyUI, quilting, S3, DB backup, mailer, safety, execution context
   worker/       the pull-side GPU worker agent
+  workqueue/    the enqueue-side client + the queue reaper
 frontend/       React + Vite UI
 tests/          pytest suite
 docs/           see the table above
@@ -140,9 +142,10 @@ runtime/
   decimate.mjs  node: a finished TRELLIS GLB decimated to game weight
 src/
   api/          FastAPI routers + WebSocket event bus
-  auth/         identity, sessions, credit ledger, admin CLI
+  auth/         identity, sessions, admin CLI
+  billing/      credit ledger, packages, Stripe provider, job cost estimates
   config/       settings schema/manager
-  db/           games/builds/events/jobs/workers + the compute budget, queue client, reaper
+  db/           games/builds/events/jobs/workers + the compute budget
   llm_clients/  connector, message builder, wire translation
   maestro/
     codegen/    the build path — build_chain (driver), build_steps (turn machine),
@@ -152,6 +155,7 @@ src/
   scaler/       the RunPod autoscaler
   tools/        tool manager, ComfyUI, TRELLIS, system tools, execution context
   worker/       the pull-side GPU worker agent
+  workqueue/    the enqueue-side client + the queue reaper
 frontend/       React + Vite UI
 tests/          pytest suite
 docs/           vision, roadmap, deploy

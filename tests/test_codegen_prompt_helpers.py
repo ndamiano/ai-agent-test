@@ -20,9 +20,9 @@ def events(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_db(monkeypatch):
-    monkeypatch.setattr(run_mod.db_store, "create_game", lambda *a, **k: None)
-    monkeypatch.setattr(run_mod.db_store, "update_prompt_meta", lambda *a, **k: None)
-    monkeypatch.setattr(run_mod.db_store, "charge_game", lambda *a, **k: None)
+    monkeypatch.setattr(run_mod.games, "create_game", lambda *a, **k: None)
+    monkeypatch.setattr(run_mod.games, "update_prompt_meta", lambda *a, **k: None)
+    monkeypatch.setattr(run_mod.games, "charge_game", lambda *a, **k: None)
 
 
 def test_open_ask_stores_the_users_words_verbatim(tmp_runs, events):

@@ -29,7 +29,7 @@ from typing import Mapping, Optional
 
 import requests
 
-from auth.billing import Package
+from billing.packages import Package
 from config.settings_manager import settings_manager
 
 
@@ -80,7 +80,6 @@ WEBHOOK_TOLERANCE_SECONDS = 300
 class StripeProvider(CreditProvider):
     """Stripe Checkout, hosted: card data never touches us. Prices ride the session inline
     (price_data), so nothing is configured in the Stripe dashboard but the keys."""
-
     def __init__(self, secret_key: str, webhook_secret: str) -> None:
         self._key = secret_key
         self._webhook_secret = webhook_secret

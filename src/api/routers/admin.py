@@ -1,19 +1,19 @@
 """Admin only APIs. These are gated by `require_admin`."""
 
+import asyncio
 import calendar
 import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-import asyncio
-
 from fastapi import APIRouter, Depends, HTTPException
-from auth import store as auth_store
+
+from auth import store
 from auth.deps import require_admin
 from auth.store import User
+from billing.estimates import QUEUE_SECONDS_ESTIMATES
 from config.settings_manager import settings_manager
-from db import store as db_store
-from billing.utils import QUEUE_SECONDS_ESTIMATES
+from db import events, games, jobs, workers
 from maestro.codegen import build_chain
 from scaler.runpod_client import RunPodClient
 
@@ -41,7 +41,7 @@ def _freshness() -> float:
 
 def _stockouts(queue: str, now: float) -> Dict[str, Any]:
     """Returns stock refusal counts per window, and whether there's an active stock outage."""
-    stats = db_store.pod_stockout_stats(queue, now)
+    stats = workers.pod_stockout_stats(queue, now)
     return {
         "last_1h": stats["last_1h"],
         "last_24h": stats["last_24h"],
@@ -52,9 +52,9 @@ def _stockouts(queue: str, now: float) -> Dict[str, Any]:
 
 def _workers(queue: str, now: float, freshness: float) -> List[Dict[str, Any]]:
     """Returns a list of live workers."""
-    held = {j["worker_id"]: j for j in db_store.claimed_jobs(queue)}
+    held = {j["worker_id"]: j for j in jobs.claimed_jobs(queue)}
     rows = []
-    for w in db_store.booting_workers(queue) + db_store.live_workers(queue, freshness):
+    for w in workers.booting_workers(queue) + workers.live_workers(queue, freshness):
         job = held.get(w["id"])
         rows.append({
             "id": w["id"],
@@ -83,21 +83,21 @@ async def get_queues(_: User = Depends(require_admin)) -> Dict[str, Any]:
     totals = {"pending": 0, "claimed": 0, "workers_live": 0, "backlog_seconds": 0.0}
 
     for q in QUEUE_SECONDS_ESTIMATES:
-        stats = db_store.queue_stats(q)
-        workers = _workers(q, now, freshness)
+        stats = jobs.queue_stats(q)
+        fleet = _workers(q, now, freshness)
         row = {
             "queue": q,
             "pending": stats["pending"],
             "claimed": stats["claimed"],
             "oldest_pending_age_seconds": stats["oldest_pending_age_seconds"],
-            "workers_live": sum(w["state"] != "booting" for w in workers),
+            "workers_live": sum(w["state"] != "booting" for w in fleet),
             "workers_max": _max_workers(q),
             "est_seconds": QUEUE_SECONDS_ESTIMATES[q],
-            "backlog_seconds": db_store.backlog_seconds(q),
+            "backlog_seconds": jobs.backlog_seconds(q),
             "next": [{"id": j["id"], "game_id": j["game_id"], "build_id": j["build_id"],
                       "waiting_seconds": now - j["created_at"], "est_seconds": QUEUE_SECONDS_ESTIMATES[q]}
-                     for j in db_store.pending_jobs_head(q, _NEXT_LIMIT)],
-            "workers": workers,
+                     for j in jobs.pending_jobs_head(q, _NEXT_LIMIT)],
+            "workers": fleet,
             "stockouts": _stockouts(q, now),
         }
         queues.append(row)
@@ -111,7 +111,7 @@ async def get_queues(_: User = Depends(require_admin)) -> Dict[str, Any]:
 async def get_analytics(days: int = 14, _: User = Depends(require_admin)) -> Dict[str, Any]:
     """Returns the usage funnel: per day, event counts by kind plus distinct active users."""
     days = max(1, min(days, 90))
-    rollup = db_store.user_event_rollup(time.time() - days * _DAY_SECONDS)
+    rollup = events.user_event_rollup(time.time() - days * _DAY_SECONDS)
     by_day: Dict[str, Dict[str, int]] = {}
     for r in rollup["kinds"]:
         by_day.setdefault(r["day"], {})[r["kind"]] = r["n"]
@@ -126,8 +126,8 @@ async def get_analytics(days: int = 14, _: User = Depends(require_admin)) -> Dic
 @router.get("/violations")
 async def list_violations(_: User = Depends(require_admin)) -> Dict[str, Any]:
     """Safety refusals, with the offending account's handle."""
-    handles = {u.id: u.handle for u in auth_store.list_users()}
-    rows = db_store.list_violations()
+    handles = {u.id: u.handle for u in store.list_users()}
+    rows = events.list_violations()
     for r in rows:
         r["handle"] = handles.get(r["user_id"])
     return {"violations": rows}
@@ -201,15 +201,15 @@ def _pod_row(pod: Dict[str, Any], spend: Optional[Spend]) -> Dict[str, Any]:
 
 def _games(since: float) -> Dict[str, Any]:
     """Returns the count and per-game averages of games built since `since`."""
-    game_ids = db_store.games_built_since(since)
-    per_game = db_store.games_exec_seconds_by_gpu(game_ids).values()
+    game_ids = games.games_built_since(since)
+    per_game = games.games_exec_seconds_by_gpu(game_ids).values()
     n = len(game_ids)
     seconds = sum(g["seconds"] for g in per_game)
     usd = sum(g["micros"] for g in per_game) / 1e6
     return {"n": n,
             "avg_gpu_hours": round(seconds / 3600.0 / n, 4) if n else None,
             "avg_usd": round(usd / n, 4) if n else None,
-            "avg_changes": round(db_store.games_change_count(game_ids) / n, 2) if n else None}
+            "avg_changes": round(games.games_change_count(game_ids) / n, 2) if n else None}
 
 
 @router.get("/costs")
@@ -223,8 +223,8 @@ async def get_costs(days: int = 7, _: User = Depends(require_admin)) -> Dict[str
 
     since = now - days * _DAY_SECONDS
     records = await asyncio.to_thread(_ledger, since, now)
-    by_life, ghosts = _attribute(records or [], db_store.pod_lives())
-    pods = [_pod_row(p, by_life.get(p["worker_id"])) for p in db_store.pod_ledger(since)]
+    by_life, ghosts = _attribute(records or [], workers.pod_lives())
+    pods = [_pod_row(p, by_life.get(p["worker_id"])) for p in workers.pod_ledger(since)]
     pods += [_pod_row({"pod_id": pid}, spend)
              for pid, spend in sorted(ghosts.items(), key=lambda kv: -kv[1]["total"])]
 
@@ -237,7 +237,7 @@ async def get_costs(days: int = 7, _: User = Depends(require_admin)) -> Dict[str
 @router.post("/games/{run_id}/stop")
 async def stop_any_game(run_id: str, admin: User = Depends(require_admin)) -> Dict[str, Any]:
     """Stop any run, no matter what."""
-    owner = db_store.owner_of(run_id)
+    owner = games.owner_of(run_id)
     if owner is None:
         raise HTTPException(status_code=404, detail=f"no game {run_id!r}")
     logger.warning("admin %s stopping run %s owned by %s", admin.id, run_id, owner)

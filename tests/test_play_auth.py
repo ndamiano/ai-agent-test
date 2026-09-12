@@ -7,8 +7,7 @@ import shutil
 import pytest
 
 import api.app
-from auth import playgrants
-from auth import store as auth_store
+from auth import playgrants, store
 from maestro.codegen.run import create_run, set_prompt
 
 
@@ -31,8 +30,8 @@ def client(app_client, tmp_runs):
 
 
 def _user(handle="alice"):
-    u = auth_store.create_user(handle, "pw-pass1234", email=f"{handle}@example.com")
-    return u, auth_store.issue_token(u.id)
+    u = store.create_user(handle, "pw-pass1234", email=f"{handle}@example.com")
+    return u, store.issue_token(u.id)
 
 
 @pytest.fixture
@@ -72,7 +71,7 @@ def _grant_cookie(client, token, run_id):
 def test_login_sets_no_cookie(client):
     """The session token is header-only everywhere; the play surface earns its own grant via
     /handoff. Login has no cookie to set."""
-    auth_store.create_user("alice", "pw-pass1234", email="alice@example.com")
+    store.create_user("alice", "pw-pass1234", email="alice@example.com")
     r = client.post("/auth/login", json={"handle": "alice", "password": "pw-pass1234"})
     assert r.status_code == 200
     assert "set-cookie" not in r.headers

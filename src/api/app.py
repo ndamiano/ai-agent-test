@@ -75,7 +75,7 @@ from api.websocket.event_bus import event_bus
 from auth.deps import install_auth
 from auth.router import router as auth_router
 from config.settings_manager import settings_manager
-from db.reaper import Reaper
+from workqueue.reaper import Reaper
 from tools.db_backup import DbBackup
 from scaler.autoscaler import Autoscaler
 from scaler.runpod_client import RunPodClient

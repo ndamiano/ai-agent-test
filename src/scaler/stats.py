@@ -1,13 +1,11 @@
 """Queue + fleet facts behind a Protocol — the SQS seam.
-
-The ONLY scaler module that imports db.store. A later move to SQS-like infra swaps this source
-(ApproximateNumberOfMessages ≈ pending, etc.); policy.py and autoscaler.py never touch storage.
+The only scaler module that touches storage; policy.py and autoscaler.py never do.
 """
 
 import time
 from typing import Dict, List, NamedTuple, Optional, Protocol
 
-from db import store
+from db import jobs, workers
 
 _WEEK = 7 * 24 * 3600
 
@@ -46,39 +44,39 @@ class StatsSource(Protocol):
 
 class SqliteStatsSource:
     def queue_stats(self, queue: str) -> QueueStats:
-        s = store.queue_stats(queue)
+        s = jobs.queue_stats(queue)
         since = time.time() - _WEEK
-        return QueueStats(s["pending"], store.recent_job_seconds(queue, since))
+        return QueueStats(s["pending"], jobs.recent_job_seconds(queue, since))
 
     def live_workers(self, queue: str, freshness_seconds: float) -> List[WorkerInfo]:
         return [WorkerInfo(w["id"], w["pod_id"])
-                for w in store.live_workers(queue, freshness_seconds)]
+                for w in workers.live_workers(queue, freshness_seconds)]
 
     def stale_workers(self, queue: str, staleness_seconds: float,
                       boot_deadline_seconds: float) -> List[WorkerInfo]:
         return [WorkerInfo(w["id"], w["pod_id"])
-                for w in store.stale_workers(queue, staleness_seconds, boot_deadline_seconds)]
+                for w in workers.stale_workers(queue, staleness_seconds, boot_deadline_seconds)]
 
     def booting_workers(self, queue: str) -> List[BootingInfo]:
-        return [BootingInfo(w["pod_id"], w["started_at"]) for w in store.booting_workers(queue)]
+        return [BootingInfo(w["pod_id"], w["started_at"]) for w in workers.booting_workers(queue)]
 
     def terminated_workers_with_pods(self, queue: str) -> List[WorkerInfo]:
         return [WorkerInfo(w["id"], w["pod_id"])
-                for w in store.terminated_workers_with_pods(queue)]
+                for w in workers.terminated_workers_with_pods(queue)]
 
     def mark_worker_terminated(self, worker_id: str) -> None:
-        store.set_worker_terminated(worker_id)
+        workers.set_worker_terminated(worker_id)
 
     def mark_pod_terminated(self, pod_id: str) -> None:
-        store.set_pod_terminated(pod_id)
+        workers.set_pod_terminated(pod_id)
 
     def record_worker_created(self, worker_id: str, pod_id: str, queue: str,
                               gpu_type: Optional[str], usd_per_hour: Optional[float]) -> None:
-        store.worker_created(worker_id, pod_id, queue, gpu_type, usd_per_hour)
+        workers.worker_created(worker_id, pod_id, queue, gpu_type, usd_per_hour)
 
     def record_pod_refusal(self, queue: str, kind: str, attempts: List[Dict],
                            error: str) -> None:
-        store.record_pod_refusal(queue, kind, attempts, error)
+        workers.record_pod_refusal(queue, kind, attempts, error)
 
     def record_pod_created(self, queue: str) -> None:
-        store.record_pod_created(queue)
+        workers.record_pod_created(queue)

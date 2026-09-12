@@ -10,8 +10,8 @@ import time
 from typing import Optional
 
 from config.settings_manager import settings_manager
-from db import queue_client
 from llm_clients.rate_limiter import get_llm_rate_limiter
+from workqueue import client as queue_client
 
 logger = logging.getLogger(__name__)
 

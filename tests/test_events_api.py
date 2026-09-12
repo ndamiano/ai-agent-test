@@ -5,13 +5,13 @@ batched writes attributed to the authed user, allowlist + cap enforced by droppi
 import sqlite3
 import time
 
-from auth import store as auth_store
-from db import store as db_store
+from auth import store
+from db import events
 
 
 def _token(handle="alice", role="user"):
-    auth_store.create_user(handle, "pw-pass1234", role=role, email=f"{handle}@example.com")
-    return auth_store.issue_token(auth_store.get_user_by_handle(handle).id)
+    store.create_user(handle, "pw-pass1234", role=role, email=f"{handle}@example.com")
+    return store.issue_token(store.get_user_by_handle(handle).id)
 
 
 def _post(client, token, rows):
@@ -29,7 +29,7 @@ def _raw_rows(tmp_path):
 
 def test_batch_lands_attributed_to_the_caller(app_client, isolated_dbs):
     token = _token()
-    user_id = auth_store.get_user_by_handle("alice").id
+    user_id = store.get_user_by_handle("alice").id
     now_ms = time.time() * 1000
     r = _post(app_client, token, [
         {"kind": "page_view", "payload": {"path": "/"}, "ts": now_ms},
@@ -84,23 +84,23 @@ def test_bad_run_id_is_stored_unattached(app_client, isolated_dbs):
 
 
 def test_user_rows_never_leak_into_the_game_event_log():
-    db_store.record_event("g1", "build_step", {"step": 1})
-    db_store.record_user_events("u1", [
+    events.record_event("g1", "build_step", {"step": 1})
+    events.record_user_events("u1", [
         {"kind": "game_played", "payload": {}, "game_id": "g1", "created_at": time.time()}])
-    assert [e["kind"] for e in db_store.events_for("g1")] == ["build_step"]
+    assert [e["kind"] for e in events.events_for("g1")] == ["build_step"]
 
 
 def test_rollup_buckets_by_day_and_counts_distinct_users(app_client):
     now = time.time()
-    db_store.record_user_events("u1", [
+    events.record_user_events("u1", [
         {"kind": "page_view", "payload": {}, "created_at": now},
         {"kind": "page_view", "payload": {}, "created_at": now},
         {"kind": "build_started", "payload": {}, "created_at": now},
     ])
-    db_store.record_user_events("u2", [
+    events.record_user_events("u2", [
         {"kind": "page_view", "payload": {}, "created_at": now},
     ])
-    db_store.record_event("g1", "build_step", {"step": 1})   # lifecycle row — never in the rollup
+    events.record_event("g1", "build_step", {"step": 1})
 
     token = _token("root", "admin")
     body = app_client.get("/api/admin/analytics",

@@ -30,6 +30,7 @@ a game already written against the first one.
 A leg that fails is logged and left: the pipeline resumes by stage, so what is published stands
 and the world simply stops improving.
 """
+
 from __future__ import annotations
 
 import json
@@ -71,6 +72,7 @@ PLACEHOLDER_SIZE_M = 600.0
 def _placeholder(game_root: Path) -> None:
     """Write a flat world a game can load while the real one is still being made."""
     import struct
+
     from PIL import Image
 
     target = world_dir(game_root)
@@ -155,10 +157,10 @@ def _restage(run_id: str) -> None:
     """A world that lands after the build finished must reach the staged copy people play. A
     build still running stages its own game at finalize, and re-staging under it would publish a
     half-written game."""
-    from db import store as db_store
+    from db import games
     from maestro.codegen.staging import stage_for_play
     from maestro.state import RunState
-    if (db_store.game(run_id) or {}).get("status") == "built":
+    if (games.game(run_id) or {}).get("status") == "built":
         stage_for_play(RunState(run_id).run_dir, run_id)
 
 

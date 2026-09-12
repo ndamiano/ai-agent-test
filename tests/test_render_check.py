@@ -11,7 +11,7 @@ import pytest
 from PIL import Image
 
 import maestro.state
-from db import store
+from db import games
 from maestro.codegen import asset_chain
 from maestro.codegen.assets import check_render, read_manifest, request_media
 from maestro.state import RunState
@@ -21,10 +21,9 @@ RUN = "r1"
 
 @pytest.fixture(autouse=True)
 def _env(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
     monkeypatch.setattr(maestro.state, "resolve_base_path", lambda input_path=None: tmp_path)
-    store.create_game(RUN, "u1")
-    store.charge_game(RUN, 1, 10_000.0)
+    games.create_game(RUN, "u1")
+    games.charge_game(RUN, 1, 10_000.0)
 
 
 @pytest.fixture

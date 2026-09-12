@@ -25,8 +25,8 @@ import uuid
 from typing import Optional
 
 from auth import store
-from auth.billing import MICROS_PER_CREDIT
-from db import store as db_store
+from billing.packages import MICROS_PER_CREDIT
+from db import games, jobs
 from maestro.codegen import build_chain, build_state, design
 from maestro.codegen.staging import game_dir, is_staged
 from maestro.state import RunState
@@ -40,7 +40,6 @@ _POLL_INTERVAL = 1.0
 class BuildResult:
     """The CLI's view of a finished build (the web path is fire-and-forget and reads status/events
     instead)."""
-
     def __init__(self, ok: bool, steps: int, elapsed: float, summary: str = ""):
         self.ok = ok
         self.steps = steps
@@ -51,7 +50,7 @@ class BuildResult:
 def create_run(user_id: str) -> str:
     run_id = uuid.uuid4().hex[:12]
     RunState(run_id)
-    db_store.create_game(run_id, user_id)
+    games.create_game(run_id, user_id)
     return run_id
 
 
@@ -73,7 +72,7 @@ def open_ask(run_id: str, ask: str) -> dict:
         raise ValueError("the prompt is empty")
     spec = {"ask": ask, "title": _title_of(ask)}
     RunState(run_id).write_spec(spec)
-    db_store.update_prompt_meta(run_id, spec["title"])
+    games.update_prompt_meta(run_id, spec["title"])
     return spec
 
 
@@ -137,7 +136,7 @@ def _new_run(request: str) -> Optional[str]:
     run_id = create_run(users[0].id)
     # The CLI is the employee path — no credit charge, but the compute budget still gates every
     # enqueue, so grant the same budget a charged build would get or step 1 is refused.
-    db_store.charge_game(run_id, 0, MICROS_PER_CREDIT)
+    games.charge_game(run_id, 0, MICROS_PER_CREDIT)
     open_ask(run_id, request)
     print(f"run: {run_id}\nask: {request!r}\ndesigning...")
     prompt = design.generate(run_id, request)
@@ -200,16 +199,16 @@ def _await_batch(batch_id: str, run_id: str) -> list:
     from maestro.codegen.assets import asset_path, ext_for
     seen = 0
     while True:
-        jobs = db_store.batch_jobs(batch_id)
-        if len(jobs) > seen:
-            seen = len(jobs)
+        rows = jobs.batch_jobs(batch_id)
+        if len(rows) > seen:
+            seen = len(rows)
             print(f"  {seen} job(s) queued, "
-                  f"{sum(1 for j in jobs if j['status'] in ('done', 'failed'))} done")
-        if jobs and all(j["status"] in ("done", "failed") for j in jobs):
+                  f"{sum(1 for j in rows if j['status'] in ('done', 'failed'))} done")
+        if rows and all(j["status"] in ("done", "failed") for j in rows):
             break
         time.sleep(2.0)
     out = []
-    for j in jobs:
+    for j in rows:
         aid = j["metadata"].get("asset_id")
         if aid and asset_path(run_id, aid, ext_for(j["metadata"].get("kind"))).exists():
             out.append(aid)
@@ -220,8 +219,8 @@ def _cli_assets(run_id: str) -> int:
     from maestro.codegen.assets import add_assets
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s: %(message)s")
     print(f"rendering the assets {run_id} asked for\n")
-    build_id = db_store.create_build(run_id, kind="assets")
-    db_store.build_started(build_id)
+    build_id = games.create_build(run_id, kind="assets")
+    games.build_started(build_id)
     out = add_assets(run_id, build_id)
     if not out["ok"]:
         print(out.get("error") or "nothing to render")
@@ -273,8 +272,6 @@ usage:
   python -m maestro.codegen.run --restore <run_id> <ref>  put the game back to one, and re-stage
   python -m maestro.codegen.run --help | -h              show this help
 """
-
-
 if __name__ == "__main__":
     if len(sys.argv) >= 2 and sys.argv[1] in ("--help", "-h"):
         print(_HELP)

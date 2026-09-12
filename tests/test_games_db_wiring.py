@@ -5,13 +5,14 @@ import json
 
 import pytest
 
+from auth import store
+from billing import ledger
+from billing.estimates import QUEUE_MICRO_ESTIMATES
+from billing.packages import MICROS_PER_CREDIT
+from db import connection, events, games, jobs, workers
 from maestro.codegen import build_chain, design
-from maestro.codegen.staging import game_dir
-from auth import store as auth_store
-from auth.billing import MICROS_PER_CREDIT
-from db import store as db_store
-from billing.utils import QUEUE_MICRO_ESTIMATES
 from maestro.codegen.run import create_run
+from maestro.codegen.staging import game_dir
 from maestro.state import RunState
 
 
@@ -21,22 +22,22 @@ def client(app_client, tmp_runs):
 
 
 def _burn(run_id, micros):
-    with db_store._db() as conn:
+    with connection.platform_db() as conn:
         conn.execute("UPDATE games SET spent_micros = spent_micros + ? WHERE id = ?",
                      (micros, run_id))
 
 
 def _user(handle="alice", credits=10):
-    u = auth_store.create_user(handle, "pw-pass1234", email=f"{handle}@example.com")
+    u = store.create_user(handle, "pw-pass1234", email=f"{handle}@example.com")
     if credits:
-        auth_store.grant(u.id, credits, "admin_grant")
-    return u, {"Authorization": f"Bearer {auth_store.issue_token(u.id)}"}
+        ledger.grant(u.id, credits, "admin_grant")
+    return u, {"Authorization": f"Bearer {store.issue_token(u.id)}"}
 
 
 def _make_game(user_id, spec):
     run_id = create_run(user_id)
     RunState(run_id).write_spec(spec)
-    db_store.update_prompt_meta(run_id, spec.get("title", ""))
+    games.update_prompt_meta(run_id, spec.get("title", ""))
     return run_id
 
 
@@ -59,7 +60,7 @@ def test_new_game_creates_the_run_and_starts_its_design(client, monkeypatch):
     user, headers = _user()
     started, enqueued = [], []
     monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: started.append(rid) or "bid")
-    monkeypatch.setattr(design.db_store, "enqueue_job",
+    monkeypatch.setattr(design.jobs, "enqueue_job",
                         lambda q, p, **kw: enqueued.append(kw.get("metadata")) or "job1")
 
     r = client.post("/api/games", headers=headers,
@@ -70,16 +71,16 @@ def test_new_game_creates_the_run_and_starts_its_design(client, monkeypatch):
     spec = RunState(run_id).read_spec()
     assert spec["ask"] == "an open world RPG with card combat" and "request" not in spec
     assert enqueued == [{"stage": "design", "run_id": run_id}]
-    assert db_store.owner_of(run_id) == user.id
-    assert auth_store.balance(user.id) == 9
-    assert db_store.game(run_id)["granted_micros"] == MICROS_PER_CREDIT
+    assert games.owner_of(run_id) == user.id
+    assert ledger.balance(user.id) == 9
+    assert games.game(run_id)["granted_micros"] == MICROS_PER_CREDIT
 
 
 def test_a_game_still_designing_reports_no_prompt_and_refuses_to_build(client, monkeypatch):
     """`prompt: null` is the page's only signal for the designing state, and a build sent before
     the design lands has nothing to send."""
     _, headers = _user()
-    monkeypatch.setattr(design.db_store, "enqueue_job", lambda *a, **kw: "job1")
+    monkeypatch.setattr(design.jobs, "enqueue_job", lambda *a, **kw: "job1")
 
     run_id = client.post("/api/games", headers=headers,
                          json={"prompt": "a maze game"}).json()["run_id"]
@@ -140,7 +141,7 @@ def test_building_an_empty_prompt_is_400_and_changes_nothing(client, monkeypatch
                        json={"prompt": "  "}).status_code == 400
     assert RunState(run_id).read_spec()["request"] == "a maze game"
     assert started == []
-    assert auth_store.balance(user.id) == 10   # a refused prompt never charges
+    assert ledger.balance(user.id) == 10
 
 
 def test_cross_user_access_is_403(client):
@@ -161,15 +162,15 @@ def test_build_charges_once_and_grants_seconds(client, monkeypatch):
 
     r = client.post(f"/api/games/{run_id}/build", headers=headers)
     assert r.status_code == 200
-    assert auth_store.balance(user.id) == 9
-    row = db_store.game(run_id)
+    assert ledger.balance(user.id) == 9
+    row = games.game(run_id)
     assert row["credits_spent"] == 1
     assert row["granted_micros"] == MICROS_PER_CREDIT
 
     # Second enqueue: already charged — no second deduction, no second grant.
     client.post(f"/api/games/{run_id}/build", headers=headers)
-    assert auth_store.balance(user.id) == 9
-    assert db_store.game(run_id)["granted_micros"] == MICROS_PER_CREDIT
+    assert ledger.balance(user.id) == 9
+    assert games.game(run_id)["granted_micros"] == MICROS_PER_CREDIT
 
 
 def test_build_with_no_credits_is_402_and_uncharged(client, monkeypatch):
@@ -178,7 +179,7 @@ def test_build_with_no_credits_is_402_and_uncharged(client, monkeypatch):
 
     r = client.post(f"/api/games/{run_id}/build", headers=headers)
     assert r.status_code == 402
-    assert not db_store.is_charged(run_id)
+    assert not games.is_charged(run_id)
 
 
 def test_a_game_out_of_compute_is_402_on_every_gpu_endpoint(client, monkeypatch):
@@ -197,8 +198,8 @@ def test_a_game_out_of_compute_is_402_on_every_gpu_endpoint(client, monkeypatch)
         assert r.json()["detail"]["reason"] == "compute_exhausted"
 
     # Still charged — a refusal is not a refund, and credits are not re-deducted on retry.
-    assert auth_store.balance(user.id) == 9
-    assert db_store.game(run_id)["credits_spent"] == 1
+    assert ledger.balance(user.id) == 9
+    assert games.game(run_id)["credits_spent"] == 1
 
 
 def test_detail_reports_remaining_net_of_queued_work(client):
@@ -207,8 +208,8 @@ def test_detail_reports_remaining_net_of_queued_work(client):
     for. budget_pct_remaining is computed from compute_remaining, which reserves the estimate."""
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
-    db_store.charge_game(run_id, 1, 1_000_000)
-    db_store.enqueue_job("mesh", {}, game_id=run_id, build_id="b1")
+    games.charge_game(run_id, 1, 1_000_000)
+    jobs.enqueue_job("mesh", {}, game_id=run_id, build_id="b1")
 
     detail = client.get(f"/api/games/{run_id}", headers=headers).json()
     assert detail["budget_pct_remaining"] == (1_000_000 - QUEUE_MICRO_ESTIMATES["mesh"]) / 1_000_000
@@ -217,12 +218,12 @@ def test_detail_reports_remaining_net_of_queued_work(client):
 def test_events_endpoint_replays_the_log(client):
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
-    db_store.record_event(run_id, "prompt_proposed", {"title": "Moon Miner"})
-    db_store.record_event(run_id, "build_step", {"step": 1})
+    events.record_event(run_id, "prompt_proposed", {"title": "Moon Miner"})
+    events.record_event(run_id, "build_step", {"step": 1})
 
-    events = client.get(f"/api/games/{run_id}/events", headers=headers).json()
-    assert [e["kind"] for e in events] == ["prompt_proposed", "build_step"]
-    after = events[0]["id"]
+    body = client.get(f"/api/games/{run_id}/events", headers=headers).json()
+    assert [e["kind"] for e in body] == ["prompt_proposed", "build_step"]
+    after = body[0]["id"]
     later = client.get(f"/api/games/{run_id}/events?after={after}", headers=headers).json()
     assert [e["kind"] for e in later] == ["build_step"]
 
@@ -286,7 +287,7 @@ def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client, monkeypat
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
     _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.webp",
                                       "prompt": "a hero"}]})
-    db_store.charge_game(run_id, 1, 10_000_000)   # grant compute so the enqueue is admitted
+    games.charge_game(run_id, 1, 10_000_000)
     # The merge is an LLM call; the note-vs-original contract is tested on _merge_prompt itself.
     monkeypatch.setattr(assets_mod, "_merge_prompt",
                         lambda original, note: "a brave knight, pixel art")
@@ -296,10 +297,10 @@ def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client, monkeypat
     assert r.status_code == 200
     assert r.json() == {"status": "regenerating", "run_id": run_id, "asset_id": "hero"}
 
-    db_store.worker_created("w1", None, "image", None, 0.99)
-    job = db_store.claim_job("image", "w1", 60)
+    workers.worker_created("w1", None, "image", None, 0.99)
+    job = jobs.claim_job("image", "w1", 60)
     assert job is not None and job["game_id"] == run_id and job["batch_id"]
-    assert [b["kind"] for b in db_store.builds_for(run_id) if b["id"] == job["build_id"]] == ["regen"]
+    assert [b["kind"] for b in games.builds_for(run_id) if b["id"] == job["build_id"]] == ["regen"]
     # the merged prompt reaches the positive behind the item quality-tag prefix
     assert job["payload"]["workflow"]["p"]["inputs"]["text"].endswith("a brave knight, pixel art")
     meta = json.loads(job["metadata"])
@@ -318,7 +319,7 @@ def test_regenerate_merge_is_attributed_to_the_game(client, monkeypatch):
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
     _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.webp",
                                       "prompt": "a hero"}]})
-    db_store.charge_game(run_id, 1, 10_000_000)
+    games.charge_game(run_id, 1, 10_000_000)
     seen = {}
 
     def _merge(original, note):
@@ -337,7 +338,7 @@ def test_regenerate_cross_user_is_403(client):
     user, _ = _user("alice")
     _, other = _user("bob")
     run_id = _make_game(user.id, {"request": "make a mine", "title": "Mine"})
-    db_store.charge_game(run_id, 1, 10_000_000)
+    games.charge_game(run_id, 1, 10_000_000)
     r = client.post(f"/api/games/{run_id}/assets/hero/regenerate", headers=other,
                     json={"prompt": "x"})
     assert r.status_code == 403
@@ -346,7 +347,7 @@ def test_regenerate_cross_user_is_403(client):
 def test_regenerate_bad_asset_id_is_400(client):
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
-    db_store.charge_game(run_id, 1, 10_000_000)
+    games.charge_game(run_id, 1, 10_000_000)
     r = client.post(f"/api/games/{run_id}/assets/bad!id/regenerate", headers=headers,
                     json={"prompt": "x"})
     assert r.status_code == 400
@@ -355,7 +356,7 @@ def test_regenerate_bad_asset_id_is_400(client):
 def test_regenerate_out_of_compute_is_402(client):
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
-    db_store.charge_game(run_id, 1, MICROS_PER_CREDIT)
+    games.charge_game(run_id, 1, MICROS_PER_CREDIT)
     _burn(run_id, MICROS_PER_CREDIT)
     r = client.post(f"/api/games/{run_id}/assets/hero/regenerate", headers=headers,
                     json={"prompt": "x"})

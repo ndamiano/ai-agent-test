@@ -4,7 +4,7 @@ as every other seam: synthetic CSAM-combination fixtures only, mature themes pas
 
 import pytest
 
-from db import store as db_store
+from db import events
 from maestro.codegen import build_state
 from maestro.codegen.artifact_screen import screen_artifact
 from maestro.codegen.build_state import BuildCursor
@@ -67,11 +67,11 @@ def finalize_env(monkeypatch, tmp_path):
 
     seen = {"status": None, "attempt": None, "staged": False, "snapped": False}
     monkeypatch.setattr(build_chain, "_emit", lambda *a, **k: None)
-    monkeypatch.setattr(build_chain.db_store, "set_status",
+    monkeypatch.setattr(build_chain.games, "set_status",
                         lambda rid, s: seen.__setitem__("status", s))
-    monkeypatch.setattr(build_chain.db_store, "build_finished",
+    monkeypatch.setattr(build_chain.games, "build_finished",
                         lambda bid, s, steps=None: seen.__setitem__("attempt", s))
-    monkeypatch.setattr(build_chain.db_store, "abandon_build_jobs", lambda bid, err: 1)
+    monkeypatch.setattr(build_chain.jobs, "abandon_build_jobs", lambda bid, err: 1)
     monkeypatch.setattr(build_chain, "stage_for_play",
                         lambda *a, **k: seen.__setitem__("staged", True))
     monkeypatch.setattr(build_chain.snapshots, "take",
@@ -96,7 +96,7 @@ def test_a_held_finalize_records_the_violation(finalize_env, tmp_path):
     build_chain, _ = finalize_env
     _game(tmp_path, {"index.html": f"<html>{FLAGGED}</html>"})
     build_chain.stop(str(tmp_path))
-    rows = db_store.list_violations()
+    rows = events.list_violations()
     assert rows and rows[0]["source"] == "artifact:index.html"
     assert rows[0]["category"] == "csam_combination"
 

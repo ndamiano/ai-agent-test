@@ -11,8 +11,8 @@ import json
 import pytest
 
 import maestro.state
-from auth import store as auth_store
-from db import store as db_store
+from auth import store
+from db import connection, games, jobs, workers
 from maestro.codegen import build_chain, build_state, build_steps, turn_log
 from maestro.codegen.run import create_run
 from maestro.state import RunState
@@ -20,25 +20,25 @@ from maestro.state import RunState
 
 @pytest.fixture
 def run(tmp_path, monkeypatch):
-    monkeypatch.setattr(auth_store, "_db_path", lambda: tmp_path / "auth.db")
-    monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
+    monkeypatch.setattr(connection, "auth_path", lambda: tmp_path / "auth.db")
+    monkeypatch.setattr(connection, "platform_path", lambda: tmp_path / "platform.db")
     monkeypatch.setattr(maestro.state, "resolve_base_path", lambda input_path=None: tmp_path)
     # A window small enough that a couple of file writes crosses it, so a test can drive a real
     # compaction instead of describing one.
     monkeypatch.setattr(build_steps, "_n_ctx", lambda: 2900)
-    user = auth_store.create_user("alice", "pw-pass1234", role="admin", email="alice@example.com")
+    user = store.create_user("alice", "pw-pass1234", role="admin", email="alice@example.com")
     run_id = create_run(user.id)
     RunState(run_id).write_spec({"request": "make a game", "title": "Moon Miner"})
-    db_store.charge_game(run_id, 1, 1_000_000)
-    db_store.worker_created("w1", None, "llm", None, 0.99)
+    games.charge_game(run_id, 1, 1_000_000)
+    workers.worker_created("w1", None, "llm", None, 0.99)
     return run_id
 
 
 @pytest.fixture
 def headers():
     def _issue(handle="admin"):
-        u = auth_store.create_user(handle, "pw-pass1234", role="admin", email=f"{handle}@example.com")
-        return {"Authorization": f"Bearer {auth_store.issue_token(u.id)}"}
+        u = store.create_user(handle, "pw-pass1234", role="admin", email=f"{handle}@example.com")
+        return {"Authorization": f"Bearer {store.issue_token(u.id)}"}
     return _issue
 
 
@@ -55,7 +55,7 @@ def _reply(programs=None, content="", prompt_tokens=10):
 
 def _pending():
     """The turn waiting on the queue, carrying the body that was enqueued for it."""
-    job = db_store.claim_job("llm", "w1", 60)
+    job = jobs.claim_job("llm", "w1", 60)
     assert job is not None, "the build enqueued no turn"
     return job
 
@@ -63,7 +63,7 @@ def _pending():
 def _land(run_id, build_id, reply):
     """One turn, exactly as a worker completes it: claim, complete, drive the next."""
     job = _pending()
-    db_store.complete_job(job["id"], "w1", reply, None, 2.0)
+    jobs.complete_job(job["id"], "w1", reply, None, 2.0)
     build_chain.on_completion(run_id, build_id, reply, None, job["id"], 2.0)
     return job
 
@@ -90,7 +90,7 @@ def test_a_landed_turn_is_appended_and_its_row_keeps_only_measurements(run):
     assert record["response"]["tool_calls"][0]["function"]["name"] == "python"
     assert (record["exec_seconds"], record["error"]) == (2.0, None)
 
-    row = db_store.get_job(job["id"])
+    row = jobs.get_job(job["id"])
     assert "body" not in row["payload"] and row["payload"]["n_messages"] == 1
 
 
@@ -99,12 +99,12 @@ def test_every_request_the_build_sent_replays_from_the_log(run):
     schemas and every added slice up to k. Including across a compaction, which drops rounds from
     the live transcript that the log still has to account for."""
     build_id = build_chain.kickoff(run)
-    jobs = [_land(run, build_id, _reply([_write("index.html", 3000)])),
-            _land(run, build_id, _reply([_write("game.js", 300)], prompt_tokens=3000)),
-            _land(run, build_id, _reply([_write("style.css")]))]
+    landed = [_land(run, build_id, _reply([_write("index.html", 3000)])),
+              _land(run, build_id, _reply([_write("game.js", 300)], prompt_tokens=3000)),
+              _land(run, build_id, _reply([_write("style.css")]))]
 
     assert [r["kind"] for r in _log(run)] == ["meta", "turn", "turn", "compact", "turn"]
-    for job in jobs:
+    for job in landed:
         archived = turn_log.read_turn(RunState(run).run_dir, job["id"])
         assert job["payload"]["body"]["messages"] == (
             [{"role": "system", "content": archived["meta"]["system"]}] + archived["messages"])
@@ -151,6 +151,7 @@ def test_a_fix_appends_its_own_build_and_keeps_the_first(run):
 def test_the_cli_build_carries_the_default_step_cap(run):
     """run_build names no cap; the cursor must still hold a number the step check can compare."""
     import inspect
+
     from maestro.codegen import run as cli
     cap = inspect.signature(cli.run_build).parameters["max_steps"].default
     build_chain.kickoff(run, kind="build", max_steps=cap)

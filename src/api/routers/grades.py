@@ -19,7 +19,7 @@ from pydantic import BaseModel
 import grading
 from auth.deps import require_admin
 from auth.store import User
-from db import store as db_store
+from db import games
 from maestro.state import RunState
 
 logger = logging.getLogger("grades")
@@ -62,7 +62,7 @@ def _owned_spec(run_id: str, user: User) -> Dict[str, Any]:
     if not grading.RUN_ID.match(run_id):
         raise HTTPException(status_code=404, detail="no such game")
     spec = RunState(run_id).read_spec()
-    if spec is None or db_store.owner_of(run_id) != user.id:
+    if spec is None or games.owner_of(run_id) != user.id:
         raise HTTPException(status_code=404, detail="no such game")
     return spec
 
@@ -78,7 +78,7 @@ async def all_grades(_: User = Depends(require_admin)) -> Dict[str, Any]:
 def _built_by(run_id: str) -> str:
     """The revision of the LAST build to touch this game — a fix build is part of what is being
     graded, so the newest wins rather than the one that started it."""
-    revs = [b.get("maestro_rev") for b in db_store.builds_for(run_id) if b.get("maestro_rev")]
+    revs = [b.get("maestro_rev") for b in games.builds_for(run_id) if b.get("maestro_rev")]
     return revs[-1] if revs else "unknown"
 
 

@@ -10,7 +10,7 @@ While the main expected income is from generating games, selling the games peopl
 
 - A credit costs $5.
 - Spending a credit on a game starts the build and grants that run $3.00 of GPU-execution
-  (`auth/billing.py`, `MICROS_PER_CREDIT` — budgets are integer micros, millionths of a dollar).
+  (`billing/packages.py`, `MICROS_PER_CREDIT` — budgets are integer micros, millionths of a dollar).
 - When a run's compute is exhausted, the user can spend another credit to extend the same run by
   another $3.00.
 - The frontend shows an obfuscated bar that drains as compute is consumed — no numbers, no
@@ -53,7 +53,7 @@ call) and returns `exec_seconds` on completion; the control plane debits it from
 the same transaction that lands the job. Multiple requests run at once, each debiting as it
 completes.
 
-**Overdraw is bounded by reservations** (`billing/utils.py`, landed). Debiting only on completion
+**Overdraw is bounded by reservations** (`billing/estimates.py`, landed). Debiting only on completion
 would let a build enqueue far faster than workers complete, so `spent_micros` reads near-zero right
 up to the moment a grant is already gone. Instead each queue carries a flat estimate — llm 31s,
 image 33s, mesh 48s, video 166s, each the p90 of the jobs table's real `exec_seconds` — and enqueue RESERVES that estimate against the grant; the measured debit
@@ -64,13 +64,13 @@ table's real `exec_seconds`.
 
 **The debit is the pod's own price.** `complete_job` reads the claiming worker's
 `workers.usd_per_hour` — RunPod's `costPerHr`, stamped when the scaler creates the pod — and
-debits `exec_seconds × ceil(rate / 3600)` micros (`billing.utils.calculate_job_cost`), so a job on
+debits `exec_seconds × ceil(rate / 3600)` micros (`billing.estimates.calculate_job_cost`), so a job on
 a $2.21 card costs 2.2× the same seconds on a $0.99 one and a price change reaches the bill with no
 table to update. Rounding is upward at both steps — a fractional micro is charged, never dropped.
 A worker with no rate on record has no fallback price; the debit raises. The job row keeps both —
 `exec_seconds` is what the card ran and `billed_micros` what it cost — and the admin view's worked
 cost is the sum of those rows. The reservation at enqueue is priced at the card that queue's pods
-are created on (`billing.utils.QUEUE_USD_PER_HOUR`), so a job that lands on the stock-out fallback
+are created on (`billing.estimates.QUEUE_USD_PER_HOUR`), so a job that lands on the stock-out fallback
 card overdraws its reservation until its real debit lands.
 
 ---

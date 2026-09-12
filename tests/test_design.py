@@ -7,8 +7,8 @@ itself as the request, because a designer that dies must never cost the user the
 
 import pytest
 
-from maestro.codegen import build_chain, design
 import maestro.codegen.run as run_mod
+from maestro.codegen import build_chain, design
 from maestro.state import RunState
 
 ASK = "Make me an f1 racing game."
@@ -28,9 +28,9 @@ def events(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _no_db(monkeypatch):
-    monkeypatch.setattr(run_mod.db_store, "create_game", lambda *a, **k: None)
-    monkeypatch.setattr(run_mod.db_store, "update_prompt_meta", lambda *a, **k: None)
-    monkeypatch.setattr(run_mod.db_store, "charge_game", lambda *a, **k: None)
+    monkeypatch.setattr(run_mod.games, "create_game", lambda *a, **k: None)
+    monkeypatch.setattr(run_mod.games, "update_prompt_meta", lambda *a, **k: None)
+    monkeypatch.setattr(run_mod.games, "charge_game", lambda *a, **k: None)
 
 
 @pytest.fixture
@@ -70,7 +70,7 @@ def test_the_ask_is_stored_verbatim_with_no_request_yet(tmp_runs, events, connec
     """`request` absent is the ONLY signal the create page has for "still designing" — an empty
     string there would read as a prompt the human may edit and build."""
     enqueued = []
-    monkeypatch.setattr(design.db_store, "enqueue_job",
+    monkeypatch.setattr(design.jobs, "enqueue_job",
                         lambda q, p, **kw: enqueued.append((q, kw)) or "job1")
 
     run_id = run_mod.create_run("u1")
@@ -88,7 +88,7 @@ def test_the_landed_design_becomes_the_prompt_and_the_build_starts(
         tmp_runs, events, connector, kicked, monkeypatch):
     """What the completion writes is what the build sends, and the build starts on it at once —
     nobody reads the design first."""
-    monkeypatch.setattr(design.db_store, "enqueue_job", lambda *a, **kw: "job1")
+    monkeypatch.setattr(design.jobs, "enqueue_job", lambda *a, **kw: "job1")
     run_id = run_mod.create_run("u1")
     run_mod.propose_prompt(ASK, run_id)
 
@@ -104,7 +104,7 @@ def test_the_landed_design_becomes_the_prompt_and_the_build_starts(
 def test_a_refused_kickoff_leaves_the_design_landed(tmp_runs, events, connector, monkeypatch):
     """A build the budget refuses must not lose the design — the run stays designed and idle, and
     the page's Build button retries it."""
-    monkeypatch.setattr(design.db_store, "enqueue_job", lambda *a, **kw: "job1")
+    monkeypatch.setattr(design.jobs, "enqueue_job", lambda *a, **kw: "job1")
     monkeypatch.setattr(build_chain, "kickoff",
                         lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no compute")))
     run_id = run_mod.create_run("u1")
@@ -125,7 +125,7 @@ def test_a_refused_kickoff_leaves_the_design_landed(tmp_runs, events, connector,
 def test_a_design_that_never_lands_leaves_the_ask_as_the_prompt(
         tmp_runs, events, connector, kicked, monkeypatch, result, error):
     """A dead designer must not cost the user their build: the words they wrote build instead."""
-    monkeypatch.setattr(design.db_store, "enqueue_job", lambda *a, **kw: "job1")
+    monkeypatch.setattr(design.jobs, "enqueue_job", lambda *a, **kw: "job1")
     run_id = run_mod.create_run("u1")
     run_mod.propose_prompt(ASK, run_id)
 
@@ -140,7 +140,7 @@ def test_an_enqueue_that_is_refused_lands_the_ask_immediately(tmp_runs, events, 
                                                               monkeypatch):
     """A refused enqueue (no compute, no queue) has no completion coming, so the fallback has to
     happen here or the run designs forever."""
-    monkeypatch.setattr(design.db_store, "enqueue_job",
+    monkeypatch.setattr(design.jobs, "enqueue_job",
                         lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no compute")))
     run_id = run_mod.create_run("u1")
 
@@ -163,7 +163,7 @@ def test_the_designer_reads_the_ask_through_its_own_prompt_file(tmp_runs, connec
 def test_the_human_edit_moves_only_the_request(tmp_runs, events, connector, kicked, monkeypatch):
     """The ask is the record of what was actually wanted; editing the design must not rewrite it,
     and the title stays the user's words rather than the design's first line."""
-    monkeypatch.setattr(design.db_store, "enqueue_job", lambda *a, **kw: "job1")
+    monkeypatch.setattr(design.jobs, "enqueue_job", lambda *a, **kw: "job1")
     run_id = run_mod.create_run("u1")
     run_mod.propose_prompt(ASK, run_id)
     design.on_complete(run_id, _reply(DESIGN), None)

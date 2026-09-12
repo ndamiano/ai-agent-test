@@ -6,6 +6,7 @@ mending seconds later — on the web page that is the whole of what they see, an
 watching the build happen. So a gated build stages (the gate opens the staged game) and says
 nothing until the chain settles.
 """
+
 import pytest
 
 from maestro.codegen import build_chain, build_state
@@ -18,9 +19,9 @@ def seen(monkeypatch):
     out = {"status": [], "events": [], "finished": [], "archived": [], "threads": []}
     monkeypatch.setattr(build_chain, "_emit",
                         lambda ev, run_id, **kw: out["events"].append(ev))
-    monkeypatch.setattr(build_chain.db_store, "set_status",
+    monkeypatch.setattr(build_chain.games, "set_status",
                         lambda run_id, s: out["status"].append(s))
-    monkeypatch.setattr(build_chain.db_store, "build_finished",
+    monkeypatch.setattr(build_chain.games, "build_finished",
                         lambda bid, s, steps=None: out["finished"].append(s))
     monkeypatch.setattr(build_chain, "stage_for_play", lambda *a, **k: None)
     monkeypatch.setattr(build_chain.snapshots, "take", lambda *a, **k: None)

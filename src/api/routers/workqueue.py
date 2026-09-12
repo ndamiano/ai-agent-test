@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from config.settings_manager import settings_manager
-from db import store as db_store
+from db import games, jobs, workers
 from maestro.codegen import asset_chain, build_chain, design
 
 router = APIRouter()
@@ -85,15 +85,15 @@ async def claim(body: ClaimBody, request: Request):
     arrives within the window — the agent just calls again."""
     cfg = _require_worker(request)
     lease = cfg.get("lease_seconds", 120)
-    db_store.worker_seen(body.worker_id, body.queue, body.gpu_type, body.source, body.pod_id)
+    workers.worker_seen(body.worker_id, body.queue, body.gpu_type, body.source, body.pod_id)
     window = CLAIM_LONG_POLL_SECONDS if body.wait_seconds is None \
         else max(0.0, min(body.wait_seconds, CLAIM_LONG_POLL_SECONDS))
     loop = asyncio.get_running_loop()
     deadline = loop.time() + window
     first = True
     while True:
-        if first or await asyncio.to_thread(db_store.queue_has_work, body.queue):
-            job = await asyncio.to_thread(db_store.claim_job, body.queue, body.worker_id, lease)
+        if first or await asyncio.to_thread(jobs.queue_has_work, body.queue):
+            job = await asyncio.to_thread(jobs.claim_job, body.queue, body.worker_id, lease)
             if job is not None:
                 return {"job": {"id": job["id"], "queue": job["queue"], "payload": job["payload"]}}
         first = False
@@ -105,10 +105,10 @@ async def claim(body: ClaimBody, request: Request):
 @router.post("/heartbeat", response_model=Dict)
 async def heartbeat(body: HeartbeatBody, request: Request):
     cfg = _require_worker(request)
-    ok = db_store.heartbeat_job(body.job_id, body.worker_id, cfg.get("lease_seconds", 120))
+    ok = jobs.heartbeat_job(body.job_id, body.worker_id, cfg.get("lease_seconds", 120))
     # A busy worker only ever hits this endpoint — without the touch its last_seen_at goes stale
     # over any long job and the reaper would kill a pod mid-work.
-    db_store.touch_worker(body.worker_id)
+    workers.touch_worker(body.worker_id)
     return {"ok": ok}
 
 
@@ -117,7 +117,7 @@ async def deregister(body: DeregisterBody, request: Request):
     """A worker announcing its own clean exit (idle self-exit or SIGTERM drain). The reaper
     terminates the pod behind any terminated worker row — this is the scale-down handshake."""
     _require_worker(request)
-    db_store.set_worker_terminated(body.worker_id)
+    workers.set_worker_terminated(body.worker_id)
     return {"ok": True}
 
 
@@ -167,7 +167,7 @@ def _prepare(job_id: str, result: Optional[Dict]) -> tuple:
     """Offload the result's binaries, then build the follow-up job from the parent's `then`. Both
     read the same blob paths, so they share one hop off the event loop."""
     blobs = _offload_blobs(job_id, result)
-    job = db_store.get_job(job_id) or {}
+    job = jobs.get_job(job_id) or {}
     metadata = job.get("metadata") or {}
     continuation = asset_chain.build_continuation(metadata, result) if metadata else None
     return blobs, metadata, continuation
@@ -177,10 +177,10 @@ def _land(body: "CompleteBody", continuation: Optional[Dict], consumed: bool) ->
     """`consumed` says this route hands the reply on (a build turn, a design, an asset chain), so
     the row can drop it now; a job nobody here consumes has a blocking waiter polling for it,
     which elides the row once it has read it."""
-    outcome = db_store.complete_job(body.job_id, body.worker_id, body.result, body.error,
+    outcome = jobs.complete_job(body.job_id, body.worker_id, body.result, body.error,
                                     body.exec_seconds, body.gpu_type, continuation)
     if outcome is not None and consumed:
-        db_store.elide_job_result(body.job_id)
+        jobs.elide_job_result(body.job_id)
     return outcome
 
 
@@ -208,7 +208,7 @@ async def complete(body: CompleteBody, request: Request):
                      body.result, body.error, body.job_id, body.exec_seconds)
     elif metadata.get("stage") == "design":
         if outcome["build_id"]:
-            db_store.build_finished(outcome["build_id"],
+            games.build_finished(outcome["build_id"],
                                     "succeeded" if body.error is None else "failed", steps=1)
         follow_up = (design.on_complete, metadata["run_id"], body.result, body.error)
     else:

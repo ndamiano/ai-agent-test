@@ -1,4 +1,3 @@
-import json
 """`generate_media` — the tool the game asks for its own art with.
 
 What is pinned here is the ANSWER, not the render: the model gets the path the file will live at
@@ -7,10 +6,12 @@ exhausted budget all come back as text instead, because a build that cannot have
 to draw one rather than left waiting for a file that is never coming.
 """
 
+import json
+
 import pytest
 
 import maestro.state
-from db import store
+from db import connection, games, jobs
 from maestro.codegen import assets
 from maestro.codegen.assets import read_manifest, request_media
 from maestro.codegen.tools import build_tools
@@ -22,10 +23,9 @@ STYLE = "painted cartoon style, warm palette, soft dark outlines"
 
 @pytest.fixture(autouse=True)
 def _env(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "_db_path", lambda: tmp_path / "platform.db")
     monkeypatch.setattr(maestro.state, "resolve_base_path", lambda input_path=None: tmp_path)
-    store.create_game(RUN, "u1")
-    store.charge_game(RUN, 1, 1_000_000)
+    games.create_game(RUN, "u1")
+    games.charge_game(RUN, 1, 1_000_000)
 
 
 @pytest.fixture
@@ -42,9 +42,9 @@ def media(run_dir):
 
 
 def _image_jobs():
-    with store._db() as conn:
+    with connection.platform_db() as conn:
         rows = conn.execute("SELECT * FROM jobs WHERE queue = 'image' ORDER BY id").fetchall()
-    return [store._job_dict(r) for r in rows]
+    return [jobs._job_dict(r) for r in rows]
 
 
 def test_the_path_comes_back_before_the_render(run_dir):
@@ -119,6 +119,7 @@ def test_a_placeholder_is_not_a_landed_render(run_dir):
 
 def test_a_landed_render_replaces_the_placeholder_and_the_flag(run_dir, monkeypatch, tmp_path):
     from PIL import Image
+
     from maestro.codegen.asset_chain import OPERATIONS
     request_media(RUN, run_dir, "b1", "floor", "a stone floor", STYLE, kind="scene")
     src = tmp_path / "render.png"
@@ -249,7 +250,7 @@ def test_a_blocked_prompt_tells_the_model_to_draw_it_instead(run_dir, monkeypatc
 def test_an_exhausted_budget_tells_the_model_to_draw_it_instead(run_dir):
     """The compute budget is the only cap on how much art a build may ask for — there is no call
     limit, because a refused enqueue already says so in words the model can act on."""
-    with store._db() as conn:
+    with connection.platform_db() as conn:
         conn.execute("UPDATE games SET spent_micros = 1000000 WHERE id = ?", (RUN,))
     out = request_media(RUN, run_dir, "b1", "goblin", "a goblin", STYLE)
     assert out["ok"] is False and "draw this one with code" in out["error"]
@@ -273,9 +274,9 @@ def test_the_tool_reports_a_missing_argument_rather_than_guessing(run_dir):
 
 
 def _jobs(queue):
-    with store._db() as conn:
+    with connection.platform_db() as conn:
         rows = conn.execute("SELECT * FROM jobs WHERE queue = ? ORDER BY id", (queue,)).fetchall()
-    return [store._job_dict(r) for r in rows]
+    return [jobs._job_dict(r) for r in rows]
 
 
 KNIGHT_ANIMS = [{"name": "walk", "action": "walks in place, legs alternating"},

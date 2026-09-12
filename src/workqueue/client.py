@@ -11,7 +11,8 @@ import time
 from typing import Dict, Optional
 
 from config.settings_manager import settings_manager
-from db import store as db_store
+from db import jobs
+from db.errors import BuildEnded, InsufficientCompute
 from tools.execution_context import get_build_id, get_run_id
 
 logger = logging.getLogger(__name__)
@@ -32,23 +33,23 @@ def run_job(queue: str, payload: Dict, model: Optional[str] = None,
     (LLM, image, mesh) shares, so a game out of seconds cannot start GPU work from any path."""
     timeout = timeout_seconds or float(_settings().get("job_timeout_seconds", 900))
     try:
-        job_id = db_store.enqueue_job(queue, payload, game_id=get_run_id(), build_id=get_build_id(),
-                                      model=model)
-    except db_store.InsufficientCompute as e:
+        job_id = jobs.enqueue_job(queue, payload, game_id=get_run_id(), build_id=get_build_id(),
+                                  model=model)
+    except InsufficientCompute as e:
         logger.error("queue job (%s) refused: %s", queue, e)
         return {"status": "failed", "error": f"compute budget exhausted: {e}"}
-    except db_store.BuildEnded as e:
+    except BuildEnded as e:
         logger.info("queue job (%s) refused: %s", queue, e)
         return {"status": "failed", "error": str(e)}
     deadline = time.time() + timeout
     while time.time() < deadline:
-        job = db_store.get_job(job_id)
+        job = jobs.get_job(job_id)
         if job and job["status"] in ("done", "failed"):
-            db_store.elide_job_result(job_id)
+            jobs.elide_job_result(job_id)
             return job
         time.sleep(_POLL_INTERVAL)
     logger.error("queue job %s (%s) timed out after %.0fs", job_id, queue, timeout)
     error = (f"queue job {job_id} timed out after {timeout:.0f}s "
              f"(no {queue} worker, or the worker is stuck)")
-    db_store.abandon_job(job_id, error)
+    jobs.abandon_job(job_id, error)
     return {"status": "failed", "error": error}

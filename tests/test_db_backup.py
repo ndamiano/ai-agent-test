@@ -1,11 +1,11 @@
 import gzip
 import sqlite3
+import sys
 import time
 from pathlib import Path
 
 import pytest
 
-import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from tools import db_backup, s3
@@ -84,12 +84,14 @@ def test_dirty_flag_fires_after_the_debounce_and_only_once(wired, monkeypatch):
 
 
 def test_money_and_account_writes_mark_dirty(tmp_path, monkeypatch):
-    import auth.store as auth_store
-    monkeypatch.setattr(auth_store, "_db_path", lambda: tmp_path / "auth.db")
+    from auth import store
+    from billing import ledger
+    from db import connection
+    monkeypatch.setattr(connection, "auth_path", lambda: tmp_path / "auth.db")
     monkeypatch.setattr(db_backup, "_dirty_at", None)
-    u = auth_store.create_user("snapshot-test", "pw-pass1234", email="snapshot-test@example.com")
+    u = store.create_user("snapshot-test", "pw-pass1234", email="snapshot-test@example.com")
     assert db_backup._dirty_at is not None
 
     monkeypatch.setattr(db_backup, "_dirty_at", None)
-    auth_store.grant(u.id, 3, "admin_grant")
+    ledger.grant(u.id, 3, "admin_grant")
     assert db_backup._dirty_at is not None

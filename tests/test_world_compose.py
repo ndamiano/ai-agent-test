@@ -8,6 +8,7 @@ program whose whole wall-clock budget is 120 seconds — so the call could only 
 the world landed, the program that asked for it died, and nothing was written to load it
 (2026-09-10, run 8988a28a746e — 34 MB of world staged into a game that referenced it nowhere).
 """
+
 import json
 import re
 import threading
@@ -17,6 +18,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from db import games
 from maestro.codegen.tools import build_tools
 from maestro.state import RunState
 from maestro.worldgen import compose as world_compose
@@ -167,9 +169,8 @@ def test_the_run_scope_reaches_the_thread(run, pipeline):
 
 def test_a_later_leg_republishes_and_restages(run, pipeline, monkeypatch):
     """A mesh that lands after the build finished has to reach the copy people play."""
-    from db import store as db_store
     staged = []
-    monkeypatch.setattr(db_store, "game", lambda run_id: {"status": "built"})
+    monkeypatch.setattr(games, "game", lambda run_id: {"status": "built"})
     monkeypatch.setattr("maestro.codegen.staging.stage_for_play",
                         lambda run_dir, slug: staged.append(slug))
     _compose(run, pipeline)

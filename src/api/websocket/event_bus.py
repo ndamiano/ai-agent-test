@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 
 from api.websocket.manager import manager
-from db import store as db_store
+from db import games
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,6 @@ class EventBus:
     A background task consumes the queue and routes each event to the sockets of the user who
     owns its run; an event with no run_id goes to every socket.
     """
-
     def __init__(self):
         self.queue: Optional[asyncio.Queue] = None
         self.loop: Optional[asyncio.AbstractEventLoop] = None
@@ -30,7 +29,7 @@ class EventBus:
         owner = self._owner_cache.get(run_id)
         if owner is None:
             try:
-                owner = db_store.owner_of(run_id)
+                owner = games.owner_of(run_id)
             except Exception:
                 owner = None
             if owner is not None:

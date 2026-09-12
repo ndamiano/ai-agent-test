@@ -1,14 +1,5 @@
 """User-action analytics intake — the SPA's `track()` module posts batches here.
-
-Rows land in the same events table as the build/spec lifecycle log, distinguished by user_id
-(set here, never by `_emit`) — see db/store.py. The one unauthenticated row is the landing-page
-view (POST /api/events/landing, in PUBLIC_PATHS): it is the top of the funnel, before any
-account exists, so it is attributed to the `anon` sentinel user, which the rollup counts by
-kind and leaves out of the distinct-user count. Its payload is server-shaped — the referrer
-host only — so an anonymous caller can write one fixed-size row per request and nothing else. A bad row is DROPPED, never a 400: the client is
-fire-and-forget, so a rejected batch would only lose the good rows beside the bad one. The kind
-allowlist is the whole product-analytics vocabulary; extending it is a deliberate act, not a
-client deploy.
+Rows land in the events table keyed by user_id; a bad row is DROPPED, never a 400.
 """
 
 import asyncio
@@ -16,16 +7,15 @@ import json
 import re
 import time
 from typing import Any, Dict, List
-
 from urllib.parse import urlsplit
-
 from fastapi import APIRouter, Body, Depends
 
 from auth.deps import get_current_user
 from auth.store import User
-from db import store as db_store
+from db import events
 
 router = APIRouter()
+
 
 KINDS = frozenset({
     "page_view", "create_opened", "build_started", "game_played", "change_sent",
@@ -43,10 +33,10 @@ _RUN_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 @router.post("", response_model=Dict)
-async def ingest(events: List[Any] = Body(...), user: User = Depends(get_current_user)):
+async def ingest(batch: List[Any] = Body(...), user: User = Depends(get_current_user)):
     now = time.time()
     rows: List[Dict] = []
-    for raw in events[:MAX_BATCH]:
+    for raw in batch[:MAX_BATCH]:
         if not isinstance(raw, dict) or raw.get("kind") not in KINDS:
             continue
         payload = raw.get("payload") or {}
@@ -64,7 +54,7 @@ async def ingest(events: List[Any] = Body(...), user: User = Depends(get_current
         rows.append({"kind": raw["kind"], "payload": payload,
                      "game_id": run_id, "created_at": created})
     if rows:
-        await asyncio.to_thread(db_store.record_user_events, user.id, rows)
+        await asyncio.to_thread(events.record_user_events, user.id, rows)
     return {"accepted": len(rows)}
 
 
@@ -73,6 +63,6 @@ async def landing(body: Any = Body(default=None)):
     referrer = body.get("referrer") if isinstance(body, dict) else None
     host = urlsplit(referrer).hostname if isinstance(referrer, str) else None
     payload = {"referrer": (host or "")[:MAX_REFERRER_HOST]}
-    await asyncio.to_thread(db_store.record_user_events, ANON_USER, [
+    await asyncio.to_thread(events.record_user_events, ANON_USER, [
         {"kind": "landing_view", "payload": payload, "game_id": None, "created_at": time.time()}])
     return {"accepted": 1}

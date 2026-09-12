@@ -84,7 +84,7 @@ then free to die. `/worker/complete` routes on `metadata.stage` back into `build
 reloads the durable cursor, applies the result, and advances again.
 
 Crash recovery falls out of this: a build with no job in flight and no terminal phase for 60s is
-re-advanced by the reaper (`db/reaper.py`), which also sweeps asset batches awaiting finalize. Job metadata carries only `{stage, run_id, build_id}` — the cursor file is the single
+re-advanced by the reaper (`workqueue/reaper.py`), which also sweeps asset batches awaiting finalize. Job metadata carries only `{stage, run_id, build_id}` — the cursor file is the single
 source that a completion reloads, advances, and rewrites.
 
 A landed turn is appended to the run's own `turns.jsonl`, and its jobs row keeps only measurements
@@ -177,8 +177,8 @@ long way, and product limits arrive before control-plane CPU limits do.
 **What pins the control plane to one process**, in the order they'd need fixing:
 
 1. **SQLite.** Two boxes cannot share `platform.db`. Every other item below is downstream of this.
-   The fix is mechanical: `db/store.py` and `auth/store.py` are single modules over a `_db()`
-   context manager with plain SQL. `claim_job` already expresses the claim as
+   The fix is mechanical: every query in `db/` and `auth/store.py` runs plain SQL over the one
+   `db/connection.py` context manager. `claim_job` already expresses the claim as
    `UPDATE … WHERE id = (SELECT … ORDER BY created_at LIMIT 1) RETURNING *`, which becomes
    `FOR UPDATE SKIP LOCKED` in Postgres — a better claim, not a compromised one.
 2. **The background singletons.** The reaper, the DB snapshotter and the autoscaler are one

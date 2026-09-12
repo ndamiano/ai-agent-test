@@ -17,10 +17,19 @@ from typing import Dict, List, Optional
 
 from PIL import Image
 
-from db import store as db_store
-from maestro.codegen.assets import (asset_path, autocrop_image, check_render, landed,
-                                    read_manifest, render_verdict, save_image,
-                                    set_defect, set_landed, set_refused)
+from db import games, jobs
+from maestro.codegen.assets import (
+    asset_path,
+    autocrop_image,
+    check_render,
+    landed,
+    read_manifest,
+    render_verdict,
+    save_image,
+    set_defect,
+    set_landed,
+    set_refused,
+)
 from maestro.codegen.staging import stage_for_play
 from maestro.state import RunState
 from tools.build_events import _emit
@@ -241,7 +250,7 @@ def _finalize_landing(md: Dict, jobs: List[Dict]):
             rendered.append(aid)
 
     # A batch enqueued mid-build must not stage the game out from under the build's own finalize.
-    status = (db_store.game(run_id) or {}).get("status")
+    status = (games.game(run_id) or {}).get("status")
     if status == "built":
         stage_for_play(state.run_dir, run_id)
 
@@ -263,7 +272,7 @@ def _finalize_art_build(md: Dict, jobs: List[Dict]) -> None:
     build, so the last landing ends the build's row."""
     build_id, ok = _finalize_landing(md, jobs)
     if build_id:
-        db_store.build_finished(build_id, "succeeded" if ok else "failed")
+        games.build_finished(build_id, "succeeded" if ok else "failed")
 
 
 FINALIZERS = {"assets": _finalize_assets, "art_build": _finalize_art_build}
@@ -289,14 +298,14 @@ def run_operations(metadata: Dict, result: Optional[Dict]) -> None:
 def run_finalize(batch_id: str) -> bool:
     """Run a batch's finalize, once. The claim is atomic, so the live completion and the reaper
     can both call this and only one executes."""
-    jobs = db_store.batch_jobs(batch_id)
-    md = next((j["metadata"] for j in jobs if j["metadata"].get("then", {}).get("finalize")), None)
+    rows = jobs.batch_jobs(batch_id)
+    md = next((j["metadata"] for j in rows if j["metadata"].get("then", {}).get("finalize")), None)
     if md is None:
         return False
-    if not db_store.claim_batch_finalize(batch_id):
+    if not jobs.claim_batch_finalize(batch_id):
         return False
     try:
-        FINALIZERS[md["then"]["finalize"]](md, jobs)
+        FINALIZERS[md["then"]["finalize"]](md, rows)
     except Exception:
         logger.exception("finalize of batch %s failed", batch_id)
     return True

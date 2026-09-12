@@ -61,11 +61,10 @@ def cheap_password_hashing(monkeypatch):
 def isolated_dbs(tmp_path, monkeypatch):
     """Both datastores under this test's tmp dir. Autouse, so a test that never thought about the
     db cannot reach the real one."""
-    from auth import store as auth_store
-    from db import store as db_store
+    from db import connection
 
-    monkeypatch.setattr(db_store, "_db_path", lambda: tmp_path / "platform.db")
-    monkeypatch.setattr(auth_store, "_db_path", lambda: tmp_path / "auth.db")
+    monkeypatch.setattr(connection, "platform_path", lambda: tmp_path / "platform.db")
+    monkeypatch.setattr(connection, "auth_path", lambda: tmp_path / "auth.db")
     return tmp_path
 
 

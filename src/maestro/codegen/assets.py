@@ -34,11 +34,15 @@ from typing import Dict, List, Optional, Sequence
 
 from PIL import Image
 
-from db import store as db_store
+from db import errors, games, jobs
 from maestro.codegen.staging import game_dir
 from maestro.state import RunState
-from tools.comfyui_tools import (ANIM_STILL_FRAMING, build_anim_payload, MATTED_KINDS,
-                                 build_image_payload)
+from tools.comfyui_tools import (
+    ANIM_STILL_FRAMING,
+    MATTED_KINDS,
+    build_anim_payload,
+    build_image_payload,
+)
 from tools.execution_context import run_scope
 
 logger = logging.getLogger(__name__)
@@ -73,6 +77,7 @@ def compose_prompt(subject: str, style: str, details: Optional[Dict]) -> str:
     if view:
         parts[1] += f", {view} view"
     return ". ".join(parts) + "."
+
 
 _active: set = set()
 _active_lock = threading.Lock()
@@ -373,11 +378,11 @@ def request_media(run_id: str, run_dir, build_id: str, asset_id: str, subject: s
                                       "draw this one with code instead"}
     then = _then_for(rkind)
     try:
-        db_store.enqueue_job("image", payload, game_id=run_id, build_id=build_id,
+        jobs.enqueue_job("image", payload, game_id=run_id, build_id=build_id,
                              batch_id=uuid.uuid4().hex[:16],
                              metadata={"run_id": run_id, "asset_id": asset_id, "kind": rkind,
                                        "then": then, **_anim_fields(kind, details)})
-    except db_store.InsufficientCompute:
+    except errors.InsufficientCompute:
         return {"ok": False, "error": "no compute left for art — draw this one with code instead"}
     # A confirmed replace keeps the art it has until the new render lands.
     stand_in = not mesh and not asset_path(run_id, asset_id, ext).exists()
@@ -455,13 +460,13 @@ def _enqueue_batch(run_id: str, entries: List[Dict], build_id: str) -> str:
             logger.warning("assets %s: %s blocked by the safety filter — not sent", run_id, e["id"])
             continue
         try:
-            db_store.enqueue_job(queue, payload, game_id=run_id, build_id=build_id,
+            jobs.enqueue_job(queue, payload, game_id=run_id, build_id=build_id,
                                  batch_id=batch_id,
                                  metadata={"run_id": run_id, "asset_id": e["id"],
                                            "kind": kind, "then": then,
                                            **_anim_fields(e.get("kind") or DEFAULT_KIND,
                                                           e.get("details"))})
-        except db_store.InsufficientCompute as err:
+        except errors.InsufficientCompute as err:
             logger.error("assets %s: budget refused after %d job(s): %s", run_id, enqueued, err)
             break
         enqueued += 1
@@ -477,7 +482,7 @@ def add_assets(run_id: str, build_id: str) -> Dict:
     entries = read_manifest(state.run_dir)
     if not entries:
         return {"ok": False, "error": "the game declares no assets.json", "batch_id": ""}
-    if db_store.has_active_batch(run_id):
+    if jobs.has_active_batch(run_id):
         raise AlreadyRendering(run_id)
     batch = start_from_manifest(run_id, state.run_dir, build_id) or ""
     return {"ok": bool(batch), "batch_id": batch, "planned": len(entries)}
@@ -491,8 +496,8 @@ def regenerate_asset(run_id: str, asset_id: str, note: str, mode: str = "full") 
     entry = next((e for e in read_manifest(state.run_dir) if e["id"] == asset_id), None)
     if entry is None:
         return {"ok": False, "error": f"no asset {asset_id!r} in the manifest"}
-    build_id = db_store.create_build(run_id, kind="regen")
-    db_store.build_started(build_id)
+    build_id = games.create_build(run_id, kind="regen")
+    games.build_started(build_id)
     with run_scope(run_id, build_id):
         prompt = _merge_prompt(entry["prompt"], note)
     kind = entry_kind(entry)
@@ -505,7 +510,7 @@ def regenerate_asset(run_id: str, asset_id: str, note: str, mode: str = "full") 
     if payload is None:
         return {"ok": False, "error": "the prompt was blocked by the safety filter"}
     batch_id = uuid.uuid4().hex[:16]
-    db_store.enqueue_job("image", payload, game_id=run_id, build_id=build_id, batch_id=batch_id,
+    jobs.enqueue_job("image", payload, game_id=run_id, build_id=build_id, batch_id=batch_id,
                          metadata={"run_id": run_id, "asset_id": asset_id,
                                    "kind": kind, "then": _then_for(kind, "art_build"),
                                    **_anim_fields(entry.get("kind") or DEFAULT_KIND,

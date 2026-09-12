@@ -2,17 +2,16 @@
 endpoints (token-gated, outside the user auth gate), and the LLMConnector transport
 end-to-end against a fake in-process worker."""
 
+import base64
 import threading
 import time
 from pathlib import Path
 
 import pytest
 
-import base64
-
 from api.routers import workqueue as wq
-from db import store
-from billing.utils import calculate_job_cost
+from billing.estimates import calculate_job_cost
+from db import connection, games, jobs, workers
 from llm_clients.connector import LLMConnector
 from llm_clients.rate_limiter import get_llm_rate_limiter
 from tools.execution_context import run_scope
@@ -29,59 +28,59 @@ def _refill_rate_limiter():
 
 
 def test_claim_is_fifo_and_exclusive():
-    a = store.enqueue_job("llm", {"n": 1})
-    b = store.enqueue_job("llm", {"n": 2})
-    j1 = store.claim_job("llm", "w1", lease_seconds=60)
-    j2 = store.claim_job("llm", "w2", lease_seconds=60)
+    a = jobs.enqueue_job("llm", {"n": 1})
+    b = jobs.enqueue_job("llm", {"n": 2})
+    j1 = jobs.claim_job("llm", "w1", lease_seconds=60)
+    j2 = jobs.claim_job("llm", "w2", lease_seconds=60)
     assert (j1["id"], j2["id"]) == (a, b)
-    assert store.claim_job("llm", "w3", lease_seconds=60) is None
+    assert jobs.claim_job("llm", "w3", lease_seconds=60) is None
 
 
 def test_queues_are_separate():
-    store.enqueue_job("image", {"prompt": "cat"})
-    assert store.claim_job("llm", "w1", lease_seconds=60) is None
-    assert store.claim_job("image", "w1", lease_seconds=60)["payload"] == {"prompt": "cat"}
+    jobs.enqueue_job("image", {"prompt": "cat"})
+    assert jobs.claim_job("llm", "w1", lease_seconds=60) is None
+    assert jobs.claim_job("image", "w1", lease_seconds=60)["payload"] == {"prompt": "cat"}
 
 
 def test_expired_lease_requeues_and_stale_result_is_dropped():
     for worker in ("w1", "w2"):
-        store.worker_created(worker, None, "llm", None, RATE)
-    job_id = store.enqueue_job("llm", {"n": 1})
-    store.claim_job("llm", "w1", lease_seconds=0.01)
+        workers.worker_created(worker, None, "llm", None, RATE)
+    job_id = jobs.enqueue_job("llm", {"n": 1})
+    jobs.claim_job("llm", "w1", lease_seconds=0.01)
     time.sleep(0.02)
-    rejig = store.claim_job("llm", "w2", lease_seconds=60)   # sweep requeues, w2 takes it
+    rejig = jobs.claim_job("llm", "w2", lease_seconds=60)
     assert rejig["id"] == job_id
     # w1 comes back late — its completion must not clobber w2's claim.
-    assert store.complete_job(job_id, "w1", {"stale": True}, None, 1.0) is None
-    assert store.complete_job(job_id, "w2", {"fresh": True}, None, 2.0) is not None
-    assert store.get_job(job_id)["result"] == {"fresh": True}
+    assert jobs.complete_job(job_id, "w1", {"stale": True}, None, 1.0) is None
+    assert jobs.complete_job(job_id, "w2", {"fresh": True}, None, 2.0) is not None
+    assert jobs.get_job(job_id)["result"] == {"fresh": True}
 
 
 def test_heartbeat_extends_only_the_owners_lease():
-    job_id = store.enqueue_job("llm", {})
-    store.claim_job("llm", "w1", lease_seconds=60)
-    assert store.heartbeat_job(job_id, "w1", lease_seconds=60) is True
-    assert store.heartbeat_job(job_id, "intruder", lease_seconds=60) is False
+    job_id = jobs.enqueue_job("llm", {})
+    jobs.claim_job("llm", "w1", lease_seconds=60)
+    assert jobs.heartbeat_job(job_id, "w1", lease_seconds=60) is True
+    assert jobs.heartbeat_job(job_id, "intruder", lease_seconds=60) is False
 
 
 def test_complete_debits_the_games_budget_and_worker_busy():
-    store.create_game("g1", "u1")
-    store.charge_game("g1", 1, 1_000_000)   # enqueue admits against the grant
-    store.worker_created("w1", None, "llm", None, RATE)
-    job_id = store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
-    store.claim_job("llm", "w1", lease_seconds=60)
-    store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=12.5)
-    assert store.game("g1")["spent_micros"] == calculate_job_cost(12.5, 0.99)
-    job = store.get_job(job_id)
+    games.create_game("g1", "u1")
+    games.charge_game("g1", 1, 1_000_000)
+    workers.worker_created("w1", None, "llm", None, RATE)
+    job_id = jobs.enqueue_job("llm", {}, game_id="g1", build_id="b1")
+    jobs.claim_job("llm", "w1", lease_seconds=60)
+    jobs.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=12.5)
+    assert games.game("g1")["spent_micros"] == calculate_job_cost(12.5, 0.99)
+    job = jobs.get_job(job_id)
     assert (job["status"], job["exec_seconds"]) == ("done", 12.5)
 
 
 def test_failed_job_carries_the_error():
-    store.worker_created("w1", None, "llm", None, RATE)
-    job_id = store.enqueue_job("llm", {})
-    store.claim_job("llm", "w1", lease_seconds=60)
-    store.complete_job(job_id, "w1", None, "Status 500: boom", 3.0)
-    job = store.get_job(job_id)
+    workers.worker_created("w1", None, "llm", None, RATE)
+    job_id = jobs.enqueue_job("llm", {})
+    jobs.claim_job("llm", "w1", lease_seconds=60)
+    jobs.complete_job(job_id, "w1", None, "Status 500: boom", 3.0)
+    job = jobs.get_job(job_id)
     assert (job["status"], job["error"]) == ("failed", "Status 500: boom")
 
 
@@ -113,7 +112,7 @@ def test_unconfigured_token_fails_closed(client, monkeypatch):
 def test_a_claim_never_hands_a_worker_the_jobs_metadata(client):
     """metadata carries the chain (what to enqueue next, what to finalize). It is control-plane
     only — a worker stays a generic executor that knows nothing about assets."""
-    store.enqueue_job("image", {"kind": "comfy_image"}, batch_id="b1",
+    jobs.enqueue_job("image", {"kind": "comfy_image"}, batch_id="b1",
                       metadata={"then": {"enqueue": "mesh_from_image"}, "asset_id": "goblin"})
     r = client.post("/worker/claim", json={"queue": "image", "worker_id": "w1"}, headers=_hdr())
     job = r.json()["job"]
@@ -121,10 +120,10 @@ def test_a_claim_never_hands_a_worker_the_jobs_metadata(client):
 
 
 def test_claim_execute_complete_over_http(client):
-    store.worker_created("w1", None, "llm", None, RATE)
-    store.create_game("g1", "u1")
-    store.charge_game("g1", 1, 1_000_000)
-    store.enqueue_job("llm", {"path": "/v1/responses", "body": {"model": "m"}}, game_id="g1", build_id="b1")
+    workers.worker_created("w1", None, "llm", None, RATE)
+    games.create_game("g1", "u1")
+    games.charge_game("g1", 1, 1_000_000)
+    jobs.enqueue_job("llm", {"path": "/v1/responses", "body": {"model": "m"}}, game_id="g1", build_id="b1")
 
     r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1"}, headers=_hdr())
     job = r.json()["job"]
@@ -138,14 +137,14 @@ def test_claim_execute_complete_over_http(client):
         "job_id": job["id"], "worker_id": "w1", "result": {"output": []},
         "exec_seconds": 4.5}, headers=_hdr())
     assert done.json()["ok"] is True
-    assert store.game("g1")["spent_micros"] == calculate_job_cost(4.5, RATE)
+    assert games.game("g1")["spent_micros"] == calculate_job_cost(4.5, RATE)
 
 
 def test_complete_offloads_the_glb_to_the_blob_dir(client, tmp_path, monkeypatch):
     monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
 
-    store.worker_created("w1", None, "mesh", None, RATE)
-    jid = store.enqueue_job("mesh", {"kind": "trellis_mesh"})
+    workers.worker_created("w1", None, "mesh", None, RATE)
+    jid = jobs.enqueue_job("mesh", {"kind": "trellis_mesh"})
     client.post("/worker/claim", json={"queue": "mesh", "worker_id": "w1"}, headers=_hdr())
     glb = b"glTF-binary-bytes"
     r = client.post("/worker/complete", json={
@@ -153,7 +152,7 @@ def test_complete_offloads_the_glb_to_the_blob_dir(client, tmp_path, monkeypatch
         "result": {"glb_b64": base64.b64encode(glb).decode("ascii")}}, headers=_hdr())
     assert r.json()["ok"] is True
 
-    job = store.get_job(jid)
+    job = jobs.get_job(jid)
     assert "glb_b64" not in job["result"]
     blob = Path(job["result"]["glb_file"])
     assert blob == tmp_path / "blobs" / f"{jid}.glb"
@@ -163,7 +162,7 @@ def test_complete_offloads_the_glb_to_the_blob_dir(client, tmp_path, monkeypatch
 def test_stale_glb_completion_removes_its_blob(client, tmp_path, monkeypatch):
     monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
 
-    jid = store.enqueue_job("mesh", {"kind": "trellis_mesh"})
+    jid = jobs.enqueue_job("mesh", {"kind": "trellis_mesh"})
     client.post("/worker/claim", json={"queue": "mesh", "worker_id": "w1"}, headers=_hdr())
     r = client.post("/worker/complete", json={
         "job_id": jid, "worker_id": "not-the-claimant",
@@ -175,8 +174,8 @@ def test_stale_glb_completion_removes_its_blob(client, tmp_path, monkeypatch):
 def test_complete_offloads_each_image_to_the_blob_dir(client, tmp_path, monkeypatch):
     monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
 
-    store.worker_created("w1", None, "image", None, RATE)
-    jid = store.enqueue_job("image", {"kind": "comfy_image"})
+    workers.worker_created("w1", None, "image", None, RATE)
+    jid = jobs.enqueue_job("image", {"kind": "comfy_image"})
     client.post("/worker/claim", json={"queue": "image", "worker_id": "w1"}, headers=_hdr())
     r = client.post("/worker/complete", json={
         "job_id": jid, "worker_id": "w1",
@@ -186,7 +185,7 @@ def test_complete_offloads_each_image_to_the_blob_dir(client, tmp_path, monkeypa
         ]}}, headers=_hdr())
     assert r.json()["ok"] is True
 
-    imgs = store.get_job(jid)["result"]["images"]
+    imgs = jobs.get_job(jid)["result"]["images"]
     assert all("b64" not in img for img in imgs)
     assert [img["filename"] for img in imgs] == ["a.png", "b.png"]
     assert Path(imgs[0]["file"]).read_bytes() == b"png-a"
@@ -196,8 +195,8 @@ def test_complete_offloads_each_image_to_the_blob_dir(client, tmp_path, monkeypa
 def test_complete_offloads_the_anim_sheet_to_the_blob_dir(client, tmp_path, monkeypatch):
     monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
 
-    store.worker_created("w1", None, "video", None, RATE)
-    jid = store.enqueue_job("video", {"kind": "anim_sheet"})
+    workers.worker_created("w1", None, "video", None, RATE)
+    jid = jobs.enqueue_job("video", {"kind": "anim_sheet"})
     client.post("/worker/claim", json={"queue": "video", "worker_id": "w1"}, headers=_hdr())
     sheet = b"\x89PNG-sheet-bytes"
     r = client.post("/worker/complete", json={
@@ -206,7 +205,7 @@ def test_complete_offloads_the_anim_sheet_to_the_blob_dir(client, tmp_path, monk
                    "manifest": {"cell": {"w": 8, "h": 8}}}}, headers=_hdr())
     assert r.json()["ok"] is True
 
-    job = store.get_job(jid)
+    job = jobs.get_job(jid)
     assert "sheet_b64" not in job["result"]
     blob = Path(job["result"]["sheet_file"])
     assert blob == tmp_path / "blobs" / f"{jid}.png"
@@ -217,7 +216,7 @@ def test_complete_offloads_the_anim_sheet_to_the_blob_dir(client, tmp_path, monk
 def test_stale_anim_sheet_completion_removes_its_blob(client, tmp_path, monkeypatch):
     monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
 
-    jid = store.enqueue_job("video", {"kind": "anim_sheet"})
+    jid = jobs.enqueue_job("video", {"kind": "anim_sheet"})
     client.post("/worker/claim", json={"queue": "video", "worker_id": "w1"}, headers=_hdr())
     r = client.post("/worker/complete", json={
         "job_id": jid, "worker_id": "not-the-claimant",
@@ -260,19 +259,19 @@ def test_wait_seconds_is_capped_at_the_server_max(client):
 def test_claim_records_the_pod_id(client):
     client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1",
                                        "pod_id": "pod-1"}, headers=_hdr())
-    assert store.live_workers("llm", 60)[0]["pod_id"] == "pod-1"
+    assert workers.live_workers("llm", 60)[0]["pod_id"] == "pod-1"
 
 
 def test_heartbeat_bumps_worker_last_seen(client):
-    store.enqueue_job("llm", {})
+    jobs.enqueue_job("llm", {})
     r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1"}, headers=_hdr())
     job = r.json()["job"]
-    with store._db() as conn:
+    with connection.platform_db() as conn:
         conn.execute("UPDATE workers SET last_seen_at = last_seen_at - 999 WHERE id = 'w1'")
-    assert store.live_workers("llm", 60) == []
+    assert workers.live_workers("llm", 60) == []
     client.post("/worker/heartbeat", json={"job_id": job["id"], "worker_id": "w1"},
                 headers=_hdr())
-    assert [w["id"] for w in store.live_workers("llm", 60)] == ["w1"]
+    assert [w["id"] for w in workers.live_workers("llm", 60)] == ["w1"]
 
 
 def test_deregister_terminates_the_worker_row(client):
@@ -280,8 +279,8 @@ def test_deregister_terminates_the_worker_row(client):
                                        "pod_id": "pod-1"}, headers=_hdr())
     r = client.post("/worker/deregister", json={"worker_id": "w1"}, headers=_hdr())
     assert r.json() == {"ok": True}
-    assert store.live_workers("llm", 60) == []
-    assert store.terminated_workers_with_pods("llm")[0]["id"] == "w1"
+    assert workers.live_workers("llm", 60) == []
+    assert workers.terminated_workers_with_pods("llm")[0]["id"] == "w1"
 
 
 def test_deregister_requires_the_token(client):
@@ -290,14 +289,14 @@ def test_deregister_requires_the_token(client):
 
 def _fake_worker(stop, respond):
     """Claim from the store directly and complete with `respond(payload)`."""
-    store.worker_created("fake", None, "llm", None, RATE)
+    workers.worker_created("fake", None, "llm", None, RATE)
     while not stop.is_set():
-        job = store.claim_job("llm", "fake", lease_seconds=60)
+        job = jobs.claim_job("llm", "fake", lease_seconds=60)
         if job is None:
             time.sleep(0.01)
             continue
         result, error = respond(job["payload"])
-        store.complete_job(job["id"], "fake", result, error, exec_seconds=1.0)
+        jobs.complete_job(job["id"], "fake", result, error, exec_seconds=1.0)
 
 
 def _connector(timeout=10):
@@ -337,12 +336,12 @@ def test_connector_round_trip(fake_worker):
 
 
 def test_connector_attributes_jobs_to_the_run_scope(fake_worker):
-    store.create_game("g9", "u1")
-    store.charge_game("g9", 1, 1_000_000)
+    games.create_game("g9", "u1")
+    games.charge_game("g9", 1, 1_000_000)
     fake_worker(lambda p: ({"choices": [{"message": {"content": ""}}]}, None))
     with run_scope("g9", "b1"):
         _connector().generate_with_tools([{"role": "user", "content": "hi"}], [])
-    assert store.game("g9")["spent_micros"] == calculate_job_cost(1.0, RATE)
+    assert games.game("g9")["spent_micros"] == calculate_job_cost(1.0, RATE)
 
 
 def test_a_blocking_callers_reply_is_whole_until_read_then_elided(fake_worker):
@@ -354,22 +353,22 @@ def test_a_blocking_callers_reply_is_whole_until_read_then_elided(fake_worker):
                             "usage": {"completion_tokens": 3}}, None))
     result = _connector().generate_with_tools([{"role": "user", "content": "hi"}], [])
     assert result["choices"][0]["message"]["content"] == "the whole reply"
-    with store._db() as conn:
+    with connection.platform_db() as conn:
         (jid,) = [r["id"] for r in conn.execute("SELECT id FROM jobs")]
-    assert store.get_job(jid)["result"] == {"usage": {"completion_tokens": 3},
+    assert jobs.get_job(jid)["result"] == {"usage": {"completion_tokens": 3},
                                             "finish_reason": "stop", "tool_names": []}
 
 
 def test_a_consumed_jobs_reply_is_elided_by_the_route(client):
-    store.worker_created("w1", None, "llm", None, RATE)
-    jid = store.enqueue_job("llm", {"body": {"model": "m", "messages": []}},
+    workers.worker_created("w1", None, "llm", None, RATE)
+    jid = jobs.enqueue_job("llm", {"body": {"model": "m", "messages": []}},
                             metadata={"then": {"operations": []}})
     client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1"}, headers=_hdr())
     client.post("/worker/complete", json={
         "job_id": jid, "worker_id": "w1",
         "result": {"choices": [{"message": {"content": "words"}, "finish_reason": "stop"}]}},
         headers=_hdr())
-    assert store.get_job(jid)["result"] == {"usage": None, "finish_reason": "stop",
+    assert jobs.get_job(jid)["result"] == {"usage": None, "finish_reason": "stop",
                                             "tool_names": []}
 
 

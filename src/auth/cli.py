@@ -17,6 +17,7 @@ import getpass
 import sys
 
 from auth import store
+from billing import ledger
 
 
 def _prompt_password() -> str:
@@ -74,13 +75,13 @@ def main(argv=None) -> int:
         user = store.get_user_by_handle(args.handle)
         if user is None:
             sys.exit(f"no user {args.handle!r}")
-        new_balance = store.grant(user.id, args.n, "admin_grant")
+        new_balance = ledger.grant(user.id, args.n, "admin_grant")
         print(f"granted {args.n} to {user.handle!r} (balance={new_balance})")
     elif args.cmd == "refund":
         user = store.get_user_by_handle(args.handle)
         if user is None:
             sys.exit(f"no user {args.handle!r}")
-        new_balance = store.refund(user.id, args.n, "admin_refund")
+        new_balance = ledger.refund(user.id, args.n, "admin_refund")
         print(f"refunded {args.n} to {user.handle!r} (balance={new_balance})")
     elif args.cmd == "list":
         for u in store.list_users():

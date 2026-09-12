@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
-from db import store as db_store
+from db import events, games
 
 logger = logging.getLogger("maestro.safety")
 
@@ -100,7 +100,7 @@ def log_violation(violation: SafetyViolation, *, user_id: Optional[str] = None,
     matched term(s), to avoid persisting the flagged content."""
     if user_id is None and run_id is not None:
         try:
-            user_id = db_store.owner_of(run_id)
+            user_id = games.owner_of(run_id)
         except Exception:
             user_id = None
     logger.warning(
@@ -108,6 +108,6 @@ def log_violation(violation: SafetyViolation, *, user_id: Optional[str] = None,
         violation.category, source, user_id or "unknown", run_id or "-", violation.matched,
     )
     try:
-        db_store.record_violation(user_id, run_id, source, violation.category, violation.matched)
+        events.record_violation(user_id, run_id, source, violation.category, violation.matched)
     except Exception:
         logger.exception("violation row not recorded (source=%s)", source)

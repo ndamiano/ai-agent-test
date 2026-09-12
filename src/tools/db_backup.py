@@ -53,8 +53,7 @@ def _take_dirty(now: float) -> bool:
 
 
 def _db_paths() -> List[Tuple[str, Path]]:
-    from db.store import _db_path as platform_path
-    from auth.store import _db_path as auth_path
+    from db.connection import auth_path, platform_path
     return [("platform", platform_path()), ("auth", auth_path())]
 
 
@@ -88,7 +87,6 @@ def snapshot_all(daily: bool = False) -> int:
 class DbBackup:
     """The control-plane thread: a snapshot every INTERVAL, sooner when marked dirty, and the
     day's first snapshot also writes the dated key."""
-
     def __init__(self) -> None:
         self._stop = threading.Event()
         self._thread = None

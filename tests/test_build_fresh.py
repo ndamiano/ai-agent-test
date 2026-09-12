@@ -5,6 +5,7 @@ reads them, believes them, and re-asks for art it already has under new ids — 
 three naming schemes for one cast, 40 renders, no finished game. `fresh` is the from-scratch button;
 a plain re-trigger, a resume and a fix all still carry the folder forward.
 """
+
 import pytest
 
 from maestro.codegen import build_chain, build_state, staging
@@ -14,11 +15,11 @@ from maestro.codegen import build_chain, build_state, staging
 def run(tmp_path, monkeypatch):
     """A run whose last build left files behind, with everything past the folder stubbed out."""
     monkeypatch.setattr(build_chain, "_emit", lambda *a, **k: None)
-    monkeypatch.setattr(build_chain.db_store, "set_status", lambda *a, **k: None)
+    monkeypatch.setattr(build_chain.games, "set_status", lambda *a, **k: None)
     monkeypatch.setattr(build_chain, "advance", lambda *a, **k: None)
     monkeypatch.setattr(build_chain.RunState, "read_spec", lambda self: {"request": "a game"})
     monkeypatch.setattr(build_chain.snapshots, "take", lambda *a, **k: "abc123")
-    monkeypatch.setattr(build_chain.db_store, "abandon_pending_batch_jobs", lambda *a, **k: 0)
+    monkeypatch.setattr(build_chain.jobs, "abandon_pending_batch_jobs", lambda *a, **k: 0)
     d = tmp_path / "game"
     (d / "assets").mkdir(parents=True)
     (d / "index.html").write_text("<html>old</html>", encoding="utf-8")
@@ -65,7 +66,7 @@ def test_a_fresh_build_stops_the_art_the_last_one_is_still_waiting_on(run, tmp_p
     """A render still in flight would land in the new build's folder and write itself into a
     manifest that no longer asked for it."""
     seen = []
-    monkeypatch.setattr(build_chain.db_store, "abandon_pending_batch_jobs",
+    monkeypatch.setattr(build_chain.jobs, "abandon_pending_batch_jobs",
                         lambda run_id, err: seen.append(run_id) or 1)
     build_chain.start_build(run, "b2", fresh=True)
     assert seen == [run]
@@ -73,7 +74,7 @@ def test_a_fresh_build_stops_the_art_the_last_one_is_still_waiting_on(run, tmp_p
 
 def test_a_first_build_has_nothing_to_clear(tmp_path, monkeypatch):
     monkeypatch.setattr(build_chain, "_emit", lambda *a, **k: None)
-    monkeypatch.setattr(build_chain.db_store, "set_status", lambda *a, **k: None)
+    monkeypatch.setattr(build_chain.games, "set_status", lambda *a, **k: None)
     monkeypatch.setattr(build_chain, "advance", lambda *a, **k: None)
     monkeypatch.setattr(build_chain.RunState, "read_spec", lambda self: {"request": "a game"})
     taken = []

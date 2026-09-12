@@ -8,8 +8,7 @@ import shutil
 import pytest
 
 import api.app
-from auth import playgrants
-from auth import store as auth_store
+from auth import playgrants, store
 from maestro import demos
 from maestro.codegen.run import create_run, set_prompt
 from maestro.codegen.staging import stage_for_play
@@ -74,7 +73,7 @@ def demo_listed(monkeypatch):
 
 
 def _game(staged=None):
-    u = auth_store.create_user(f"owner{auth_store.list_users().__len__()}", "pw-pass1234", email=f"owner{auth_store.list_users().__len__()}@example.com")
+    u = store.create_user(f"owner{store.list_users().__len__()}", "pw-pass1234", email=f"owner{store.list_users().__len__()}@example.com")
     run_id = create_run(u.id)
     set_prompt(run_id, "a demo game")
     if staged:

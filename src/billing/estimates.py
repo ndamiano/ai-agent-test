@@ -1,4 +1,4 @@
-"""Job request estimates and utilities"""
+"""What a job is expected to cost, and what one actually did."""
 
 import math
 

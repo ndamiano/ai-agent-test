@@ -3,5 +3,5 @@ The finished game was playtested in a browser. One documented input visibly did 
 Input pressed: {action}
 What the design promises it does: {expected}
 What the screen showed instead: {observed}
-
+{thrown}
 Find the code that should handle this input by reading the files. If the handler exists but its effect is invisible, make the effect visible; if it is missing, write it.

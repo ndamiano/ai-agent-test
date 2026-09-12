@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Pre-commit comment audit: list the comment and docstring lines this commit
-adds, sorted by whether their shape is on the allowlist, and ask. Non-interactive
-callers are blocked — an agent does not approve its own prose."""
+"""Pre-commit comment audit: list every comment and docstring a commit's hunks touch,
+kept lines included, sorted by whether their shape is on the allowlist, and ask.
+Non-interactive callers are blocked — an agent does not approve its own prose."""
 import ast
 import os
 import re
@@ -87,17 +87,16 @@ def docstring_spans(path, blob):
     return spans
 
 
-def block_size(lines, lineno, rx):
-    """Contiguous whole-line comments around a 1-indexed line."""
+def block_range(lines, lineno, rx):
+    """1-indexed [start, end] of the contiguous whole-line comments around a line, or None."""
     if rx is None or lineno > len(lines) or not rx.match(lines[lineno - 1]):
-        return 1
-    n, i = 1, lineno - 1
-    while i > 0 and rx.match(lines[i - 1]):
-        n, i = n + 1, i - 1
-    i = lineno
-    while i < len(lines) and rx.match(lines[i]):
-        n, i = n + 1, i + 1
-    return n
+        return None
+    start = end = lineno
+    while start > 1 and rx.match(lines[start - 2]):
+        start -= 1
+    while end < len(lines) and rx.match(lines[end]):
+        end += 1
+    return start, end
 
 
 def classify(path, lineno, blob, spans):
@@ -109,33 +108,48 @@ def classify(path, lineno, blob, spans):
                         f"module docstring, {size} lines")
             return ("docstring", size == 1, f"docstring, {size} lines")
     lines = blob.splitlines()
-    size = block_size(lines, lineno, pattern_for(path, PURE_COMMENT_RES))
+    span = block_range(lines, lineno, pattern_for(path, PURE_COMMENT_RES))
+    size = span[1] - span[0] + 1 if span else 1
     return ("comment", size <= BLOCK_MAX, f"comment block, {size} lines")
 
 
-def added_prose():
+def touched_prose():
     diff = subprocess.run(
         ["git", "diff", "--cached", "--unified=0", "--no-color"],
         capture_output=True, text=True, check=True,
     ).stdout
-    found = []
-    path, rx, blob, spans, lineno = None, None, "", [], 0
+    touched = {}
     for line in diff.splitlines():
         if line.startswith("+++ b/"):
             path = line[6:]
-            rx = pattern_for(path)
-            blob = staged_blob(path)
-            spans = docstring_spans(path, blob)
+            touched.setdefault(path, set())
         elif line.startswith("@@"):
-            m = re.search(r"\+(\d+)", line)
-            lineno = int(m.group(1)) if m else 0
-        elif line.startswith("+") and not line.startswith("+++"):
-            text = line[1:]
-            in_doc = any(s <= lineno <= e for s, e, _ in spans)
-            if (in_doc or (rx and rx.search(text))) and text.strip():
-                kind, ok, why = classify(path, lineno, blob, spans)
-                found.append((path, lineno, text.strip(), kind, ok, why))
-            lineno += 1
+            m = re.search(r"\+(\d+)(?:,(\d+))?", line)
+            start = int(m.group(1))
+            count = int(m.group(2)) if m.group(2) is not None else 1
+            touched[path].update(range(start, start + count) if count else (start, start + 1))
+    found = []
+    for path, linenos in touched.items():
+        rx = pattern_for(path)
+        blob = staged_blob(path)
+        lines = blob.splitlines()
+        spans = docstring_spans(path, blob)
+        pure = pattern_for(path, PURE_COMMENT_RES)
+        prose = set()
+        for n in linenos:
+            for s0, e0, _ in spans:
+                if s0 <= n <= e0:
+                    prose.update(range(s0, e0 + 1))
+            block = block_range(lines, n, pure)
+            if block:
+                prose.update(range(block[0], block[1] + 1))
+            elif rx and n <= len(lines) and rx.search(lines[n - 1]):
+                prose.add(n)
+        for n in sorted(prose):
+            text = lines[n - 1] if n <= len(lines) else ""
+            if text.strip():
+                kind, ok, why = classify(path, n, blob, spans)
+                found.append((path, n, text.strip(), kind, ok, why))
     return found
 
 
@@ -149,7 +163,7 @@ def report(rows, header):
 
 
 def main():
-    prose = added_prose()
+    prose = touched_prose()
     if not prose:
         return 0
 

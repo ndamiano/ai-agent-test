@@ -129,7 +129,7 @@ def probe(game_dir: Path) -> List[Dict[str, str]]:
     if blocked:
         logger.warning("error gate: %s: blocked %d external request(s): %s",
                        game_dir, len(blocked), ", ".join(sorted(set(blocked))[:5]))
-    return _dedup(errors)
+    return dedup(errors)
 
 
 def _open(browser, base_url: str, errors: List[Dict[str, str]], blocked: List[str]):
@@ -243,7 +243,7 @@ class _serve:
         return False
 
 
-def _dedup(errors: List[Dict[str, str]]) -> List[Dict[str, str]]:
+def dedup(errors: List[Dict[str, str]]) -> List[Dict[str, str]]:
     """A render loop re-throws the same error every frame; the gate wants each once, first-seen
     order kept (the first error is usually the cause and the rest its wake)."""
     seen, out = set(), []

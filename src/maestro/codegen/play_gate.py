@@ -1,24 +1,4 @@
-"""The play gate — press the game's documented inputs and hear which do nothing.
-
-Runs after the error gate is clean: the game loads and does not throw, so what is left to detect
-is a documented input whose promised, VISIBLE effect never appears. That stays inside the
-BROKEN-not-bad guardrail the way an uncaught exception does: "pressing E uses the selected item"
-is the game's own design speaking, and the note it becomes is satisfied by making that one input
-work. Anything softer — depth, feel, pacing — is collected as JUDGMENT and written to the report
-for a human; it never enters a fix note (a grade fed back as a fix note made nothing better —
-docs/experiments.md, 2026-08-08).
-
-One SESSION, one persistent page: play is stateful, so unlike the error gate's fresh-page pokes
-every action lands on the same page, and the previous turn's after-screenshot is the next turn's
-before. The model presses ONE input per turn, states the visible change it expects, and next turn
-says met / unmet / unclear about its own prediction. Only what it watched fail may enter the
-report, and the prompt biases to under-report: unclear is not broken, and a control that failed
-once and worked later is not broken.
-
-The gate is a BOUNDARY like the error gate: a session that cannot run logs and stands aside, and
-losing the model mid-session keeps the turns already played. Round state in
-runs/<id>/play_gate.json, the full report in runs/<id>/play_report.json.
-"""
+"""The play gate — press the game's documented inputs and hear which do nothing."""
 
 from __future__ import annotations
 
@@ -30,6 +10,7 @@ from typing import Dict, List, Optional, Tuple
 
 from llm_clients.connector import get_connector
 from llm_clients.message_builder import MessageBuilder
+from maestro.codegen import error_gate
 from maestro.codegen.error_gate import VIEWPORT, _FENCE, _KEY_NAMES, _serve
 
 logger = logging.getLogger(__name__)
@@ -98,13 +79,29 @@ def _action_of(action) -> Optional[Tuple]:
     return ("key", name)
 
 
+def _describe_action(action) -> str:
+    parsed = _action_of(action)
+    if parsed is None:
+        return str(action)
+    kind, what = parsed
+    if kind == "key":
+        return what
+    if kind == "click":
+        return f"click at ({what[0]}, {what[1]})"
+    name, seconds = what
+    return f"hold {name} for {seconds:g}s"
+
+
 def _parse_report(text: str, turns: List[Dict]) -> Dict:
     """The final report; an off-shape answer still yields a report with the turns played."""
     data = _parse_json(text) or {}
     broken = [f for f in (data.get("broken") or []) if isinstance(f, dict)
               and f.get("action") and f.get("expected")]
+    thrown = [{"action": _describe_action(t["action"]), "expected": t.get("expected") or "",
+              "observed": t.get("observed") or "", "error": t["error"]}
+              for t in turns if t.get("error")]
     judgment = data.get("judgment") if isinstance(data.get("judgment"), dict) else {}
-    return {"broken": broken, "judgment": judgment, "turns": turns}
+    return {"broken": thrown + broken, "judgment": judgment, "turns": turns}
 
 
 # ---------------------------------------------------------------- the session
@@ -159,6 +156,21 @@ def _act(page, action: Tuple) -> None:
         logger.warning("play gate: could not press %s (%s)", what, e)
 
 
+def _attach_errors(turns: List[Dict], errors: List[Dict], game_dir: Path) -> None:
+    by_turn: Dict = {}
+    for e in error_gate.dedup(errors):
+        label = e["turn"]
+        if label == "load":
+            logger.warning("play gate: page threw before the session started: %s",
+                           e["message"].splitlines()[0][:200])
+        else:
+            by_turn.setdefault(label, e)
+    for n, turn in enumerate(turns, start=1):
+        e = by_turn.get(n)
+        if e is not None:
+            turn["error"] = {"message": e["message"], "address": error_gate.address(e, game_dir)}
+
+
 def play(game_dir: Path, request: str) -> Optional[Dict]:
     """One playtest session over the staged game; the report dict, or None when the session could
     not run at all. The page has NO network egress, same as the error gate's probe."""
@@ -172,6 +184,8 @@ def play(game_dir: Path, request: str) -> Optional[Dict]:
         request=request[:REQUEST_CHARS], **VIEWPORT)
     history: List[Dict] = []
     turns: List[Dict] = []
+    errors: List[Dict] = []
+    current = {"turn": "load"}
     try:
         with _serve(game_dir) as base_url, sync_playwright() as pw:
             browser = pw.chromium.launch(
@@ -180,6 +194,9 @@ def play(game_dir: Path, request: str) -> Optional[Dict]:
             page = browser.new_page(viewport=VIEWPORT)
             page.route("**/*", lambda route: route.continue_()
                        if route.request.url.startswith(f"{base_url}/") else route.abort())
+            page.on("pageerror", lambda e: errors.append(
+                {"message": str(e), "stack": getattr(e, "stack", "") or "",
+                 "turn": current["turn"]}))
             page.goto(f"{base_url}/index.html", timeout=15_000, wait_until="load")
             page.wait_for_timeout(SETTLE_MS)
 
@@ -200,6 +217,7 @@ def play(game_dir: Path, request: str) -> Optional[Dict]:
                     break
                 history.append({"role": "assistant", "content": answer})
                 turns.append(turn)
+                current["turn"] = n
                 _act(page, _action_of(turn["action"]))
                 page.wait_for_timeout(SETTLE_MS)
 
@@ -208,6 +226,7 @@ def play(game_dir: Path, request: str) -> Optional[Dict]:
         logger.warning("play gate: session could not run (%s) — build stands", e)
         return None
 
+    _attach_errors(turns, errors, game_dir)
     if not turns:
         return None
     history.append({"role": "user", "content": _VERDICT.read_text(encoding="utf-8")})
@@ -218,10 +237,17 @@ def play(game_dir: Path, request: str) -> Optional[Dict]:
 # ---------------------------------------------------------------- the note
 
 def note_for_fact(fact: Dict) -> str:
+    thrown = ""
+    error = fact.get("error")
+    if isinstance(error, dict):
+        address = str(error.get("address", "")).strip() or \
+            "(no location available — find it by reading the files)"
+        thrown = f"What the page threw: {str(error.get('message', '')).strip()} at {address}"
     return _NOTE.read_text(encoding="utf-8").format(
         action=str(fact.get("action", "")).strip(),
         expected=str(fact.get("expected", "")).strip(),
-        observed=str(fact.get("observed", "")).strip() or "(no visible change)").strip() + "\n"
+        observed=str(fact.get("observed", "")).strip() or "(no visible change)",
+        thrown=thrown).strip() + "\n"
 
 
 # ---------------------------------------------------------------- the loop
@@ -271,7 +297,7 @@ def after_build(run_id: str, build_id: str) -> bool:
         _save_state(rs.run_dir, state)
         return False
 
-    fact = broken[0]
+    fact = next((f for f in broken if f.get("error")), broken[0])
     key = f"{fact.get('action')}|{fact.get('expected')}"
     logger.info("play gate: %s reported %d broken input(s); first: %s",
                 run_id, len(broken), str(fact.get("action"))[:80])

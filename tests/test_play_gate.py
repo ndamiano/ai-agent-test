@@ -79,6 +79,53 @@ def test_elided_keeps_last_window_of_screenshots():
     assert stubs[0]["content"].startswith("Turn 0")
 
 
+def test_attach_errors_lands_on_the_turn_that_threw(tmp_path):
+    turns = [{"verdict": "unmet", "action": {"key": "Enter"}, "expected": "the run starts",
+              "observed": "stayed on stage select"},
+             {"verdict": "met", "action": {"key": "w"}, "expected": "player moves",
+              "observed": "player moved"}]
+    errors = [{"message": "TypeError: floats is not iterable",
+               "stack": "TypeError: floats is not iterable\n    at gen.js:42", "turn": 1}]
+    play_gate._attach_errors(turns, errors, tmp_path)
+    assert turns[0]["error"]["message"] == "TypeError: floats is not iterable"
+    assert "gen.js:42" in turns[0]["error"]["address"]
+    assert "error" not in turns[1]
+
+
+def test_attach_errors_during_load_is_logged_not_attached(tmp_path, caplog):
+    import logging
+    turns = [{"verdict": "unclear", "action": {"key": "Enter"}, "expected": "the game starts",
+              "observed": "title screen"}]
+    errors = [{"message": "ReferenceError: THREE is not defined", "stack": "", "turn": "load"}]
+    with caplog.at_level(logging.WARNING):
+        play_gate._attach_errors(turns, errors, tmp_path)
+    assert "error" not in turns[0]
+    assert any("threw before the session started" in r.getMessage() for r in caplog.records)
+
+
+def test_attach_errors_dedups_a_repeating_error_and_keeps_its_first_turn(tmp_path):
+    turns = [{"verdict": "unmet", "action": {"key": "w"}, "expected": "player moves",
+              "observed": "nothing"},
+             {"verdict": "unmet", "action": {"key": "s"}, "expected": "player moves back",
+              "observed": "nothing"}]
+    errors = [{"message": "TypeError: boom", "stack": "", "turn": 1} for _ in range(50)]
+    errors.append({"message": "TypeError: boom", "stack": "", "turn": 2})
+    play_gate._attach_errors(turns, errors, tmp_path)
+    assert turns[0]["error"]["message"] == "TypeError: boom"
+    assert "error" not in turns[1]
+
+
+def test_parse_report_folds_a_thrown_turn_into_broken_regardless_of_the_models_own_summary():
+    turns = [{"verdict": "unclear", "action": {"key": "Enter"}, "expected": "the run starts",
+              "observed": "stayed on stage select",
+              "error": {"message": "TypeError: floats is not iterable", "address": "gen.js:42"}}]
+    report = play_gate._parse_report(json.dumps({"broken": [], "judgment": {}}), turns)
+    assert len(report["broken"]) == 1
+    fact = report["broken"][0]
+    assert fact["action"] == "Enter" and fact["expected"] == "the run starts"
+    assert fact["error"]["message"] == "TypeError: floats is not iterable"
+
+
 # ---------------------------------------------------------------- the note
 
 def test_note_carries_the_fact():
@@ -87,6 +134,31 @@ def test_note_carries_the_fact():
     assert "potion consumed" in note
     assert "(no visible change)" in note
     assert "keep the game playing the way it already does" in note
+
+
+def test_note_without_error_has_no_thrown_line():
+    note = play_gate.note_for_fact({"action": "e", "expected": "x", "observed": "y"})
+    assert "What the page threw" not in note
+
+
+def test_note_with_error_states_what_the_page_threw():
+    fact = {"action": "Enter", "expected": "the run starts", "observed": "stayed on stage select",
+            "error": {"message": "TypeError: floats is not iterable", "address": "gen.js:42"}}
+    note = play_gate.note_for_fact(fact)
+    assert "What the page threw: TypeError: floats is not iterable at gen.js:42" in note
+
+
+def test_thrown_turn_flows_end_to_end_into_the_fix_note(tmp_path):
+    turns = [{"verdict": "unmet", "action": {"key": "Enter"}, "expected": "the run starts",
+              "observed": "stayed on stage select"}]
+    errors = [{"message": "TypeError: floats is not iterable",
+               "stack": "TypeError: floats is not iterable\n    at gen.js:42", "turn": 1}]
+    play_gate._attach_errors(turns, errors, tmp_path)
+    report = play_gate._parse_report(json.dumps({"broken": [], "judgment": {}}), turns)
+    note = play_gate.note_for_fact(report["broken"][0])
+    assert "Input pressed: Enter" in note
+    assert "What the page threw: TypeError: floats is not iterable" in note
+    assert "gen.js:42" in note
 
 
 # ---------------------------------------------------------------- the loop
@@ -129,6 +201,18 @@ def test_broken_fact_kicks_one_fix(tmp_path, monkeypatch):
     assert started and len(kicked) == 1
     assert "Input pressed: e" in kicked[0]
     assert json.loads((run_dir / play_gate.REPORT_FILE).read_text())["broken"]
+
+
+def test_thrown_fact_preferred_over_plain_fact(tmp_path, monkeypatch):
+    report = {"broken": [{"action": "q", "expected": "drink", "observed": "nothing"},
+                         {"action": "Enter", "expected": "the run starts",
+                          "observed": "stayed on stage select",
+                          "error": {"message": "TypeError: boom", "address": "gen.js:9"}}],
+              "judgment": {}, "turns": []}
+    started, kicked, _ = _run(tmp_path, monkeypatch, [report])
+    assert started and len(kicked) == 1
+    assert "Input pressed: Enter" in kicked[0]
+    assert "What the page threw: TypeError: boom at gen.js:9" in kicked[0]
 
 
 def test_clean_report_starts_nothing_and_writes_report(tmp_path, monkeypatch):

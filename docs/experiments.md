@@ -2241,3 +2241,100 @@ f7f816519d16 (nine compactions by turn 133, every one `trimmed: 0`): 18 of 149 p
 360 KB (87%). Every stubbed program still parses.
 
 **Not measured.** A build with the tier working.
+
+## 2026-09-12 — a nudge at ten no-write turns (local 5090, qwen3.8_27b quasar, branched from prod Flash-Next positions)
+
+**The question.** Four prod builds each had a stretch where the model stopped writing and read
+instead — 20 turns on 345fcb132db8, 12 on e153dddc53b6, all 68 on the fix that capped out and
+shipped nothing. Does a user message at ten consecutive no-write turns ("if you are chasing a
+specific bug say which and keep going; otherwise call done") end the circling, or end the build
+early?
+
+**The arm.** `replay.branch`: six fire points (74a9f0 at 108, 145, 166; d6741e at 69; the fix
+builds a736b5 and dab5b2 at 9), 12 turns forward, k=3, control against nudge, on the local 27B.
+Scored on turn count first, then on two bugs that a grep can see: at d6741e@69 `main.js:243` uses
+`PLAYER_W` and never imports it (a ReferenceError on retry from a checkpoint); at a736b5@9
+`gen.js:166` calls `surfaceAt(solidGround.concat(floats), cx, def)` against
+`surfaceAt(ground, floats, x)`.
+
+**What came out.** On turns the nudge wins everywhere: 8/9 branches at the 74a9f0 positions
+called `done` within 2–5 turns against control's 7–12, and the real build had spent its 70 turns
+after 108 on seven cosmetic edits before finishing at 198 of 200. On the bugs it loses. d6741e:
+control fixed the import 3/3 in 12 turns, with 2–5 write turns each; nudge fixed it 1/4 and
+called `done` at turns 72–75 with the crash in — the real build fixed it at 72, three turns after
+the fire. a736b5: control 0/3, nudge 2/3, and the two floor arms whose nudge never fired (so:
+control reruns) 3/3 and 2/3 — a 0/3 against 3/3 between identical arms is the noise floor at
+k=3. dab5b2, the cap-out the nudge was written for: fired 3/3, changed nothing 3/3. The nudge arm
+also spent `done_nudged`, so its first `done` skipped the art audit; that alone is ~6 of control's
+extra turns.
+
+**Offline, every recorded build (43 with the python tool, 6 prod).** The counter fires 44 times
+in 22 builds. A write follows within 5 turns in 45% of fires, later in 41%, never in 14% — and
+the six nevers are four fix builds that never edited (two of them called `done` on their own)
+and two lab builds killed by hand. On prod's five mid-build fires, 4 of 5 wrote within 5 turns.
+SWE-agent's doom-loop rule (the same call fingerprint three times in twenty) fires 0 times in
+43 builds when the fingerprint is the whole program, and in 42 of 43 at turns 2–19 when it is
+tool+path. The same tool OUTPUT three times in twenty fires 8 times in 7 builds and 7 of them
+wrote within 5 turns. Nothing the model does before a real edit looks different from what it
+does before never editing; dab5b2 printed a different slice of the same file on each of its 66
+turns.
+
+**Verdict.** Not shipped. A no-write streak is not BROKEN: it is the shape of a fix pass as often
+as it is the shape of a stall, and a message that pushes toward `done` ends the pass. A ReferenceError
+six screens deep is past what the error gate presses, so shipping early and gating does not
+recover it. If the counter goes anywhere it goes in as telemetry: log the fire and whether a
+write follows, on every prod build, and revisit with a base rate.
+
+**What the corpus pointed at instead.** Fix builds pay for their opening. a736b5's first edit came
+at turn 30 with 65K in the prompt: seven turns printed whole files (13–20K characters each), four
+were refused reaches for `open`, `subprocess`, `exec` and `__name__`, ten ported the stage
+generator to Python to prove a bug it had printed side by side at turn 12. Across the 22 fix
+builds, 12 reached for a runtime at least once (40 refusals over 53 builds, `open` and `os`
+first). And the play gate's page has no `pageerror` handler: the TypeError that froze stage
+select was thrown on its page and never entered the fix note. The error gate wires that
+handler; the play gate opens a raw page.
+
+## 2026-09-12 — what a fix build opens on (local 5090, qwen3.8_27b quasar, branched from prod fix openings)
+
+**The question.** a736b5 spent 30 turns and 65K of prompt finding a one-line bug. Two candidates
+for what it was missing, each a change to the fix build's first user message: the exception the
+play gate's page threw, with its address; and the code map of the game. Both, either, neither.
+
+**The arm.** `replay.branch` from position 0 of two prod fix builds. a736b5 (Enter on stage select
+did nothing; the page had thrown `TypeError: floats is not iterable` at gen.js:166): 15 turns,
+k=4, four arms — the note as recorded, the note plus the map, the note plus one line "What the
+page threw: <message> at <file>:<line>", both — and a 25-turn rerun of the first two. Ground
+truth is a grep for `surfaceAt(solidGround, floats, cx)`. 9febdb (the camera should scroll
+earlier; nothing threw): 15 turns, k=4, note against note plus map; ground truth is `updateCamera`
+or the camera record changed in main.js and nothing else touched.
+
+**What came out, a736b5.**
+
+| arm | fixed | first edit at turn | prompt at first edit |
+|---|---|---|---|
+| note, 15 turns | 2/4 | 13, 15 | 38K, 41K |
+| note, 25 turns | 0/4 | — | — |
+| note + map, 15 turns | 0/4 | one wrong edit at 3, then `done` | 7K |
+| note + map, 25 turns | 1/4 | 19 | 40K |
+| note + thrown line, 15 turns | 4/4 | 4, 5, 5, 6 | 7–21K |
+| both, 15 turns | 4/4 | 4, 5, 5, 7 | 9–15K |
+
+All eight thrown-line branches changed that one line of gen.js and nothing else, and called
+`done` by turn 6–9. The wrong edit under the map added `justPressed('Enter')` beside the alias
+that already bound it, and called `done` with the throw still in.
+
+**What came out, 9febdb.** Note alone: a camera fix in 4/4, first edit at turns 4, 5, 4, 5. Note
+plus map: 4/4, at turns 7, 7, 4, 9. Two branches in each arm took the deadzone to zero on the
+camera record instead of rewriting `updateCamera`, which is the same fix.
+
+**Verdict.** The play gate's page now hears `pageerror` and the fix note carries what it threw
+and where (`play_gate.py`, `play_fix_note.txt`): 8/8 against 2/8, the edit at turn 4–7 against
+13–19. The map is not a lever on either fix — a throw makes it redundant, a change note the 27B
+already reads straight to, and it bought the one confident wrong fix in the set — so it did not
+ship; the diff is kept in the lab. Its motivating numbers (first edit at 47–110K of prompt) are
+from Flash-Next and DeepSeek fixes, which this harness cannot run; if it comes back it comes back
+as a prod-side arm on prompt tokens at first edit.
+
+**Not measured.** A prod fix build with the thrown line in its note. Whether the play gate's
+model, shown a page that threw, still reports the same fact as "did nothing" — the folded fact
+is preferred regardless, so the note is right either way.

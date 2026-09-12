@@ -326,16 +326,24 @@ src/
                          current screenshot, presses ONE input (key, click, or a held key), states
                          the VISIBLE change it expects, and next turn says met / unmet / unclear
                          about its own prediction (prompts/play_turn.txt — the design rides along
-                         so the model knows the documented controls). A closing call
-                         (prompts/play_verdict.txt) folds the session into runs/<id>/play_report.json:
-                         `broken` — inputs it pressed and WATCHED fail, biased to under-report
-                         (unclear is not broken, failed-once-worked-later is not broken) — and
-                         `judgment`, a written impression that only ever reaches the human, never
-                         a fix note (a grade as a fix note made nothing better — experiments.md
-                         2026-08-08). One broken fact re-enters the fix machine per round
-                         (prompts/play_fix_note.txt); stops at MAX_ROUNDS or the same fact twice
-                         running. A session that cannot run logs and stands — boundary, like the
-                         error gate. Round state in runs/<id>/play_gate.json.
+                         so the model knows the documented controls). The session's page also
+                         hears `pageerror`, reusing the error gate's own dedup and file:line
+                         address — an error is attributed to whichever turn's input was last
+                         pressed when it arrived, or to "load" (logged only, attached to no turn)
+                         when it lands before turn 1. A closing call (prompts/play_verdict.txt)
+                         folds the session into runs/<id>/play_report.json: `broken` — inputs it
+                         pressed and WATCHED fail, biased to under-report (unclear is not broken,
+                         failed-once-worked-later is not broken), PLUS one fact for every turn that
+                         threw regardless of what the model's own summary says, carrying the
+                         error's message and address — and `judgment`, a written impression that
+                         only ever reaches the human, never a fix note (a grade as a fix note made
+                         nothing better — experiments.md 2026-08-08). One broken fact re-enters the
+                         fix machine per round (prompts/play_fix_note.txt, which states what the
+                         page threw and where when the fact carries an error); a thrown fact is
+                         preferred over one without, since the exception alone satisfies the
+                         guardrail. Stops at MAX_ROUNDS or the same fact twice running. A session
+                         that cannot run logs and stands — boundary, like the error gate. Round
+                         state in runs/<id>/play_gate.json.
       asset_use.py       does the game LOAD the art it asked for — static analysis over the game's
                          own source, no model and no GPU. Two facts: an asset the source never
                          names (paid for, never seen) and an `assets/…` path in neither the manifest

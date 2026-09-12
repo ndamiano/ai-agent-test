@@ -67,7 +67,9 @@ table's real `exec_seconds`.
 debits `exec_seconds × ceil(rate / 3600)` micros (`billing.estimates.calculate_job_cost`), so a job on
 a $2.21 card costs 2.2× the same seconds on a $0.99 one and a price change reaches the bill with no
 table to update. Rounding is upward at both steps — a fractional micro is charged, never dropped.
-A worker with no rate on record has no fallback price; the debit raises. The job row keeps both —
+A worker with no rate on record has no fallback price: a worker row is created, priced, before
+the worker runs — by the scaler for a pod, by `local_gpu.py` at zero for the dev box — and a
+claim from an id nobody created is refused. The job row keeps both —
 `exec_seconds` is what the card ran and `billed_micros` what it cost — and the admin view's worked
 cost is the sum of those rows. The reservation at enqueue is priced at the card that queue's pods
 are created on (`billing.estimates.QUEUE_USD_PER_HOUR`), so a job that lands on the stock-out fallback

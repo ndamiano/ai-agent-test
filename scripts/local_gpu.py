@@ -9,9 +9,11 @@ import json
 import os
 import shlex
 import signal
+import socket
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -165,6 +167,21 @@ def _spawn(name: str, argv: list, cwd, env: dict) -> subprocess.Popen:
                             env={**os.environ, **env}, start_new_session=True)
 
 
+def _spawn_worker(queue: str, leg: dict) -> subprocess.Popen:
+    from db import workers
+    worker_id = f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
+    workers.worker_created(worker_id, None, queue, None, 0.0)
+    token = (_settings().get("workqueue") or {}).get("token") or ""
+    return _spawn(
+        f"{queue}-worker",
+        [_worker_python(queue), "-m", "worker.agent", "--server", "http://localhost:8000",
+         "--token", token, "--queue", queue, "--worker-id", worker_id,
+         "--target", f"http://localhost:{leg['port']}"],
+        str(ROOT / "src"),
+        {"SAFETY_MODEL_DIR": SAFETY_MODEL_DIR} if queue in ("image", "video") else {},
+    )
+
+
 def _stop(name: str, process: subprocess.Popen, grace: float = 25) -> None:
     if process.poll() is not None:
         return
@@ -237,15 +254,7 @@ def drain(queue: str, *, keep: bool, ready_timeout: float) -> None:
     worker = None
     try:
         _await_ready(f"{queue}-server", queue, leg["ready"], server, ready_timeout)
-        token = (_settings().get("workqueue") or {}).get("token") or ""
-        worker = _spawn(
-            f"{queue}-worker",
-            [_worker_python(queue), "-m", "worker.agent", "--server", "http://localhost:8000",
-             "--token", token, "--queue", queue,
-             "--target", f"http://localhost:{leg['port']}"],
-            str(ROOT / "src"),
-            {"SAFETY_MODEL_DIR": SAFETY_MODEL_DIR} if queue in ("image", "video") else {},
-        )
+        worker = _spawn_worker(queue, leg)
 
         idle = 0
         while idle < IDLE_TICKS:
@@ -332,15 +341,7 @@ def auto(idle_exit: Optional[float], ready_timeout: float) -> None:
         else:
             server = _spawn(f"{queue}-server", leg["argv"], leg["cwd"], leg["env"])
             _await_ready(f"{queue}-server", queue, leg["ready"], server, ready_timeout)
-        token = (_settings().get("workqueue") or {}).get("token") or ""
-        worker = _spawn(
-            f"{queue}-worker",
-            [_worker_python(queue), "-m", "worker.agent", "--server", "http://localhost:8000",
-             "--token", token, "--queue", queue,
-             "--target", f"http://localhost:{leg['port']}"],
-            str(ROOT / "src"),
-            {"SAFETY_MODEL_DIR": SAFETY_MODEL_DIR} if queue in ("image", "video") else {},
-        )
+        worker = _spawn_worker(queue, leg)
         held = queue
 
     try:

@@ -85,7 +85,8 @@ async def claim(body: ClaimBody, request: Request):
     arrives within the window — the agent just calls again."""
     cfg = _require_worker(request)
     lease = cfg.get("lease_seconds", 120)
-    workers.worker_seen(body.worker_id, body.queue, body.gpu_type, body.source, body.pod_id)
+    if not workers.worker_seen(body.worker_id, body.queue, body.gpu_type, body.source, body.pod_id):
+        raise HTTPException(status_code=403, detail=f"worker {body.worker_id} was never created")
     window = CLAIM_LONG_POLL_SECONDS if body.wait_seconds is None \
         else max(0.0, min(body.wait_seconds, CLAIM_LONG_POLL_SECONDS))
     loop = asyncio.get_running_loop()

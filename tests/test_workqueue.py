@@ -112,6 +112,7 @@ def test_unconfigured_token_fails_closed(client, monkeypatch):
 def test_a_claim_never_hands_a_worker_the_jobs_metadata(client):
     """metadata carries the chain (what to enqueue next, what to finalize). It is control-plane
     only — a worker stays a generic executor that knows nothing about assets."""
+    workers.worker_created("w1", None, "image", None, RATE)
     jobs.enqueue_job("image", {"kind": "comfy_image"}, batch_id="b1",
                       metadata={"then": {"enqueue": "mesh_from_image"}, "asset_id": "goblin"})
     r = client.post("/worker/claim", json={"queue": "image", "worker_id": "w1"}, headers=_hdr())
@@ -234,11 +235,13 @@ def test_glb_completion_refuses_a_path_shaped_job_id(client, tmp_path, monkeypat
 
 
 def test_empty_claim_long_polls_then_returns_null(client):
+    workers.worker_created("w1", None, "llm", None, RATE)
     r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1"}, headers=_hdr())
     assert r.json() == {"job": None}
 
 
 def test_wait_seconds_shortens_the_long_poll_window(client, monkeypatch):
+    workers.worker_created("w1", None, "llm", None, RATE)
     monkeypatch.setattr(wq, "CLAIM_LONG_POLL_SECONDS", 30.0)
     t0 = time.time()
     r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1",
@@ -248,6 +251,7 @@ def test_wait_seconds_shortens_the_long_poll_window(client, monkeypatch):
 
 
 def test_wait_seconds_is_capped_at_the_server_max(client):
+    workers.worker_created("w1", None, "llm", None, RATE)
     # server max is 0.2 in this fixture; asking for 60 must not hold the request for 60s
     t0 = time.time()
     r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1",
@@ -257,12 +261,14 @@ def test_wait_seconds_is_capped_at_the_server_max(client):
 
 
 def test_claim_records_the_pod_id(client):
+    workers.worker_created("w1", "pod-1", "llm", None, RATE)
     client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1",
                                        "pod_id": "pod-1"}, headers=_hdr())
     assert workers.live_workers("llm", 60)[0]["pod_id"] == "pod-1"
 
 
 def test_heartbeat_bumps_worker_last_seen(client):
+    workers.worker_created("w1", None, "llm", None, RATE)
     jobs.enqueue_job("llm", {})
     r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1"}, headers=_hdr())
     job = r.json()["job"]
@@ -275,12 +281,22 @@ def test_heartbeat_bumps_worker_last_seen(client):
 
 
 def test_deregister_terminates_the_worker_row(client):
+    workers.worker_created("w1", "pod-1", "llm", None, RATE)
     client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1",
                                        "pod_id": "pod-1"}, headers=_hdr())
     r = client.post("/worker/deregister", json={"worker_id": "w1"}, headers=_hdr())
     assert r.json() == {"ok": True}
     assert workers.live_workers("llm", 60) == []
     assert workers.terminated_workers_with_pods("llm")[0]["id"] == "w1"
+
+
+def test_a_worker_nobody_created_is_refused_at_claim(client):
+    jobs.enqueue_job("llm", {})
+    r = client.post("/worker/claim", json={"queue": "llm", "worker_id": "stray"}, headers=_hdr())
+    assert r.status_code == 403
+    assert "never created" in r.json()["detail"]
+    assert workers.live_workers("llm", 60) == []
+    assert jobs.claim_job("llm", "w1", 60) is not None
 
 
 def test_deregister_requires_the_token(client):

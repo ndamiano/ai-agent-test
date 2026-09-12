@@ -174,6 +174,11 @@ class Agent:
             try:
                 job = self.claim()
             except requests.RequestException as e:
+                refused = getattr(e, "response", None)
+                if refused is not None and refused.status_code == 403:
+                    logger.error("worker %s refused: %s — exiting", self.worker_id, refused.text)
+                    self.stopping = True
+                    break
                 logger.warning("claim failed (%s) — retrying in 5s", e)
                 time.sleep(5)
                 continue

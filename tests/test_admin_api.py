@@ -70,6 +70,8 @@ def test_workers_report_state_and_the_job_they_hold(app_client):
     games.create_game("g1", "u1")
     games.charge_game("g1", 1, 1_000_000)
     jid = jobs.enqueue_job("mesh", {}, game_id="g1", build_id="b1")
+    workers.worker_created("busy", "p1", "mesh", "BIG", 0.99)
+    workers.worker_created("idle", None, "mesh", "NVIDIA GeForce RTX 5090", 0.0)
     workers.worker_seen("busy", "mesh", gpu_type="BIG", source="runpod", pod_id="p1")
     workers.worker_seen("idle", "mesh", gpu_type="NVIDIA GeForce RTX 5090", source="local")
     jobs.claim_job("mesh", "busy", 60)

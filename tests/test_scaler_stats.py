@@ -1,7 +1,6 @@
 """SqliteStatsSource over db.jobs + db.workers: queue stats, live/stale worker filtering, and a worker row bound
 to its pod."""
 
-import sqlite3
 
 import pytest
 
@@ -48,6 +47,7 @@ def test_job_seconds_is_the_week_s_mean_with_the_slowest_tenth_left_out():
 
 def test_live_and_stale_filtering():
     src = SqliteStatsSource()
+    workers.worker_created("w1", "p1", "mesh", None, 0.99)
     workers.worker_seen("w1", "mesh", pod_id="p1")
     assert src.live_workers("mesh", 60) == [("w1", "p1")]
     assert src.stale_workers("mesh", 60, 900) == []
@@ -58,6 +58,7 @@ def test_live_and_stale_filtering():
 
 
 def test_home_box_workers_are_never_stale():
+    workers.worker_created("home", None, "mesh", None, 0.0)
     workers.worker_seen("home", "mesh")
     _backdate_worker("home", 999)
     assert SqliteStatsSource().stale_workers("mesh", 60, 900) == []
@@ -65,6 +66,7 @@ def test_home_box_workers_are_never_stale():
 
 def test_a_deregistered_worker_stays_terminated_when_it_claims_again():
     src = SqliteStatsSource()
+    workers.worker_created("w1", "p1", "mesh", None, 0.99)
     workers.worker_seen("w1", "mesh", pod_id="p1")
     src.mark_worker_terminated("w1")
     workers.worker_seen("w1", "mesh", pod_id="p1")
@@ -74,8 +76,7 @@ def test_a_deregistered_worker_stays_terminated_when_it_claims_again():
 
 def test_a_worker_id_is_bound_to_the_pod_it_was_created_for():
     workers.worker_created("w1", "p1", "mesh", None, None)
-    with pytest.raises(sqlite3.IntegrityError):
-        workers.worker_seen("w1", "mesh", pod_id="p2")
+    assert workers.worker_seen("w1", "mesh", pod_id="p2") is False
     assert workers.booting_workers("mesh")[0]["pod_id"] == "p1"
 
 

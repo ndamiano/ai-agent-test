@@ -21,7 +21,7 @@ def worker_created(worker_id: str, pod_id: str, queue: str, gpu_type: Optional[s
 
 
 def worker_seen(worker_id: str, queue: str, gpu_type: Optional[str] = None,
-                source: Optional[str] = None, pod_id: Optional[str] = None) -> None:
+                source: Optional[str] = None, pod_id: Optional[str] = None) -> bool:
     now = time.time()
     with platform_db() as conn:
         cur = conn.execute(
@@ -29,11 +29,7 @@ def worker_seen(worker_id: str, queue: str, gpu_type: Optional[str] = None,
             "gpu_type = COALESCE(?, gpu_type), source = COALESCE(?, source) "
             "WHERE id = ? AND pod_id IS ?",
             (queue, now, now, gpu_type, source, worker_id, pod_id))
-        if cur.rowcount == 0:
-            conn.execute(
-                "INSERT INTO workers (id, queue, gpu_type, source, pod_id, started_at, "
-                "registered_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (worker_id, queue, gpu_type, source, pod_id, now, now, now))
+    return cur.rowcount > 0
 
 
 def touch_worker(worker_id: str) -> None:

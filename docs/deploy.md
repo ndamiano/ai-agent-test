@@ -197,7 +197,8 @@ python -m worker.agent ... --queue mesh  --target http://localhost:8189   # TREL
 ```
 
 `--target` is the worker's own inference server and should stay bound to `127.0.0.1` — a reachable
-one is an unauthenticated GPU.
+one is an unauthenticated GPU. `--worker-id` must name a row the scaler created for the pod: a
+worker row carries the pod's price, and a claim from an id nobody created is refused.
 
 A queue with no worker means every job on it times out.
 

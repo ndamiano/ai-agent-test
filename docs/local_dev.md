@@ -15,20 +15,12 @@ worker-pull queue is the only transport — so a queue with no worker means ever
 
 **Frontend** — `cd frontend && npm run dev`
 
-**Workers** (own terminal each, from `src/`, after `source venv/bin/activate`). One worker per
-queue, and a queue owns its card. Check the ports against what you actually launched:
-
-```
-python -m worker.agent --server http://localhost:8000 --token <workqueue.token> --queue llm   --target http://localhost:8090
-SAFETY_MODEL_DIR=<safety model dir> python -m worker.agent --server http://localhost:8000 --token <workqueue.token> --queue image --target http://localhost:8188
-python -m worker.agent --server http://localhost:8000 --token <workqueue.token> --queue mesh  --target http://localhost:8189
-SAFETY_MODEL_DIR=<safety model dir> python -m worker.agent --server http://localhost:8000 --token <workqueue.token> --queue video --target http://localhost:8188
-```
-
-Defaults if omitted: server `localhost:8000`, target `localhost:1234`, queue `llm`. The token is
-`workqueue.token` from settings.json. `video` targets the same ComfyUI instance as `image` (MiniMax-H3
-runs there too) and needs `SAFETY_MODEL_DIR` for the same reason `image` does — every frame the sheet
-is built from gets an NSFW verdict.
+**Workers** — `scripts/local_gpu.py` starts them (below), and it is the only way to: a worker
+row is created, priced, before the worker runs — the scaler does it for a pod at the pod's rate,
+`local_gpu.py` does it for this box at zero — and a claim from a worker id nobody created is
+refused, so a bare `python -m worker.agent` never lands a job. `video` targets the same ComfyUI
+instance as `image` (MiniMax-H3 runs there too) and needs `SAFETY_MODEL_DIR` for the same reason
+`image` does — every frame the sheet is built from gets an NSFW verdict.
 
 **One card, four queues, `auto`** — a world build (`compose_world`, or `worldgen.build.build_world`
 by hand) alternates llm/image/mesh jobs many times and

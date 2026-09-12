@@ -13,7 +13,7 @@ from auth.deps import require_admin
 from auth.store import User
 from config.settings_manager import settings_manager
 from db import store as db_store
-from db.estimates import QUEUE_SECONDS
+from billing.utils import QUEUE_SECONDS_ESTIMATES
 from maestro.codegen import build_chain
 from scaler.runpod_client import RunPodClient
 
@@ -68,7 +68,7 @@ def _workers(queue: str, now: float, freshness: float) -> List[Dict[str, Any]]:
             "busy_seconds": w["busy_seconds"],
             "job": job and {"id": job["id"], "game_id": job["game_id"], "build_id": job["build_id"],
                             "running_seconds": now - (job["started_at"] or now),
-                            "est_seconds": QUEUE_SECONDS[queue]},
+                            "est_seconds": QUEUE_SECONDS_ESTIMATES[queue]},
         })
     return rows
 
@@ -82,7 +82,7 @@ async def get_queues(_: User = Depends(require_admin)) -> Dict[str, Any]:
     queues: List[Dict[str, Any]] = []
     totals = {"pending": 0, "claimed": 0, "workers_live": 0, "backlog_seconds": 0.0}
 
-    for q in QUEUE_SECONDS:
+    for q in QUEUE_SECONDS_ESTIMATES:
         stats = db_store.queue_stats(q)
         workers = _workers(q, now, freshness)
         row = {
@@ -92,10 +92,10 @@ async def get_queues(_: User = Depends(require_admin)) -> Dict[str, Any]:
             "oldest_pending_age_seconds": stats["oldest_pending_age_seconds"],
             "workers_live": sum(w["state"] != "booting" for w in workers),
             "workers_max": _max_workers(q),
-            "est_seconds": QUEUE_SECONDS[q],
+            "est_seconds": QUEUE_SECONDS_ESTIMATES[q],
             "backlog_seconds": db_store.backlog_seconds(q),
             "next": [{"id": j["id"], "game_id": j["game_id"], "build_id": j["build_id"],
-                      "waiting_seconds": now - j["created_at"], "est_seconds": QUEUE_SECONDS[q]}
+                      "waiting_seconds": now - j["created_at"], "est_seconds": QUEUE_SECONDS_ESTIMATES[q]}
                      for j in db_store.pending_jobs_head(q, _NEXT_LIMIT)],
             "workers": workers,
             "stockouts": _stockouts(q, now),

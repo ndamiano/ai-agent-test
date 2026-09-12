@@ -64,7 +64,7 @@ typecheck + vitest for `frontend/`, ruff + the backend suite for Python. It dese
 — the dozen tests that launch a real headless chromium — and CI runs those. `--no-verify` skips
 the lot.
 
-**Tests** — `cd src && python -m pytest ../tests/ -q -n auto` (pytest-xdist; the suite is
+**Tests** — `python -m pytest tests/ -q -n auto` (pytest-xdist; the suite is
 process-parallel, 36 s serial against 9 s here), frontend
 `cd frontend && npm test` (vitest).
 

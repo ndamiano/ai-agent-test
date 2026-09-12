@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 from auth import store
 from db import store as db_store
-from db.estimates import QUEUE_SECONDS
+from billing.utils import QUEUE_SECONDS_ESTIMATES
 
 
 def _token(handle, role):
@@ -27,7 +27,7 @@ def test_admin_gets_a_snapshot_of_every_queue(app_client):
     r = app_client.get("/api/admin/queues", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200
     body = r.json()
-    assert {q["queue"] for q in body["queues"]} == set(QUEUE_SECONDS)
+    assert {q["queue"] for q in body["queues"]} == set(QUEUE_SECONDS_ESTIMATES)
     for q in body["queues"]:
         assert q.keys() >= {"pending", "claimed", "workers_live", "workers_max",
                             "backlog_seconds", "next", "workers"}
@@ -53,13 +53,13 @@ def test_next_lists_pending_jobs_in_claim_order_with_their_wait(app_client):
     assert mesh["next"][0]["game_id"] == "g1"
     assert mesh["next"][0]["build_id"] == build
     assert 0 <= mesh["next"][0]["waiting_seconds"] < 5
-    assert mesh["next"][0]["est_seconds"] == QUEUE_SECONDS["mesh"]
+    assert mesh["next"][0]["est_seconds"] == QUEUE_SECONDS_ESTIMATES["mesh"]
     assert (totals["pending"], totals["claimed"]) == (2, 0)
 
 
 def test_next_is_capped_at_ten(app_client):
     db_store.create_game("g1", "u1")
-    db_store.charge_game("g1", 1, 100_000)
+    db_store.charge_game("g1", 1, 10_000_000)
     for _ in range(12):
         db_store.enqueue_job("image", {}, game_id="g1", build_id="b1")
     image, _ = _queue(app_client, "image")
@@ -81,7 +81,7 @@ def test_workers_report_state_and_the_job_they_hold(app_client):
     assert by_id["busy"]["job"]["id"] == jid
     assert by_id["busy"]["job"]["game_id"] == "g1"
     assert 0 <= by_id["busy"]["job"]["running_seconds"] < 5
-    assert by_id["busy"]["job"]["est_seconds"] == QUEUE_SECONDS["mesh"]
+    assert by_id["busy"]["job"]["est_seconds"] == QUEUE_SECONDS_ESTIMATES["mesh"]
     assert by_id["idle"]["state"] == "idle"
     assert by_id["idle"]["job"] is None
     assert (mesh["workers_live"], mesh["claimed"], mesh["pending"]) == (2, 1, 0)
@@ -108,7 +108,9 @@ def test_a_created_pod_is_booting_until_its_worker_registers(app_client):
 
 def test_costs_split_a_reused_pod_id_into_its_lives(app_client, monkeypatch):
     from api.routers import admin
-    from db.estimates import job_micros
+    from billing.utils import calculate_job_cost
+
+    RATE = 0.99
 
     now = time.time()
     day = 86400
@@ -156,11 +158,11 @@ def test_costs_split_a_reused_pod_id_into_its_lives(app_client, monkeypatch):
     assert (wed["pod_id"], wed["runpod_usd"], wed["disk_usd"]) == ("qwieur", 0.6, 0.1)
     assert wed["billed_seconds"] == pytest.approx(1800.0)
     assert (wed["jobs"], wed["failed"], wed["exec_seconds"]) == (3, 1, 468.0)
-    assert wed["customer_usd"] == round(job_micros(360.0, 1.0) / 1e6, 4)
+    assert wed["customer_usd"] == round(calculate_job_cost(360.0, 1.0) / 1e6, 4)
     tue = tracked["w-tue"]
     assert (tue["pod_id"], tue["runpod_usd"], tue["jobs"]) == ("qwieur", 2.0, 1)
     assert tue["billed_seconds"] == pytest.approx(3600.0)
-    assert tue["customer_usd"] == round(job_micros(100.0, 2.0) / 1e6, 4)
+    assert tue["customer_usd"] == round(calculate_job_cost(100.0, 2.0) / 1e6, 4)
 
     ghosts = {p["pod_id"]: p for p in body["pods"] if not p["tracked"]}
     assert {pid: g["runpod_usd"] for pid, g in ghosts.items()} == {"boot-looper": 1.5,

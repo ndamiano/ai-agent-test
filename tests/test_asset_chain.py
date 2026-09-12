@@ -9,12 +9,17 @@ finalize is claimed exactly once no matter who gets there first.
 
 import pytest
 
+from billing.utils import QUEUE_MICRO_ESTIMATES, calculate_job_cost
 from db import store
+
+RATE = 0.99   # the rate every test worker is created at
 
 
 def _game(micros: int = 1_000_000, game_id: str = "g1") -> str:
     store.create_game(game_id, "u1")
     store.charge_game(game_id, 1, micros)
+    for worker in ("w1", "w2"):
+        store.worker_created(worker, None, "llm", None, RATE)
     return game_id
 
 
@@ -86,7 +91,7 @@ def test_a_continuations_cost_debits_the_parents_game():
     before = store.game("g1")["spent_micros"]
     store.claim_job("mesh", "w2", lease_seconds=60)
     store.complete_job(out["continuation_id"], "w2", {"glb_file": "/x.glb"}, None, 30.0)
-    assert store.game("g1")["spent_micros"] == before + store.job_micros(30.0, None)
+    assert store.game("g1")["spent_micros"] == before + calculate_job_cost(30.0, RATE)
 
 
 def test_a_failed_job_enqueues_no_continuation():
@@ -99,7 +104,7 @@ def test_a_failed_job_enqueues_no_continuation():
 def test_a_refused_continuation_still_finishes_the_batch():
     """A budget refusal mid-chain must not strand the batch: the game renders shapes, which is the
     stage's soft-degrade, and the finalize still has to run."""
-    _game(store.reserve_micros("image") + 1)
+    _game(QUEUE_MICRO_ESTIMATES["image"] + 1)
     out = _complete(_image_job("b1"), continuation=_MESH)
     assert out["continuation_id"] is None
     assert out["batch_complete"] is True

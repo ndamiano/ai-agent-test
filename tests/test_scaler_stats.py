@@ -29,6 +29,7 @@ def test_queue_stats_counts_and_oldest_age():
 
 
 def test_queue_stats_ignores_other_queues_and_finished_jobs():
+    store.worker_created("w1", None, "mesh", None, 0.99)
     job = store.enqueue_job("mesh", {})
     store.enqueue_job("image", {})
     store.claim_job("mesh", "w1", lease_seconds=60)
@@ -37,6 +38,7 @@ def test_queue_stats_ignores_other_queues_and_finished_jobs():
 
 
 def test_job_seconds_is_the_week_s_mean_with_the_slowest_tenth_left_out():
+    store.worker_created("w1", None, "image", None, 0.99)
     for i, secs in enumerate([2.0] * 9 + [500.0]):
         job = store.enqueue_job("image", {"n": i})
         store.claim_job("image", "w1", lease_seconds=60)

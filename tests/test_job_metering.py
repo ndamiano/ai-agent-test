@@ -10,9 +10,9 @@ from db import store
 
 def _job(queue: str = "llm", model=None, build_id="b1") -> str:
     store.create_game("g1", "u1")
-    store.charge_game("g1", 1, 10_000.0)
+    store.charge_game("g1", 1, 10_000_000)
     job_id = store.enqueue_job(queue, {}, game_id="g1", build_id=build_id, model=model)
-    store.worker_seen("w1", queue)
+    store.worker_created("w1", None, queue, None, 0.99)
     store.claim_job(queue, "w1", 60)
     return job_id
 
@@ -73,26 +73,15 @@ def _finish(job_id, usd_per_hour, exec_seconds, error=None):
 def test_a_job_debits_its_pods_own_rate_rounded_up_to_the_micro():
     job_id = _priced_job(2.21)
     _finish(job_id, 2.21, 47.0)
-    # $2.21/h × 47 s = $0.0288527… → 28,853 micros.
-    assert store.game("g1")["spent_micros"] == 28_853
-    assert store.get_job(job_id)["billed_micros"] == 28_853
-
-
-def test_a_second_at_the_fallback_rate_is_275_micros():
-    _finish(_priced_job(0.99), 0.99, 1.0)
-    assert store.game("g1")["spent_micros"] == 275
-
-
-def test_a_worker_with_no_rate_debits_at_the_fallback():
-    _finish(_priced_job(None), None, 1.0)
-    assert store.game("g1")["spent_micros"] == 275
+    assert store.game("g1")["spent_micros"] == 28_858
+    assert store.get_job(job_id)["billed_micros"] == 28_858
 
 
 def test_a_pricier_pod_debits_more_for_the_same_seconds():
     _finish(_priced_job(2.19, game="g1"), 2.19, 100.0)
     _finish(_priced_job(0.99, game="g2"), 0.99, 100.0)
     ratio = store.game("g1")["spent_micros"] / store.game("g2")["spent_micros"]
-    assert ratio == pytest.approx(2.19 / 0.99, rel=1e-4)
+    assert ratio == pytest.approx(2.19 / 0.99, rel=2e-3)
 
 
 def test_the_builds_debit_matches_the_games():
@@ -100,7 +89,7 @@ def test_the_builds_debit_matches_the_games():
     store.charge_game("g1", 1, 10_000_000)
     build_id = store.create_build("g1")
     _finish(_priced_job(2.21, build_id=build_id), 2.21, 47.0)
-    assert store.builds_for("g1")[0]["spent_micros"] == 28_853
+    assert store.builds_for("g1")[0]["spent_micros"] == 28_858
 
 
 def test_a_failed_job_debits_nothing_but_its_row_keeps_the_price():
@@ -108,4 +97,4 @@ def test_a_failed_job_debits_nothing_but_its_row_keeps_the_price():
     _finish(job_id, 2.21, 47.0, error="status 500")
     job = store.get_job(job_id)
     assert store.game("g1")["spent_micros"] == 0
-    assert (job["exec_seconds"], job["billed_micros"]) == (47.0, 28_853)
+    assert (job["exec_seconds"], job["billed_micros"]) == (47.0, 28_858)

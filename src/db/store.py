@@ -21,8 +21,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from config.settings_manager import settings_manager
-from db.estimates import estimate_seconds, job_micros, reserve_micros
 from tools.version import maestro_rev
+from billing.utils import QUEUE_MICRO_ESTIMATES, QUEUE_SECONDS_ESTIMATES, calculate_job_cost
 
 logger = logging.getLogger(__name__)
 
@@ -283,6 +283,10 @@ def compute_remaining(game_id: str) -> int:
         return _remaining_locked(conn, game_id)
 
 
+def can_afford(game_id: str, queue: str) -> bool:
+    return compute_remaining(game_id) >= QUEUE_MICRO_ESTIMATES[queue]
+
+
 def create_build(game_id: str, kind: str = "build") -> str:
     build_id = uuid.uuid4().hex[:12]
     with _db() as conn:
@@ -337,7 +341,7 @@ def _insert_job_locked(conn, queue: str, payload: Dict, game_id: Optional[str],
     """Admit + insert one job on a connection that ALREADY holds the write lock. Raises
     InsufficientCompute. Shared by enqueue_job and the continuation a completion lands, so both
     reserve against the same headroom under the same lock."""
-    reserved = reserve_micros(queue)
+    reserved = QUEUE_MICRO_ESTIMATES[queue]
     job_id = uuid.uuid4().hex[:16]
     if game_id is not None:
         remaining = _remaining_locked(conn, game_id)
@@ -579,30 +583,7 @@ def elide_job_result(job_id: str) -> None:
 def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Optional[str],
                  exec_seconds: float, gpu_type: Optional[str] = None,
                  continuation: Optional[Dict] = None) -> Optional[Dict]:
-    """Land a job's outcome, debit its game's compute budget, and advance its chain. One
-    transaction: the job row, the games and builds spent_micros debits, the worker's busy-seconds
-    and the follow-up job all move together. None if the job isn't this worker's claim (lease
-    lapsed — the retry's result wins, this one is dropped).
-
-    ONLY DELIVERED WORK IS BILLED. A game is debited when it got a result and never otherwise: a
-    failed job, a lapsed-lease duplicate, and a job whose enqueuer abandoned it all leave
-    spent_micros untouched. The worker's busy_seconds still moves in every case — that measures
-    the GPU time WE pay for, which is real whether or not the user got anything for it.
-
-    The debit is exec_seconds at the claiming worker's own hourly rate (`job_micros`), read in
-    this transaction. The row keeps both the raw exec_seconds (what the card ran) and
-    billed_micros (what it cost), so the ledger survives a rate change.
-
-    `continuation` is a fully-built {queue, payload, metadata?, model?} the caller derived from
-    this job's `then`; it inherits game_id/build_id/batch_id so its cost debits the same game
-    even though nothing enqueued it inside a run_scope. Refused by the budget it is simply
-    dropped — the batch finishes short and the finalize still runs, which is the asset stage's
-    soft-degrade.
-
-    Returns {batch_id, batch_complete, metadata, game_id, continuation_id}. batch_complete is
-    true for exactly ONE completion per batch: the count of jobs still pending/claimed is taken
-    AFTER the continuation is inserted, inside the same write transaction, so a completion can
-    never see an empty batch whose next job simply doesn't exist yet."""
+    """Land a job's outcome, debit its game, and advance its chain — one transaction."""
     now = time.time()
     status = "failed" if error else "done"
     # No immediate=True: the UPDATE below is the first statement, so the write lock is already
@@ -615,7 +596,7 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
             return None
         payload = elide_payload(job_row["queue"], json.loads(job_row["payload"]))
         rate = conn.execute("SELECT usd_per_hour FROM workers WHERE id = ?", (worker_id,)).fetchone()
-        billed = job_micros(exec_seconds, rate and rate["usd_per_hour"])
+        billed = calculate_job_cost(exec_seconds, rate["usd_per_hour"])
         cur = conn.execute(
             "UPDATE jobs SET status = ?, payload = ?, result = ?, error = ?, exec_seconds = ?, "
             "billed_micros = ?, gpu_type = ?, model = COALESCE(?, model), "
@@ -652,6 +633,8 @@ def complete_job(job_id: str, worker_id: str, result: Optional[Dict], error: Opt
                 logger.error("continuation for job %s refused: %s", job_id, e)
 
         batch_complete = False
+        # Counted after the continuation insert, or a completion sees an empty batch whose next
+        # job does not exist yet.
         if row["batch_id"]:
             left = conn.execute(
                 "SELECT COUNT(*) AS n FROM jobs WHERE batch_id = ? "
@@ -884,13 +867,12 @@ def recent_job_seconds(queue: str, since: float) -> Optional[float]:
 
 
 def backlog_seconds(queue: str) -> float:
-    """Projected GPU-seconds still owed to clear a queue: the reserved estimate of every job not
-    yet finished (pending + claimed). What the admin view reads as the live backlog cost."""
+    """Projected GPU time to clear the queue."""
     with _db() as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS n FROM jobs "
             "WHERE queue = ? AND status IN ('pending', 'claimed')", (queue,)).fetchone()
-    return row["n"] * estimate_seconds(queue)
+    return row["n"] * QUEUE_SECONDS_ESTIMATES[queue]
 
 
 def pending_jobs_head(queue: str, limit: int) -> List[Dict]:

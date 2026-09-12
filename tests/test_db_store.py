@@ -155,7 +155,7 @@ def test_a_finished_llm_row_keeps_measurements_and_never_the_words():
         "messages": [{"role": "system", "content": "You are a game designer."},
                      {"role": "user", "content": "Make a space game"}],
         "tools": [{"name": "draw_sprite"}]}}, game_id="g1", build_id="b1")
-    store.worker_seen("w1", "llm")
+    store.worker_created("w1", None, "llm", None, 0.99)
     store.claim_job("llm", "w1", 60)
     reply = {"choices": [{"message": {"role": "assistant", "content": "I'll create a space game",
                                       "tool_calls": [{"id": "c1", "type": "function", "function": {
@@ -183,7 +183,7 @@ def test_a_responses_wire_turn_elides_to_the_same_fields():
         "model": "m", "max_output_tokens": 900, "reasoning": {"effort": "low"},
         "instructions": "sys", "input": [{"type": "message", "role": "user", "content": "hi"}]}},
         game_id="g1", build_id="b1")
-    store.worker_seen("w1", "llm")
+    store.worker_created("w1", None, "llm", None, 0.99)
     store.claim_job("llm", "w1", 60)
     store.complete_job(job_id, "w1", {"output": [{"type": "function_call", "name": "write",
                                                   "arguments": "{}"}], "status": "completed",
@@ -203,7 +203,7 @@ def test_an_art_row_keeps_its_prompt_and_render_record_and_drops_the_blobs():
                                          "workflow": {"p": {"inputs": {"text": "a red dragon"}}},
                                          "uploads": [{"name": "init.png", "b64": "AAAA"}]},
                                game_id="g1", build_id="b1")
-    store.worker_seen("w1", "image")
+    store.worker_created("w1", None, "image", None, 0.99)
     store.claim_job("image", "w1", 60)
     store.complete_job(job_id, "w1", {"model": "sdxl", "images": [
         {"file": "/blobs/x.png", "safety": {"scores": {"NSFW": 0.1}}, "png_b64": "BBBB"}]},

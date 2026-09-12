@@ -10,7 +10,7 @@ from maestro.codegen.staging import game_dir
 from auth import store as auth_store
 from auth.billing import MICROS_PER_CREDIT
 from db import store as db_store
-from db.estimates import reserve_micros
+from billing.utils import QUEUE_MICRO_ESTIMATES
 from maestro.codegen.run import create_run
 from maestro.state import RunState
 
@@ -211,7 +211,7 @@ def test_detail_reports_remaining_net_of_queued_work(client):
     db_store.enqueue_job("mesh", {}, game_id=run_id, build_id="b1")
 
     detail = client.get(f"/api/games/{run_id}", headers=headers).json()
-    assert detail["budget_pct_remaining"] == (1_000_000 - reserve_micros("mesh")) / 1_000_000
+    assert detail["budget_pct_remaining"] == (1_000_000 - QUEUE_MICRO_ESTIMATES["mesh"]) / 1_000_000
 
 
 def test_events_endpoint_replays_the_log(client):
@@ -286,7 +286,7 @@ def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client, monkeypat
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
     _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.webp",
                                       "prompt": "a hero"}]})
-    db_store.charge_game(run_id, 1, 10_000.0)   # grant compute so the enqueue is admitted
+    db_store.charge_game(run_id, 1, 10_000_000)   # grant compute so the enqueue is admitted
     # The merge is an LLM call; the note-vs-original contract is tested on _merge_prompt itself.
     monkeypatch.setattr(assets_mod, "_merge_prompt",
                         lambda original, note: "a brave knight, pixel art")
@@ -296,6 +296,7 @@ def test_regenerate_enqueues_one_image_job_with_the_new_prompt(client, monkeypat
     assert r.status_code == 200
     assert r.json() == {"status": "regenerating", "run_id": run_id, "asset_id": "hero"}
 
+    db_store.worker_created("w1", None, "image", None, 0.99)
     job = db_store.claim_job("image", "w1", 60)
     assert job is not None and job["game_id"] == run_id and job["batch_id"]
     assert [b["kind"] for b in db_store.builds_for(run_id) if b["id"] == job["build_id"]] == ["regen"]
@@ -317,7 +318,7 @@ def test_regenerate_merge_is_attributed_to_the_game(client, monkeypatch):
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
     _write_assets(run_id, {"images": [{"id": "hero", "file": "assets/hero.webp",
                                       "prompt": "a hero"}]})
-    db_store.charge_game(run_id, 1, 10_000.0)
+    db_store.charge_game(run_id, 1, 10_000_000)
     seen = {}
 
     def _merge(original, note):
@@ -336,7 +337,7 @@ def test_regenerate_cross_user_is_403(client):
     user, _ = _user("alice")
     _, other = _user("bob")
     run_id = _make_game(user.id, {"request": "make a mine", "title": "Mine"})
-    db_store.charge_game(run_id, 1, 10_000.0)
+    db_store.charge_game(run_id, 1, 10_000_000)
     r = client.post(f"/api/games/{run_id}/assets/hero/regenerate", headers=other,
                     json={"prompt": "x"})
     assert r.status_code == 403
@@ -345,7 +346,7 @@ def test_regenerate_cross_user_is_403(client):
 def test_regenerate_bad_asset_id_is_400(client):
     user, headers = _user()
     run_id = _make_game(user.id, {"request": "make a moon miner", "title": "Moon Miner"})
-    db_store.charge_game(run_id, 1, 10_000.0)
+    db_store.charge_game(run_id, 1, 10_000_000)
     r = client.post(f"/api/games/{run_id}/assets/bad!id/regenerate", headers=headers,
                     json={"prompt": "x"})
     assert r.status_code == 400

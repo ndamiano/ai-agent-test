@@ -53,10 +53,10 @@ call) and returns `exec_seconds` on completion; the control plane debits it from
 the same transaction that lands the job. Multiple requests run at once, each debiting as it
 completes.
 
-**Overdraw is bounded by reservations** (`db/estimates.py`, landed). Debiting only on completion
+**Overdraw is bounded by reservations** (`billing/utils.py`, landed). Debiting only on completion
 would let a build enqueue far faster than workers complete, so `spent_micros` reads near-zero right
-up to the moment a grant is already gone. Instead each queue carries a flat estimate — llm 15s,
-image 8s, mesh 90s, each near the p90 of the jobs table's real `exec_seconds` — and enqueue RESERVES that estimate against the grant; the measured debit
+up to the moment a grant is already gone. Instead each queue carries a flat estimate — llm 31s,
+image 33s, mesh 48s, video 166s, each the p90 of the jobs table's real `exec_seconds` — and enqueue RESERVES that estimate against the grant; the measured debit
 replaces the reservation when the job leaves the queue. A single job that runs longer than its
 estimate is never refused mid-flight, so a game can still overdraw — the reservation bounds how far.
 The estimates are a hill-climbable policy constant, not a measurement: tune them against the jobs
@@ -64,13 +64,14 @@ table's real `exec_seconds`.
 
 **The debit is the pod's own price.** `complete_job` reads the claiming worker's
 `workers.usd_per_hour` — RunPod's `costPerHr`, stamped when the scaler creates the pod — and
-debits `ceil(exec_seconds × rate / 3600)` micros (`db/estimates.job_micros`), so a job on a $2.21
-card costs 2.2× the same seconds on a $0.99 one and a price change reaches the bill with no table
-to update. A worker with no rate (a home box) bills at a flat $0.99/h. The job row keeps both —
+debits `exec_seconds × ceil(rate / 3600)` micros (`billing.utils.calculate_job_cost`), so a job on
+a $2.21 card costs 2.2× the same seconds on a $0.99 one and a price change reaches the bill with no
+table to update. Rounding is upward at both steps — a fractional micro is charged, never dropped.
+A worker with no rate on record has no fallback price; the debit raises. The job row keeps both —
 `exec_seconds` is what the card ran and `billed_micros` what it cost — and the admin view's worked
-cost is the sum of those rows. The reservation at enqueue is priced at the same $0.99/h: the card
-is unknown until a worker claims, so a job on a pricier card overdraws its reservation until its
-real debit lands.
+cost is the sum of those rows. The reservation at enqueue is priced at the card that queue's pods
+are created on (`billing.utils.QUEUE_USD_PER_HOUR`), so a job that lands on the stock-out fallback
+card overdraws its reservation until its real debit lands.
 
 ---
 

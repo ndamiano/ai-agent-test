@@ -12,10 +12,12 @@ import base64
 
 from api.routers import workqueue as wq
 from db import store
-from db.estimates import job_micros
+from billing.utils import calculate_job_cost
 from llm_clients.connector import LLMConnector
 from llm_clients.rate_limiter import get_llm_rate_limiter
 from tools.execution_context import run_scope
+
+RATE = 0.99   # the rate every test worker is created at
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +44,8 @@ def test_queues_are_separate():
 
 
 def test_expired_lease_requeues_and_stale_result_is_dropped():
+    for worker in ("w1", "w2"):
+        store.worker_created(worker, None, "llm", None, RATE)
     job_id = store.enqueue_job("llm", {"n": 1})
     store.claim_job("llm", "w1", lease_seconds=0.01)
     time.sleep(0.02)
@@ -63,16 +67,17 @@ def test_heartbeat_extends_only_the_owners_lease():
 def test_complete_debits_the_games_budget_and_worker_busy():
     store.create_game("g1", "u1")
     store.charge_game("g1", 1, 1_000_000)   # enqueue admits against the grant
-    store.worker_seen("w1", "llm")
+    store.worker_created("w1", None, "llm", None, RATE)
     job_id = store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
     store.claim_job("llm", "w1", lease_seconds=60)
     store.complete_job(job_id, "w1", {"out": 1}, None, exec_seconds=12.5)
-    assert store.game("g1")["spent_micros"] == job_micros(12.5, None)
+    assert store.game("g1")["spent_micros"] == calculate_job_cost(12.5, 0.99)
     job = store.get_job(job_id)
     assert (job["status"], job["exec_seconds"]) == ("done", 12.5)
 
 
 def test_failed_job_carries_the_error():
+    store.worker_created("w1", None, "llm", None, RATE)
     job_id = store.enqueue_job("llm", {})
     store.claim_job("llm", "w1", lease_seconds=60)
     store.complete_job(job_id, "w1", None, "Status 500: boom", 3.0)
@@ -116,6 +121,7 @@ def test_a_claim_never_hands_a_worker_the_jobs_metadata(client):
 
 
 def test_claim_execute_complete_over_http(client):
+    store.worker_created("w1", None, "llm", None, RATE)
     store.create_game("g1", "u1")
     store.charge_game("g1", 1, 1_000_000)
     store.enqueue_job("llm", {"path": "/v1/responses", "body": {"model": "m"}}, game_id="g1", build_id="b1")
@@ -132,12 +138,13 @@ def test_claim_execute_complete_over_http(client):
         "job_id": job["id"], "worker_id": "w1", "result": {"output": []},
         "exec_seconds": 4.5}, headers=_hdr())
     assert done.json()["ok"] is True
-    assert store.game("g1")["spent_micros"] == job_micros(4.5, None)
+    assert store.game("g1")["spent_micros"] == calculate_job_cost(4.5, RATE)
 
 
 def test_complete_offloads_the_glb_to_the_blob_dir(client, tmp_path, monkeypatch):
     monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
 
+    store.worker_created("w1", None, "mesh", None, RATE)
     jid = store.enqueue_job("mesh", {"kind": "trellis_mesh"})
     client.post("/worker/claim", json={"queue": "mesh", "worker_id": "w1"}, headers=_hdr())
     glb = b"glTF-binary-bytes"
@@ -168,6 +175,7 @@ def test_stale_glb_completion_removes_its_blob(client, tmp_path, monkeypatch):
 def test_complete_offloads_each_image_to_the_blob_dir(client, tmp_path, monkeypatch):
     monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
 
+    store.worker_created("w1", None, "image", None, RATE)
     jid = store.enqueue_job("image", {"kind": "comfy_image"})
     client.post("/worker/claim", json={"queue": "image", "worker_id": "w1"}, headers=_hdr())
     r = client.post("/worker/complete", json={
@@ -188,6 +196,7 @@ def test_complete_offloads_each_image_to_the_blob_dir(client, tmp_path, monkeypa
 def test_complete_offloads_the_anim_sheet_to_the_blob_dir(client, tmp_path, monkeypatch):
     monkeypatch.setattr(wq, "_blob_dir", lambda: tmp_path / "blobs")
 
+    store.worker_created("w1", None, "video", None, RATE)
     jid = store.enqueue_job("video", {"kind": "anim_sheet"})
     client.post("/worker/claim", json={"queue": "video", "worker_id": "w1"}, headers=_hdr())
     sheet = b"\x89PNG-sheet-bytes"
@@ -281,6 +290,7 @@ def test_deregister_requires_the_token(client):
 
 def _fake_worker(stop, respond):
     """Claim from the store directly and complete with `respond(payload)`."""
+    store.worker_created("fake", None, "llm", None, RATE)
     while not stop.is_set():
         job = store.claim_job("llm", "fake", lease_seconds=60)
         if job is None:
@@ -332,7 +342,7 @@ def test_connector_attributes_jobs_to_the_run_scope(fake_worker):
     fake_worker(lambda p: ({"choices": [{"message": {"content": ""}}]}, None))
     with run_scope("g9", "b1"):
         _connector().generate_with_tools([{"role": "user", "content": "hi"}], [])
-    assert store.game("g9")["spent_micros"] == job_micros(1.0, None)
+    assert store.game("g9")["spent_micros"] == calculate_job_cost(1.0, RATE)
 
 
 def test_a_blocking_callers_reply_is_whole_until_read_then_elided(fake_worker):
@@ -351,6 +361,7 @@ def test_a_blocking_callers_reply_is_whole_until_read_then_elided(fake_worker):
 
 
 def test_a_consumed_jobs_reply_is_elided_by_the_route(client):
+    store.worker_created("w1", None, "llm", None, RATE)
     jid = store.enqueue_job("llm", {"body": {"model": "m", "messages": []}},
                             metadata={"then": {"operations": []}})
     client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1"}, headers=_hdr())

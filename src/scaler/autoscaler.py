@@ -21,7 +21,7 @@ from scaler.policy import (
     TerminatePod,
     decide,
 )
-from db.estimates import estimate_seconds
+from billing.utils import QUEUE_SECONDS_ESTIMATES
 from scaler.runpod_client import RunPodClient, RunPodError
 from scaler.stats import StatsSource
 
@@ -93,7 +93,7 @@ class Autoscaler:
                 cooldown_seconds=qcfg.get("cooldown_seconds", 90),
                 boot_deadline_seconds=qcfg.get("boot_deadline_seconds", 300),
                 boot_seconds=qcfg.get("boot_seconds", 150),
-                assumed_job_seconds=estimate_seconds(queue),
+                assumed_job_seconds=QUEUE_SECONDS_ESTIMATES[queue],
                 min_jobs_per_pod=qcfg.get("min_jobs_per_pod", 6),
             )
             actions = decide(

@@ -23,7 +23,6 @@ from auth.deps import get_current_user
 from auth.store import User
 from config.settings_manager import settings_manager
 from db import store as db_store
-from db.estimates import cheapest_micros
 from maestro.codegen import archive, build_chain
 from maestro.codegen.assets import (AlreadyRendering, add_assets, entry_kind, ext_for, read_manifest,
                                     regenerate_asset)
@@ -81,7 +80,7 @@ def _require_compute(run_id: str) -> None:
     """Refuse work a game can't pay for, BEFORE it occupies the build queue. Enqueue enforces the
     same budget per job, so this is the fast, legible failure rather than the safety net: without
     it a broke run wins the GPU slot and then thrashes on refused jobs until its step cap."""
-    if db_store.compute_remaining(run_id) < cheapest_micros():
+    if not db_store.can_afford(run_id, "llm"):
         raise HTTPException(status_code=402, detail={
             "reason": "compute_exhausted", "run_id": run_id})
 

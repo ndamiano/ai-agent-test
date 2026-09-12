@@ -1,10 +1,14 @@
 """The admin-view queries over the jobs table: the head of a queue in claim order, what each
 worker holds, and the projected backlog."""
 
+import itertools
 import time
 
 from db import store
-from db.estimates import job_micros
+from billing.utils import calculate_job_cost, QUEUE_SECONDS_ESTIMATES
+
+RATE = 0.99   # the rate every test worker is created at
+_worker_seq = itertools.count()
 
 
 def _game():
@@ -25,7 +29,7 @@ def test_claimed_jobs_leave_the_head_and_name_their_worker():
     _game()
     first = store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
     second = store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
-    store.worker_seen("w1", "llm")
+    store.worker_created("w1", None, "llm", None, RATE)
     store.claim_job("llm", "w1", 60)
 
     assert [j["id"] for j in store.pending_jobs_head("llm", 10)] == [second]
@@ -35,24 +39,24 @@ def test_claimed_jobs_leave_the_head_and_name_their_worker():
     assert store.claimed_jobs("image") == []
 
 
-def test_backlog_seconds_sums_unfinished_estimates():
+def test_backlog_sums_the_estimates_of_unfinished_jobs():
     _game()
-    from db.estimates import QUEUE_SECONDS
     store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
     store.enqueue_job("llm", {}, game_id="g1", build_id="b1")
-    assert store.backlog_seconds("llm") == 2 * QUEUE_SECONDS["llm"]
+    assert store.backlog_seconds("llm") == 2 * QUEUE_SECONDS_ESTIMATES["llm"]
 
-    store.worker_seen("w1", "llm")
+    store.worker_created("w1", None, "llm", None, RATE)
     claimed = store.claim_job("llm", "w1", 60)
     store.complete_job(claimed["id"], "w1", {"ok": True}, None, exec_seconds=12.0)
-    assert store.backlog_seconds("llm") == QUEUE_SECONDS["llm"]
+    assert store.backlog_seconds("llm") == QUEUE_SECONDS_ESTIMATES["llm"]
 
 
 def _finish(queue, exec_seconds, *, game_id, gpu_type=None, build_id="b1"):
     store.enqueue_job(queue, {}, game_id=game_id, build_id=build_id)
-    store.worker_seen("w1", queue)
-    claimed = store.claim_job(queue, "w1", 60)
-    store.complete_job(claimed["id"], "w1", {"ok": True}, None,
+    worker = f"w{next(_worker_seq)}"
+    store.worker_created(worker, None, queue, None, RATE)
+    claimed = store.claim_job(queue, worker, 60)
+    store.complete_job(claimed["id"], worker, {"ok": True}, None,
                        exec_seconds=exec_seconds, gpu_type=gpu_type)
 
 
@@ -71,7 +75,7 @@ def test_pod_ledger_counts_each_pods_jobs_and_what_its_games_were_debited():
     assert (row["worker_id"], row["pod_id"]) == ("wp", "p1")
     assert (row["queue"], row["gpu_type"], row["usd_per_hour"]) == ("llm", "A", 1.0)
     assert (row["jobs"], row["failed"], row["exec_seconds"]) == (3, 1, 63.0)
-    assert row["customer_micros"] == job_micros(36.0, 1.0)
+    assert row["customer_micros"] == calculate_job_cost(36.0, 1.0)
     assert store.pod_ledger(time.time() + 10) == []
     assert store.pod_lives() == {"p1": [(row["started_at"], "wp")]}
 
@@ -104,7 +108,7 @@ def test_games_exec_seconds_is_everything_the_games_ever_ran():
     _finish("llm", 3.0, game_id="g2", gpu_type="A")
     _finish("llm", 1.0, game_id=None, gpu_type="A")
 
-    cost = lambda *s: sum(job_micros(x, None) for x in s)
+    cost = lambda *s: sum(calculate_job_cost(x, RATE) for x in s)
     assert store.games_exec_seconds_by_gpu(["g1"]) == {
         "A": {"seconds": 10.0, "micros": cost(10.0)}, "B": {"seconds": 4.0, "micros": cost(4.0)}}
     assert store.games_exec_seconds_by_gpu(["g1", "g2"]) == {

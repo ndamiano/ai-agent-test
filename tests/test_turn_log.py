@@ -30,6 +30,7 @@ def run(tmp_path, monkeypatch):
     run_id = create_run(user.id)
     RunState(run_id).write_spec({"request": "make a game", "title": "Moon Miner"})
     db_store.charge_game(run_id, 1, 1_000_000)
+    db_store.worker_created("w1", None, "llm", None, 0.99)
     return run_id
 
 

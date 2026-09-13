@@ -7,6 +7,16 @@ solution, please suggest it.
 If you have a question about why something is the way it is, there is likely an experiment that
 explains it, or you can ask the engineer.
 
+## Code Philosophy
+
+### Code is extremely cheap
+
+Now that AI agents can write an extremely large amount of code in a very short amount of time, and
+that code can be relatively well trusted, it is worth examining whether we should have third party
+dependencies. A new dependency adds a failure vector to our software, as well as a new avenue for
+dependency injection, and just overall issues. Given this, dependencies are to be avoided, unless
+they provide absolutely immense amount of effort savings.
+
 ## Agentic Philosophy
 
 ### The model isn't dumb

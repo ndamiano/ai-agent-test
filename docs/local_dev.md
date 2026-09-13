@@ -56,7 +56,8 @@ typecheck + vitest for `frontend/`, ruff + the backend suite for Python. It dese
 — the dozen tests that launch a real headless chromium — and CI runs those. `--no-verify` skips
 the lot.
 
-**Tests** — `python -m pytest tests/ -q -n auto` (pytest-xdist; the suite is
+**Tests** — `python -m pytest tests/ -q -n auto` (`requirements-dev.txt` holds pytest, xdist,
+httpx for the TestClient, and ruff; the suite is
 process-parallel, 36 s serial against 9 s here), frontend
 `cd frontend && npm test` (vitest).
 
@@ -298,7 +299,7 @@ records its own request records the first list entry forever (measured 2026-08-0
 stamped 5090, the bill entirely RTX PRO 4500).
 
 A pod's price is RunPod's own (`workers.usd_per_hour`, the pod's `costPerHr`, written at create),
-and it is what every job that pod runs debits (`docs/compute_billing_plan.md`); there is no rate
+and it is what every job that pod runs debits (`docs/finance_information.md`); there is no rate
 table to keep. The admin fleet view shows it beside each queue's provider stock-outs
 (`pod_refusals`, see `docs/deploy.md` "Autoscaler"): the outage under way, the count over the last
 seven days, and the never-pruned requests-vs-stock-refusals ratio over 60 days and all time;

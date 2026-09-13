@@ -1,162 +1,110 @@
-# Maestro
+# GameSummoner
 
-An AI platform that makes things. The user says "make me a game" — a while later, a good game exists. AI output quality is the product; everything else is scaffolding.
+Type a game prompt, click go, a playable browser game comes out.
 
-`CLAUDE.md` is the doctrine and the code standards. The rest is under `docs/`:
+How we work here is defined in `CLAUDE.md` and `docs/design-philosophy.md`, which should help get a
+handle on why we made the choices we've made.
 
-| doc | for |
-|---|---|
-| `vision.md` | the destination and the non-goals |
-| `roadmap.md` | where we stand against it |
-| `build_path.md` | the build path, module by module |
-| `architecture.md` | processes, state, trust boundaries |
-| `local_dev.md` | settings, model servers, how to run anything |
-| `deploy.md` | the prod runbook and attaching GPU capacity |
-| `backups.md` | DB snapshots, run archives, the restore drill |
-| `experiments.md` | what each change to the loop actually measured |
-| `game_rubric.md` | the form the owner grades a game with |
-| `compute_billing_plan.md` | credits, metering, unit economics |
-| `technology_analysis.md` | what we run today and what is on watch |
-| `catalogue_design.md` | the shared asset catalogue, design only |
+## Getting Started
 
-## How it works
-
-Press **Make a new game** and describe the game you want. A designer turns your words into a systems design, and the build starts on it the moment it lands. Nothing is stored server-side until you press Make.
-
-A non-LLM **driver** then hands the model seven tools — `list_files`, `read_file`, `write_file`, `edit_file`, `generate_media`, `compose_world`, `done` — plus a running transcript, and lets it write the game. The model decides the file layout, the systems, and what art gets drawn; it calls `done` when the game is playable. Output is **plain browser HTML/CSS/JavaScript**, served as written. Every game folder is seeded with the vendored three.js, GLTFLoader, BufferGeometryUtils and `world.js` (the loader for a `compose_world` world), plus `lib/` — a helper library for input, audio, a scaling canvas and lights, each file's header comment its API.
-
-A build reaches `built` when `index.html` exists and the error gate — the staged game opened headless — finds no uncaught exception. A gate may only detect BROKEN, never "bad", so whether a game is any *good* stays a human judgement. Play it, then say what to change: `python -m maestro.codegen.run --change <run_id> "<note>"`.
-
-The game asks for its own art as it writes the code that uses it: `generate_media(id, prompt, kind)` enqueues one render and answers immediately with the path the file will appear at, so the GPU draws while the model keeps writing.
-
-## Setup
+**You need:** Python 3.12, Node 20, git, and a GPU box that can serve a model (see "A GPU").
+Without a GPU you can still run the control plane, the frontend and the tests.
 
 ```bash
 # Backend
 python -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
-cp src/config/settings.example.json src/config/settings.json   # then edit
-python run.py
+pip install -r requirements.txt -r requirements-dev.txt
+python -m playwright install chromium            # the error gate opens games headless
+cp src/config/settings.example.json src/config/settings.json
+cp .env.example .env
+git config core.hooksPath scripts/githooks        # once per clone; comment audit + scoped CI
+python run.py                                     # http://localhost:8000
 
 # Frontend
-cd frontend
-npm install
-npm run dev
+cd frontend && npm install && npm run dev         # http://localhost:5173
+
+# Tests
+cd src && python -m pytest ../tests/ -q -n auto
+cd frontend && npm test
+scripts/ci.sh                                     # everything CI runs, before a push
 ```
 
-Settings live in `src/config/settings.json` (gitignored); every block is described in `docs/local_dev.md`.
-
-Signup is open at `/login`. Accounts can also be made from the CLI:
+Most things are set up in `src/config/settings.json`, which is git ignored. The required settings for
+getting this running locally can be found in `docs/local_dev.md`.
 
 ```bash
 cd src
-python -m auth.cli create <handle> <email>   # prompts for a password
-python -m auth.cli grant  <handle> <n>       # accounts start at 0 credits
+python -m auth.cli create <handle> <email> [--role admin]   # prompts for a password
+python -m auth.cli grant  <handle> <n>                       # accounts start at 0 credits
 ```
 
-### Workers (the only path to a GPU)
+## A GPU
 
-The queue is the only transport to a GPU. Every backend — LLM, images, meshes — is a worker agent that PULLS jobs over `/worker`, authed by the shared `workqueue.token`. **A queue with no worker running means every job on it times out**, so the `llm` worker is mandatory.
+GameSummoner's logic for creating a game never actually uses a GPU. Instead, it enqueues requests as
+they are needed, and processes as workers drain the queues. In order for this to work locally, we
+have `scripts/local_gpu.py auto` which automatically handles spinning up workers to drain the
+queues, one at a time, as they populate on the local server.
 
 ```bash
-python -m worker.agent --server http://localhost:8000 --token <token> --queue llm   --target http://localhost:8090  # ninfer (local 5090)
-SAFETY_MODEL_DIR=<safety model dir> python -m worker.agent --server http://localhost:8000 --token <token> --queue image --target http://localhost:8188  # ComfyUI
-python -m worker.agent --server http://localhost:8000 --token <token> --queue mesh  --target http://localhost:8189  # TRELLIS
+python scripts/local_gpu.py auto
 ```
 
-The control plane enqueues one canonical chat request; the worker translates it for whatever its target serves (`worker.agent --api chat|responses`).
+## First build
 
-### Local model server
-
-On the local 5090 the LLM is Qwen3.8 27B served by ninfer; the launch line and its load-bearing
-flags are in `docs/local_dev.md` "Model servers". ninfer's `--model-id` is what `llm.model` must
-name:
-
-```json
-"llm": {
-  "model": "qwen3.8_27b",
-  "reasoning": "none",
-  "n_ctx": 131072
-}
-```
-
-Prod serves a different model on a different card — Qwen3.8 Flash-Next on an RTX PRO 6000, under
-the name `pennyroyal` (`docs/deploy.md`) — and there too `llm.model` is the name the engine
-answers to; a pod refuses to boot under any other.
-
-A GPU serves one backend. Running the LLM and ComfyUI on one card means both must fit resident at once.
-
-## Build a game from the CLI
+Press **Make a new game** in the UI, or from the CLI:
 
 ```bash
-cd src && python -m maestro.codegen.run "<request>"            # the request is the prompt → build
+cd src && python -m maestro.codegen.run "<request>"
 ```
 
-Play a build by opening `runtime/games/<run_id>/index.html`. Serve a 3D one over http rather than `file://` — `<script type="module">` is CORS-blocked from a file origin.
-
-## Tests
+A built game lives at `runtime/games/<run_id>/`. A 3D one needs http, not `file://`:
 
 ```bash
-cd src && python -m pytest ../tests/ -q
+cd runtime/games/<run_id> && python -m http.server
 ```
+
+To test the change flow:
+
+```bash
+python -m maestro.codegen.run --change <run_id> "<note>"
+```
+
+The rest of the CLI (`--new`, `--assets`, `--history`, `--restore`, `--evict`) is in
+`docs/local_dev.md`.
+
+## Where to read
+
+| doc | for |
+|---|---|
+| `CLAUDE.md` | how we work |
+| `docs/*` | documentation on everything about GameSummoner |
+| `labs/` | past experiments in detail; its own repo, pulled separately |
 
 ## Repository layout
 
 ```
-runtime/
-  vendor/       three.js + GLTFLoader + BufferGeometryUtils + world.js, and lib/ (input, audio,
-                canvas, lights) — all copied into every game folder at seed
-  games/        staged games, served at /play
-  decimate.mjs  node: a finished TRELLIS GLB decimated to game weight
+run.py          the control plane entrypoint
 src/
   api/          FastAPI routers + WebSocket event bus
   auth/         identity, sessions, play grants, admin CLI
   billing/      credit ledger, packages, Stripe provider, job cost estimates
   config/       settings manager + example
   db/           games/builds/events/jobs/workers + the compute budget
-  grading.py    where a filled-in game grade is stored
   llm_clients/  connector, message builder, wire translation
   maestro/
-    codegen/    the build path — build_chain (driver), build_steps (turn machine),
-                build_state (cursor), tools, staging, assets, asset_chain,
-                asset_use, error_gate, artifact_screen, snapshots,
-                archive, turn_log, prompts/, run (CLI)
-    worldgen/   the 3D world behind compose_world: planning, terrain, objects, backends
-    services.py, state.py, tool_calls.py
+    codegen/    the build path: build_chain (driver), build_steps (turn machine), tools,
+                staging, assets, error_gate, snapshots, prompts/, run (CLI)
+    worldgen/   the 3D world behind compose_world
   scaler/       the RunPod autoscaler
-  tools/        ComfyUI, quilting, S3, DB backup, mailer, safety, execution context
+  tools/        ComfyUI, TRELLIS, quilting, S3, DB backup, mailer, safety
   worker/       the pull-side GPU worker agent
   workqueue/    the enqueue-side client + the queue reaper
-frontend/       React + Vite UI
-tests/          pytest suite
-docs/           see the table above
-scripts/        deploy, provision, the pod entrypoints, local_gpu (one card, three queues), db.py
-```
-## Repository layout
-
-```
 runtime/
-  vendor/       vendored three.js + GLTFLoader, copied into every game folder at seed
+  vendor/       three.js + loaders + world.js + lib/, copied into every game folder at seed
   games/        staged games, served at /play
-  decimate.mjs  node: a finished TRELLIS GLB decimated to game weight
-src/
-  api/          FastAPI routers + WebSocket event bus
-  auth/         identity, sessions, admin CLI
-  billing/      credit ledger, packages, Stripe provider, job cost estimates
-  config/       settings schema/manager
-  db/           games/builds/events/jobs/workers + the compute budget
-  llm_clients/  connector, message builder, wire translation
-  maestro/
-    codegen/    the build path — build_chain (driver), build_steps (turn machine),
-                build_state (cursor), tools, staging, assets, asset_chain,
-                prompts/, run (CLI)
-    services.py, state.py, tool_calls.py
-  scaler/       the RunPod autoscaler
-  tools/        tool manager, ComfyUI, TRELLIS, system tools, execution context
-  worker/       the pull-side GPU worker agent
-  workqueue/    the enqueue-side client + the queue reaper
 frontend/       React + Vite UI
 tests/          pytest suite
-docs/           vision, roadmap, deploy
+scripts/        local_gpu.py, ci.sh, githooks/, db.py, deploy + provision + pod entrypoints
+docs/           everything else
 ```

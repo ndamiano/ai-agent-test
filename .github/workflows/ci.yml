@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest pytest-xdist httpx
+        run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Install playwright browser
         run: python -m playwright install --with-deps chromium
       - name: Bootstrap settings
@@ -23,7 +23,7 @@ jobs:
       - name: Run tests
         run: cd src && python -m pytest ../tests/ -q -n auto
       - name: Unused imports and names
-        run: pip install ruff && ruff check src scripts run.py --select F401,F811,F841
+        run: ruff check src scripts run.py --select F401,F811,F841
 
   frontend:
     runs-on: ubuntu-latest

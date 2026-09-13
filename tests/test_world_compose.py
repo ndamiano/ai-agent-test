@@ -73,25 +73,34 @@ def run(tmp_runs):
 
 @pytest.fixture
 def pipeline(monkeypatch):
-    """A `build_world` that writes the stub world and records every leg, with the run scope each
-    leg saw. The legs after the first also add the mesh the objects stage would have made."""
+    """A stub `build_world` recording every leg; `done` fires when the build thread exits."""
     from tools.execution_context import get_run_id
 
     calls = []
+    started = threading.Event()
     done = threading.Event()
+    real_build = world_compose._build
 
     def fake_build_world(prompt, out_dir, *, start_at="scene", stop_after="final-render", **kw):
         calls.append({"prompt": prompt, "start_at": start_at, "stop_after": stop_after,
                       "run_id": get_run_id()})
         _write_world_build(out_dir, mesh=None if start_at == "scene" else "rock.glb")
-        if stop_after == world_compose.LEGS[-1][1]:
-            done.set()
         return {"name": "stub"}
 
+    def build_then_signal(*args):
+        started.set()
+        try:
+            real_build(*args)
+        finally:
+            done.set()
+
     monkeypatch.setattr("maestro.worldgen.build.build_world", fake_build_world)
+    monkeypatch.setattr(world_compose, "_build", build_then_signal)
     fake_build_world.calls = calls
     fake_build_world.done = done
-    return fake_build_world
+    yield fake_build_world
+    if started.is_set():
+        assert done.wait(10)
 
 
 def _compose(run, pipeline, **kw):
@@ -110,9 +119,7 @@ def test_the_tool_answers_with_the_path_and_nothing_it_cannot_know(run, pipeline
 def test_something_loadable_is_there_the_moment_the_tool_answers(run, pipeline):
     """Everything world.json names is beside it, by a path relative to it — the game fetches
     nothing outside its own folder, and never a file that has not landed."""
-    _compose(run, pipeline)
-    world = run.run_dir / "game" / "world"
-    for _ in range(2):                     # the placeholder first, the built ground after
+    def assert_loadable(world):
         job = json.loads((world / "world.json").read_text())
         paths = [job["heightmap"], *job["weight_textures"],
                  *(p for r in job["regions"] for p in (r["albedo"], r["normal"]))]
@@ -120,12 +127,15 @@ def test_something_loadable_is_there_the_moment_the_tool_answers(run, pipeline):
         for relative in paths:
             assert not relative.startswith((".", "/"))
             assert (world / relative).is_file()
-        assert pipeline.done.wait(10)
+
+    _compose(run, pipeline)
+    world = run.run_dir / "game" / "world"
+    assert_loadable(world)
+    assert pipeline.done.wait(10)
+    assert_loadable(world)
 
 
 def test_the_placeholder_carries_every_field_the_loader_reads(run, pipeline):
-    """`runtime/vendor/world.js` is the contract. A field it indexes and the placeholder omits is
-    a game that throws on load — which is the whole reason the placeholder exists."""
     loader = (Path(__file__).resolve().parents[1] / "runtime" / "vendor" / "world.js").read_text()
     world_compose._placeholder(run.run_dir / "game")
     job = json.loads((run.run_dir / "game" / "world" / "world.json").read_text())
@@ -135,7 +145,7 @@ def test_the_placeholder_carries_every_field_the_loader_reads(run, pipeline):
     region = job["regions"][0]
     for key in sorted(set(re.findall(r"\br\.([a-z_]+)", loader))):
         if key in ("x", "z", "radius") or key.startswith("variant_"):
-            continue          # World() derives the first three; the variants are optional
+            continue
         assert key in region, f"the loader reads r.{key}; the placeholder region has not got it"
     heights = (run.run_dir / "game" / "world" / job["heightmap"]).read_bytes()
     assert len(heights) == job["resolution"] ** 2 * 4 and set(heights) == {0}, "flat ground"
@@ -176,16 +186,10 @@ def test_a_later_leg_republishes_and_restages(run, pipeline, monkeypatch):
     _compose(run, pipeline)
     assert pipeline.done.wait(10)
     world = run.run_dir / "game" / "world"
-    for _ in range(100):
-        if len(staged) >= len(world_compose.LEGS):
-            break
-        threading.Event().wait(0.05)
     job = json.loads((world / "world.json").read_text())
     assert job["instances"]["rock"]["mesh"] == "subjects/meshes/rock.glb"
     assert (world / "subjects" / "meshes" / "rock.glb").is_file()
-    # A daemon thread another test left running stages under this test's patch, so the count is a
-    # floor rather than an equality.
-    assert len(staged) >= len(world_compose.LEGS) and set(staged) == {run.run_id}
+    assert staged == [run.run_id] * len(world_compose.LEGS)
 
 
 def test_a_failed_leg_leaves_the_published_world_standing(run, pipeline, monkeypatch, caplog):
@@ -197,11 +201,8 @@ def test_a_failed_leg_leaves_the_published_world_standing(run, pipeline, monkeyp
     monkeypatch.setattr("maestro.worldgen.build.build_world", explode)
     res = _compose(run, pipeline)
     assert res["ok"]
-    for _ in range(100):
-        job = json.loads((run.run_dir / "game" / "world" / "world.json").read_text())
-        if job["size_m"] == PLAN["world"]["size_m"]:
-            break                              # the built ground replaced the placeholder
-        threading.Event().wait(0.05)
+    assert pipeline.done.wait(10)
+    job = json.loads((run.run_dir / "game" / "world" / "world.json").read_text())
     assert job["size_m"] == PLAN["world"]["size_m"], "the leg that succeeded still stands"
 
 

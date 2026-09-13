@@ -302,8 +302,8 @@ aws s3 cp --profile runpod --region eu-ro-1 --endpoint-url https://s3api-eu-ro-1
 docker build -f docker/Dockerfile.worker-llm   -t ndamiano100/maestro-worker:llm-v19 .
 docker build -f docker/Dockerfile.worker-image -t ndamiano100/maestro-worker:image-v11 .
 docker tag ndamiano100/maestro-worker:image-v11 ndamiano100/maestro-worker:video-v3
-docker build -f docker/Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v19 .
-docker push ndamiano100/maestro-worker:mesh-v19   # etc.
+docker build -f docker/Dockerfile.worker-mesh  -t ndamiano100/maestro-worker:mesh-v21 .
+docker push ndamiano100/maestro-worker:mesh-v21   # etc.
 ```
 
 The env export goes through `$DOCKER_TMPDIR` — default `/tmp` — at its full size; set it to a
@@ -311,7 +311,7 @@ disk with room. The Docker Hub repo is private, so every template carries the re
 without it a pod exits in one second with no logs.
 
 The deployed tag is whatever each RunPod TEMPLATE names; the templates are the only record of it
-(`llm-v19`, `image-v11`, `video-v3`, `mesh-v19` at the last check). The `video` queue's template names its
+(`llm-v19`, `image-v11`, `video-v3`, `mesh-v21` at the last check). The `video` queue's template names its
 own `video-*` tag — the same build as the image queue's, tagged twice, so the two templates roll
 independently — from `video-v1` / `image-v9` on (ComfyUI 0.30.1, where the MiniMax-H3 nodes are
 core). It needs no env of its own: `WORKER_QUEUE` arrives from the scaler. Both templates carry a

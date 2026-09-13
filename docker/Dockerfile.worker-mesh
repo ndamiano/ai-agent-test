@@ -121,7 +121,7 @@ ENV PYTHONPATH=/opt/maestro/src \
     SPRITE_PYTHON=/opt/kimodo-venv/bin/python \
     SPRITE_PORT=8190 \
     CHECKPOINT_DIR=/workspace/kimodo \
-    SAFETY_MODEL_DIR=/workspace/safety
+    SAFETY_MODEL_DIR=/workspace/comfy/models/safety
 
 # flex_gemm persists its autotune picks (ON by default) — but to ~/.flex_gemm, which is container
 # disk that dies with the pod, so every boot re-benchmarked every sparse-conv config: measured

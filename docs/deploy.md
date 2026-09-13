@@ -357,10 +357,10 @@ sufficed on every measured pod since the loader stopped mmapping the checkpoint.
 
 **The image and mesh workers carry the NSFW classifier; ship its weights before the control
 plane.** The bundle comes from `python scripts/export_safety_model.py <dir>` (a box with HF
-access; ~22 MB: `model.pt` + `config.json`) and lands on the image volume as `safety/` — the
-entrypoint's symlink tree puts it at `/opt/comfy-models/safety` — and on the mesh volume as
-`/workspace/safety`, where the mesh entrypoint refuses to boot without it: every rendered sprite
-sheet is scored cell by cell on the pod that rendered it. `worker/safety_vision.py` reads either
+access; ~22 MB: `model.pt` + `config.json`) and lands on the volume as `comfy/models/safety/`.
+The image entrypoint's symlink tree puts it at `/opt/comfy-models/safety`; a mesh pod mounts
+the same volume and reads it at `/workspace/comfy/models/safety`, and refuses to boot without
+it: every rendered sprite sheet is scored cell by cell on the pod that rendered it. `worker/safety_vision.py` reads either
 from `SAFETY_MODEL_DIR`; a local worker reads the same layout from its own models dir.
 Order matters on first rollout: volume weights + new image tag FIRST, control plane second — the
 control plane refuses any render without a verdict, so old image workers under a new control

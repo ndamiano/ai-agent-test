@@ -2338,3 +2338,30 @@ as a prod-side arm on prompt tokens at first edit.
 **Not measured.** A prod fix build with the thrown line in its note. Whether the play gate's
 model, shown a page that threw, still reports the same fact as "did nothing" — the folded fact
 is preferred regardless, so the note is right either way.
+
+====================================================================================================
+
+## 2026-09-13 — llm slots: what the prefix cache and decode do at 2 and 4 builds per pod
+
+**Question.** Does a Pro 6000 pod keep four builds' prefix caches warm, and what does the
+fourth slot cost per stream?
+
+**Setup.** Synthetic ramp on a prod-image pod (Pennyroyal, Flash-Next): 1/2/4 streams grown to
+~120K tokens over 100 turns, then 2,048 tokens of decode at ~104K. One pod, 25 minutes.
+
+**Result.**
+
+| streams | cache misses | decode per stream | aggregate | compute per game | cost to user |
+|---|---|---|---|---|---|
+| 1 | 0 | 128 | 128 | 100% | 100% |
+| 2 | 0 | 114 | 229 | 56% | 112% |
+| 4 | 0 | 79–88 | ~330 | 39% | 153% |
+
+**Verdict.** The cache is not the limit: no evictions at four (mamba pool 16 of 24 slots used;
+raising it to 96 changes nothing and costs a third of KV). The fourth slot costs the customer
++53% of exec-seconds against +12% at two.
+
+**Ruling.** `llm.slots` stays 2: ~45% lower compute per game for a build ~12% longer. Prod pods get 
+`--enable-cache-report` so recorded builds carry cached tokens per turn.
+
+**Details.** `labs/conc-replay/README.md`.

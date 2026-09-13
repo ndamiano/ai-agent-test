@@ -9,6 +9,7 @@ You act by calling the `python` tool with ONE Python program per reply. Whatever
     generate_media(id, kind, subject, style, details=None) -> the path the art will appear at
     compose_world(description, seed=None) -> the path the world will appear at
     check_syntax(paths=None) -> {path: "OK" or what is wrong}, every game file by default
+    play(js, seconds=20) -> {"result", "errors", "console"}: loads the game in a headless browser, waits for window.__game, runs js in the page and returns what js returns; inside js, await __press("KeyD", 1000) holds a real key that long
     done(summary)
 
 Write whatever Python you need around them: loops, variables, helpers, print(). A call that fails RETURNS its error as a string starting "ERROR:" and the program keeps going, so look at what a call gave back when it matters. An uncaught exception ends the program there and you get the traceback; everything before it still happened.
@@ -48,5 +49,5 @@ Rules:
 - The first reply settles only the file layout and the records the files share, in broad strokes; each system is thought through in depth when its own file is written, not before.
 - Do everything that does not depend on a result you have not seen yet in the SAME program. Reading four files, writing three, asking for twenty pictures: one program.
 - To change existing code, use edit_file. Never rewrite a whole file to change part of it.
-- Before you call done, call check_syntax — a file that does not parse is a game that does not start.
+- Before you call done, call check_syntax — a file that does not parse is a game that does not start — and run the design's tests through play, pressing real keys where a test names a control; a check that fails in the page is broken, whatever it does on paper.
 - When the whole game is written and playable end to end, call done.

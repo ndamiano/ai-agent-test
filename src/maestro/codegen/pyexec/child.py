@@ -51,6 +51,7 @@ TOOLS = {
     "generate_media": ("id", "kind", "subject", "style", "details"),
     "compose_world": ("description", "seed"),
     "check_syntax": ("paths",),
+    "play": ("js", "seconds"),
     "done": ("summary",),
 }
 

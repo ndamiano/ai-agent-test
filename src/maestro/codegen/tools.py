@@ -8,8 +8,12 @@ What an argument must BE is declared on the tool's signature, so a body only eve
 that already satisfies it.
 """
 
+import json
 import os
 import re
+import signal
+import subprocess
+import sys
 from pathlib import Path
 from typing import Annotated, Any, List, Literal, Optional, Union
 
@@ -274,6 +278,25 @@ def build_tools(state, build_id: str) -> dict:
             out[rel] = msg or "OK"
         return {"ok": True, "checked": out}
 
+    def play(js: str, seconds: float = 20, **_) -> dict:
+        seconds = max(1.0, min(float(seconds), 60.0))
+        env = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[2])}
+        proc = subprocess.Popen([sys.executable, "-m", "maestro.codegen.play"],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, env=env, start_new_session=True)
+        try:
+            out, err = proc.communicate(json.dumps({"root": str(root), "js": js,
+                                                    "seconds": seconds}).encode(),
+                                        timeout=seconds + 25)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            return {"ok": False, "error": f"the page stopped responding; play was killed after "
+                    f"{int(seconds)} s — a script or a game loop that never yields"}
+        if proc.returncode != 0 or not out:
+            return {"ok": False, "error": "play could not run: " + err.decode(errors="replace")[-400:]}
+        return json.loads(out)
+
     def done(summary=None, **_) -> dict:
         """The build says it is finished. Nothing happens here: the driver reads `done` off the
         ledger of what the program called, answers the FIRST one with the nudge, and ends the
@@ -301,4 +324,5 @@ def build_tools(state, build_id: str) -> dict:
              "generate_media": generate_media,
              "compose_world": compose_world,
              "check_syntax": check_syntax,
+             "play": play,
              "done": done}.items()}

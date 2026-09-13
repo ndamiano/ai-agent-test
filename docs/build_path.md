@@ -164,7 +164,7 @@ src/
                          call from `build_tools`, caps the calls and the wall clock, and runs
                          `check` first as a courtesy, never as the boundary (`CLAUDE.md`).
       tools.py           list_files / read_file / write_file / edit_file / generate_media /
-                         compose_world / check_syntax / done — the smallest surface that works,
+                         compose_world / check_syntax / play / done — the smallest surface that works,
                          and kept that way. They are FUNCTIONS the program calls, so a failure
                          comes back as a value it can read rather than an exception that abandons
                          the rest of the program. `read_file` returns the WHOLE file however long:
@@ -177,6 +177,16 @@ src/
                          the file parses, and a browser reports the missing module on the console
                          instead of as the uncaught exception the error gate watches for. Art still
                          queued for rendering is not a missing file.
+                         `play` loads the game in the error gate's own headless chromium — same
+                         ephemeral server, same dead proxy, same pageerror wiring — waits for
+                         `window.__game`, runs the program's JavaScript in the page and hands
+                         back what it returned with every uncaught error and console line that
+                         landed meanwhile; `await __press(key, ms)` inside it holds a real key,
+                         so a check reaches the game through its keydown handler rather than
+                         around it. It runs in its own process (`play.py`) that is killed at the
+                         deadline, because a page that never yields hangs the driver too, and the
+                         thread serving the call is the control plane's. It answers what the page
+                         DID, never whether that was good — the tests it runs are the design's own.
                          `done` does nothing but carry its summary: the driver reads it off the
                          ledger.
                          compose_world is worldgen's build face: one 3D world per game, refused

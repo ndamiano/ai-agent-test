@@ -355,3 +355,60 @@ def test_done_carries_its_summary_back(tmp_path):
     _game(tmp_path, {})
     assert build_tools(RunState(tmp_path), "b1")["done"](summary="it plays") == {
         "ok": True, "summary": "it plays"}
+
+
+_GAME_HTML = """<!doctype html><html><body><script>
+window.__game = { x: 0, keys: [],
+  start() { return {phase: 'playing'}; },
+  getState() { return {x: this.x, keys: this.keys}; } };
+addEventListener('keydown', e => { window.__game.keys.push(e.code); window.__game.x += 1; });
+console.log('booted');
+</script></body></html>"""
+
+
+@pytest.fixture
+def playable(tmp_path):
+    pytest.importorskip("playwright.sync_api")
+    _game(tmp_path, {"index.html": _GAME_HTML})
+    return build_tools(RunState(tmp_path), "b1")["play"]
+
+
+@pytest.mark.browser
+def test_play_returns_what_the_script_returns(playable):
+    r = playable(js="console.log('in play'); __game.start(); return __game.getState();")
+    assert r["ok"] and r["result"] == {"x": 0, "keys": []}
+    assert r["errors"] == [] and r["console"] == ["in play"]
+
+
+@pytest.mark.browser
+def test_play_presses_a_real_key_through_the_pages_own_handler(playable):
+    r = playable(js="await __press('KeyD', 50); return __game.getState();")
+    assert r["result"]["keys"] == ["KeyD"] and r["result"]["x"] == 1
+
+
+@pytest.mark.browser
+def test_play_reports_what_the_script_threw_and_what_the_page_threw(playable):
+    r = playable(js="setTimeout(() => { undefinedThing(); }, 0); await new Promise(r => setTimeout(r, 100)); throw new Error('nope');")
+    assert r["ok"] is False and "nope" in r["error"]
+    assert any("undefinedThing" in e["message"] for e in r["errors"])
+
+
+@pytest.mark.browser
+def test_play_times_out_a_script_that_never_yields_instead_of_hanging(playable):
+    r = playable(js="while (true) {}", seconds=1)
+    assert r["ok"] is False and ("still running" in r["error"] or "killed" in r["error"])
+
+
+@pytest.mark.browser
+def test_play_refuses_a_page_that_never_installs_the_debug_api(tmp_path):
+    pytest.importorskip("playwright.sync_api")
+    _game(tmp_path, {"index.html": "<html><body>no api</body></html>"})
+    r = build_tools(RunState(tmp_path), "b1")["play"](js="return 1;")
+    assert r["ok"] is False and "__game never appeared" in r["error"]
+
+
+@pytest.mark.browser
+def test_play_blocks_and_reports_a_request_that_tries_to_leave(playable):
+    r = playable(js="try { await fetch('https://example.com/'); } catch (e) {} return 1;")
+    assert r["ok"] and r["result"] == 1
+    assert any("example.com" in b for b in r.get("blocked", []))

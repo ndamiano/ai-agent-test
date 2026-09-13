@@ -126,7 +126,7 @@ Outcome = Union[Infer, Done]
 PYTHON_SCHEMA = {"type": "function", "function": {
     "name": "python",
     "description": ("Run one Python program. It may call list_files, read_file, write_file, "
-                    "edit_file, generate_media, compose_world, check_syntax and done. Whatever "
+                    "edit_file, generate_media, compose_world, check_syntax, play and done. Whatever "
                     "it prints comes back to you."),
     "parameters": {"type": "object",
                    "properties": {"code": {"type": "string"}},
@@ -266,7 +266,8 @@ def _actions_of(outcome) -> List[str]:
         return [f"program refused: {_clip(outcome.refused, 110)}"]
     verb = {"write_file": "wrote", "edit_file": "edited", "read_file": "read",
             "generate_media": "asked for art", "compose_world": "built a world",
-            "list_files": "listed files", "check_syntax": "checked the syntax", "done": "done"}
+            "list_files": "listed files", "check_syntax": "checked the syntax",
+            "play": "played", "done": "done"}
     lines, seen = [], {}
     for name, target, ok in outcome.ledger:
         if name == "done":
@@ -545,7 +546,7 @@ def _write_keys(tc: dict) -> List[tuple]:
 
 # What a program can call without changing anything. A round of only these is a list of filenames
 # the model once opened.
-_LOOKING = {"read_file", "list_files", "check_syntax"}
+_LOOKING = {"read_file", "list_files", "check_syntax", "play"}
 
 
 def _called_in(code: str) -> set:

@@ -91,14 +91,7 @@ def probe(game_dir: Path) -> List[Dict[str, str]]:
     with _serve(game_dir) as base_url:
         try:
             with sync_playwright() as pw:
-                # The probe runs the game's own JS on the control-plane box, so the game may
-                # reach ONLY the ephemeral server. The dead proxy is the floor — route
-                # interception never sees websockets, a proxied browser sends everything
-                # (DNS included) through it — and the route is the report. The WebRTC flag
-                # closes the one channel a proxy does not carry.
-                browser = pw.chromium.launch(
-                    proxy={"server": "http://127.0.0.1:9", "bypass": "127.0.0.1"},
-                    args=["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"])
+                browser = _browser(pw)
                 page = _open(browser, base_url, errors, blocked)
                 actions = _targets(page.screenshot()) if page is not None else None
                 if page is not None:
@@ -130,6 +123,12 @@ def probe(game_dir: Path) -> List[Dict[str, str]]:
         logger.warning("error gate: %s: blocked %d external request(s): %s",
                        game_dir, len(blocked), ", ".join(sorted(set(blocked))[:5]))
     return dedup(errors)
+
+
+def _browser(pw):
+    return pw.chromium.launch(
+        proxy={"server": "http://127.0.0.1:9", "bypass": "127.0.0.1"},
+        args=["--force-webrtc-ip-handling-policy=disable_non_proxied_udp"])
 
 
 def _open(browser, base_url: str, errors: List[Dict[str, str]], blocked: List[str]):

@@ -6,7 +6,7 @@ belongs here once it has been RUN; a shape that has only been argued about stays
 The rule this file exists to serve: **measure before changing the loop.** A change that cannot point
 at a row here has not earned its place.
 
-Experiment harnesses, battery runners and renders live in `~/Documents/Labs`, never in this repo.
+Experiment harnesses, battery runners and renders live in `labs`, never in this repo.
 What lands here is the number; what lands in `src/` is the change that earned it.
 
 ---
@@ -1782,7 +1782,7 @@ on a prompt, so the turntable stays.
 
 ## 2026-09-04 — Sprites render through Qwen (local 5090)
 
-The art lab's sprite re-bake-off (`~/Documents/Labs/art-lab`, prompts from real builds) had
+The art lab's sprite re-bake-off (`labs/art-lab`, prompts from real builds) had
 NetaYume losing to Qwen-Image-2512 on characters, and the routing never shipped: only mesh
 subjects moved. Now every non-tile kind — sprite, scene, anim still, mesh subject — renders
 through the one Qwen subject graph, prose verbatim (no danbooru quality tags), with the
@@ -2068,7 +2068,7 @@ out of chasing reads first: post-compaction re-reads are the bigger line, but fi
 against them moved nothing, so the next target was the turns that produce no tool call at all —
 zero-output waste, where the model spends minutes and the build gets nothing.
 
-**How.** The turn re-runner (`~/Documents/Labs/replay`) rebuilds the transcript a build really sent
+**How.** The turn re-runner (`labs/replay`) rebuilds the transcript a build really sent
 at a chosen turn and asks the model what it would do from there, k times. The six positions where
 one build (`8c824b3e2976`) ran the window dry were replayed 6 times each, and the worst turn in the
 corpus (`90a89ba593ee` turn 14, 105,867 tokens, no tool call) 6 times.

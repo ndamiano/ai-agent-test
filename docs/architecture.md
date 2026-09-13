@@ -1,201 +1,69 @@
 # Architecture
 
-System shape: what the pieces are, where state lives, what the invariants are, and what it would
-take to run on more than one box.
+All of the pieces of the system, and how they interact.
 
-`CLAUDE.md` is the authority on the build loop itself (the driver, the turn machine, the tools).
-This file is the layer above: processes, boundaries, storage, scale.
+![Architecture](architecture-2026-09-11.png)
 
----
+## Major Pieces
 
-## The two planes
+### Webserver
 
-**Control plane** — one CPU-only container. FastAPI serving the API + the built SPA same-origin
-(single uvicorn worker), the job queue, the databases, the run directories, and the background threads `api/app.py`
-starts at boot: the queue reaper and the DB snapshotter always, the RunPod autoscaler when
-`runpod.enabled` is set. It owns all durable state and all decisions.
+The webserver is responsible for receiving user requests, handling stripe webhooks, enqueueing
+requests to our workers, and running the build gates and python programs. The general flow is a user
+request comes in, we debit their account, send their request to the LLM. This builds a design, which
+flows back to the webserver, gets saved to the game's directory, and proceeds throughout the build
+loops.
 
-**Compute plane** — worker agents (`worker/agent.py`), one process per queue, running wherever a GPU
-is. A worker long-polls `/worker/claim`, executes against its own local inference server, and posts
-the result to `/worker/complete`; with `--slots N` it runs N such loops, one job each, against an
-engine that batches.
+Once everything is done, we display on the frontend the build, and the webserver serves up the
+finished game on a different domain, embedded in the frontend, to ensure that the game cannot jack
+the user's cookies or run any malicious code.
 
-The only coupling is the queue. The control plane holds no GPU endpoint, dials nothing, and has no
-config naming a compute host. A worker needs three things: the control-plane URL, the shared bearer
-token, and a queue name.
+This all runs on a single digital ocean droplet.
 
-```
-  browser ──► control plane ──► jobs table
-                    ▲                │
-                    │                │ claim (long-poll)
-              complete                ▼
-                    └────────── worker agent ──► local inference server (127.0.0.1)
-```
+### Build Loop
 
-Consequences worth stating:
-
-- **Adding capacity is not a deploy.** Any process with the token can serve prod traffic. A
-  workstation on a tailnet and a rented RunPod pod are the same thing to the queue.
-- **A queue with no worker is a timeout, not an error.** Nothing tells the control plane that a
-  queue is unserved.
-- **Workers are anonymous and interchangeable.** A worker row exists for heartbeat and scaling
-  bookkeeping, never for routing. A pod's row is written by the create that bought it — under a
-  worker id the scaler mints and hands the pod as an entrypoint arg, carrying the pod's id and
-  hourly price — and its worker registers into that row by both ids.
-- **The wire format is the worker's problem.** The control plane enqueues a canonical chat request;
-  the worker translates it for whatever its target serves (`llm_clients/wire.py`,
-  `worker/handlers.llm`). Supporting a new engine is a branch in the worker.
+The heart and soul of GameSummoner, the build loop is the process of getting a request -> turning it
+into a more fully fledged design -> generating assets -> building the game -> fixing bugs.
 
 ### Queues
 
+Our queues are simple queries on the jobs table in our sql database.
+
 | queue | work | target |
 |---|---|---|
-| `llm` | one build turn (one inference) | Pennyroyal SGLang on an RTX PRO 6000 (prod); ninfer on the local 5090; any OpenAI-shaped server |
-| `image` | one sprite or texture render | ComfyUI |
+| `llm` | one build turn | any OpenAI-shaped server |
+| `image` | one image render | ComfyUI |
 | `mesh` | image → 3D | TRELLIS |
-| `video` | image → an animated character's sprite sheet | ComfyUI (MiniMax-H3 image-to-video, the same instance as `image`) |
+| `video` | image → an animated sprite sheet | ComfyUI |
 
-One worker per queue, and a queue owns its card. `exec_seconds` are debited to the game named by the
-job row's `game_id`; a job without one is neither metered nor gated.
+### Workers
 
----
+The workers are an autoscaled (managed by `src/scaler/autoscaler.py`) group of GPU pods hosted on
+a thid party provider's platform. Currently, we are using RTX PRO 6000s and 5090s on runpod.io.
 
-## Request paths
+### Frontend
 
-**Create a game.** `POST /api/games` takes the typed prompt, creates the run, charges it twice —
-the credit ledger (`auth`) and the compute-seconds grant (`db_store.charge_game`) the queue meters
-against — and enqueues the DESIGN. The build starts at `POST /api/games/{id}/build`, once the human
-has read the design. There is no conversational surface — every `llm` job on the queue belongs to a
-game that is paying for it. Every job on a game names its build — the enqueue refuses one that
-does not — so a build row is the whole of what it cost: its turns, its art, its gates. Metering rides
-`tools/execution_context.run_scope`: every enqueue inside it debits the named game and build.
+We have a react vite frontend that provides several demos of games created with GameSummoner, buy
+credits, build and edit games, and play the games you've created.
 
-A build turn's PROGRAM is written by the model and runs in the control plane, so it is a trust
-boundary of its own: `maestro/codegen/pyexec` runs it in a separate interpreter that installs a
-seccomp filter on itself before executing any of it, with no environment and no way to reach the
-filesystem, the network or another process — every effect goes back to the parent over a socket and
-through the same tools, path jail included (`CLAUDE.md`, "A program the model wrote runs
-CONFINED").
+### Auth
 
-**Build as a chain of jobs.** A build is not a resident loop. `build_chain.advance()` runs all local
-work synchronously (tool dispatch, staging, cursor writes) and suspends at the one point that needs
-a GPU: it enqueues a single `llm` job tagged `metadata.stage="build"` and returns. The process is
-then free to die. `/worker/complete` routes on `metadata.stage` back into `build_chain`, which
-reloads the durable cursor, applies the result, and advances again.
+We support traditional email and password, and nothing else.
 
-Crash recovery falls out of this: a build with no job in flight and no terminal phase for 60s is
-re-advanced by the reaper (`workqueue/reaper.py`), which also sweeps asset batches awaiting finalize. Job metadata carries only `{stage, run_id, build_id}` — the cursor file is the single
-source that a completion reloads, advances, and rewrites.
+### Billing
 
-A landed turn is appended to the run's own `turns.jsonl`, and its jobs row keeps only measurements
-(`db_store.elide_payload` / `elide_result`: model, message count, prompt size, effort, token usage,
-finish reason, tool names, the system prompt's hash and length) — the db holds what a query needs and the run
-dir holds the words. The reply stays whole on the row only until its consumer has read it. A job failed without running (abandoned, cancelled, or never claimed) is elided the same way at the moment it fails.
+Billing is processed through Stripe.
 
-**Assets.** `generate_media` enqueues one `image` job and answers immediately with the path the file
-will appear at. Chained work is named in the job's `metadata.then` (`mesh_from_image`,
-`anim_from_image`, save/decimate operations, the batch finalize) and dispatched by `asset_chain`,
-so the queue stays a generic
-transport that never learns what an asset is.
+### Safety
 
-**Adding a stage** beyond build/design/asset means one more branch on `metadata.stage` in
-`/worker/complete` (`api/routers/workqueue.py`); the else-branch is the asset chain.
+We have a classifier on prompts, images, 3d models and animations. 
 
----
+### Database
 
-## Where state lives
+We keep track of everything through a simple sqlite database, which has tables for users, games, and
+much more.
 
-| state | location | notes |
-|---|---|---|
-| accounts, sessions, credit ledger | `auth.db` (SQLite) | `MAESTRO_DATA_DIR` |
-| games, builds, jobs, events, workers, compute budget | `platform.db` (SQLite, WAL) | `MAESTRO_DATA_DIR` |
-| run dirs — spec, build cursor, turn log, game source + its git history | `<WORKING_DIRECTORY>/runs/<run_id>/` | local filesystem |
-| staged playable games | `runtime/games/<run_id>/` | local filesystem, served at `/play/games` |
-| demo snapshots | `runtime/demos/<run_id>/` | local filesystem, served at `/play/demos`; copied once, never restaged |
-| structured config the env can't express | `src/config/settings.json` | host bind mount |
+### Deploy
 
-Three named Docker volumes back the first five rows (`maestro-data` → `/data`, `maestro-games` →
-`/app/runtime/games`, `maestro-demos` → `/app/runtime/demos`). See `deploy.md` for the invariant.
-
-The box is one box, but the state is not: a control-plane thread snapshots both DBs to the S3
-bucket (`tools/db_backup.py` — every 15 minutes, sooner on account/credit writes), and every
-settled run uploads itself as one archive to the same bucket (`maestro/codegen/archive.py`), with
-a nightly `--archive-all` sweep for any upload that failed. Staged games are a copy of each run's
-`game/` and are re-staged on rehydrate rather than backed up. Mechanism, secrets, and the restore
-drill: `docs/backups.md`.
-
----
-
-## Invariants
-
-These are load-bearing; breaking one is a redesign, not a bug fix.
-
-1. **The control plane touches no GPU.** The queue is the only transport.
-2. **One turn in flight per run.** Enforced today by an in-process lock, with `advance` reachable
-   only from the completion handler and the reaper.
-3. **The durable cursor is the truth.** In-memory build state is always reconstructible from
-   `build_state.json`; a control plane that restarts mid-build holds nothing while its turns keep
-   completing.
-4. **A gate may only detect broken, never "bad."** Two things stand between a build and `built`:
-   `index.html` exists, and the error gate — run against the run dir's `game/` — finds no uncaught
-   exception. See `CLAUDE.md`.
-5. **The design is the prompt.** One inference — the designer — runs between the person's words
-   and the build's user message, and its landing starts the build; nothing waits on a human
-   in between.
-6. **Nothing proprietary in the loop.** MIT/Apache-2.0 weights and tooling only (`vision.md`).
-
----
-
-## Trust boundaries
-
-- **API.** Bearer sessions; every route gated by middleware except explicit public paths. The
-  WebSocket authenticates itself (HTTP middleware never sees the socket scope). Account creation
-  is by CLI or the open signup route, throttled per client IP.
-- **`/worker`.** A single shared bearer token (`WORKQUEUE_TOKEN`). Any holder can claim any job on
-  any queue and post any result. Workers are trusted infrastructure, not tenants.
-- **Inference servers.** Bound to `127.0.0.1` on the worker's own box, never exposed. A reachable
-  one is an unauthenticated GPU.
-- **Generated game code.** Runs in the user's browser in an iframe, contained by a CSP on every
-  `/play` response and admitted by a per-game grant cookie the handoff flow mints
-  (`auth/playgrants.py`) — the play surface holds no credential its JS can read. With
-  `play.origin` set, games are served from their own registrable domain and the host-split
-  middleware keeps the API off that host entirely — true origin isolation, required before any
-  sharing feature; unset, the game still shares the app origin's localStorage and the ownership
-  check at play-session mint is what keeps that safe. Detail: `deploy.md` § Known deferred risks.
-
----
-
-## Scaling
-
-Today: one control-plane box, one uvicorn worker, N GPU workers.
-
-**The expensive axis already scales out.** GPU work is queue-pulled and autoscaled; capacity is
-added by starting processes that the control plane never has to know about. The control plane is
-I/O-bound coordination — enqueue, apply a completion, serve static files — so a single box goes a
-long way, and product limits arrive before control-plane CPU limits do.
-
-**What pins the control plane to one process**, in the order they'd need fixing:
-
-1. **SQLite.** Two boxes cannot share `platform.db`. Every other item below is downstream of this.
-   The fix is mechanical: every query in `db/` and `auth/store.py` runs plain SQL over the one
-   `db/connection.py` context manager. `claim_job` already expresses the claim as
-   `UPDATE … WHERE id = (SELECT … ORDER BY created_at LIMIT 1) RETURNING *`, which becomes
-   `FOR UPDATE SKIP LOCKED` in Postgres — a better claim, not a compromised one.
-2. **The background singletons.** The reaper, the DB snapshotter and the autoscaler are one
-   thread each in the one process. Two control planes means two autoscalers reading the same backlog and both adding pods — the one
-   failure here that spends money. Needs a leader lease or a separate singleton process.
-3. **The advance lock is in memory** (`build_chain._locks`, keyed by run id). It is what enforces
-   invariant 2. Across processes, two completions for one run can interleave into a double advance.
-   The durable cursor makes the fix small: compare-and-swap on the cursor's step count instead of
-   holding a lock.
-4. **Run state is on local disk.** `runs/<run_id>/` and `runtime/games/<run_id>/` must be on the box that
-   handles the completion. This is the only item that is a project rather than a change — shared
-   storage, or object storage for staged games. The games half is wanted anyway, for share links
-   and a CDN.
-5. **Per-process counters.** The login throttle and the LLM rate limiter are per process, so N boxes
-   multiply their limits by N. The WebSocket manager holds connections in memory, so a user
-   connected to one box sees no events from another — this one degrades gracefully, since
-   `GET /api/games/{id}/events` already serves the same data by polling.
-
-Until (1)–(3) land, `uvicorn --workers N` is unsafe on a single box for the same reasons multiple
-boxes are — vertical scaling is untapped, not free.
+The deployment process is an rsync to our digital ocean droplet + docker compose. We also have to
+push our docker images for the workers, and fill volumes using s3.

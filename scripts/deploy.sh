@@ -31,6 +31,7 @@ rsync -az --delete \
   --exclude '.github/' \
   --exclude '.claude/' \
   --exclude 'docs/' \
+  --exclude 'labs/' \
   --exclude 'tasks/' \
   --exclude 'tests/' \
   --exclude 'docker/' \

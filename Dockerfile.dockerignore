@@ -38,3 +38,6 @@ scratchpad/
 # Pod-side code — runs on GPU workers, not the control plane
 src/worker/
 src/tools/trellis_server.py
+
+# Experiments: their own repo, gigabytes of renders, nothing the image runs
+labs/

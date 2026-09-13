@@ -30,3 +30,6 @@ src/config/settings.json
 .env
 .DS_Store
 scratchpad/
+
+# Experiments: their own repo, gigabytes of renders, nothing the image runs
+labs/

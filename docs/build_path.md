@@ -381,8 +381,12 @@ src/
                          `_anim_from_image` keeps the sprite render as `<id>.src.png` (a re-seed
                          needs an image, not a sheet) the same way a mesh does, and enqueues it on
                          the `video` queue; `_save_anim` writes the sheet PNG and its manifest to
-                         the promised path together, admitted on the worst of the four facing
-                         stills' NSFW scores since every frame descends from one of them.
+                         the promised path together, admitted on the worst NSFW score across the
+                         sheet: a drawn sheet's four facing stills, since every frame descends
+                         from one of them, or every cell of a rendered one (`handlers.sprite_sheet`
+                         scores them on the mesh pod). Measured 2026-09-12: the rendered path
+                         carried no scores at all, so every rendered sheet on prod was refused as
+                         verdict-less and deleted.
       artifact_screen.py the artifact TEXT gate — the game folder's authored text through the same
                          narrow screen as every input seam, at finalize before staging. A hit
                          HOLDS the build: status `held`, not staged, not archived, play/build/change

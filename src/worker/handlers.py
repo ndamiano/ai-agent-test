@@ -134,7 +134,9 @@ def anim_sheet(agent, payload):
     them into the sheet. The safety verdict is the worst of the facing stills — every frame
     descends from one of them."""
     import io
+
     from PIL import Image
+
     from worker import anim_sheet as sheets
     job = uuid.uuid4().hex[:8]
     still = sheets.prep_still(Image.open(io.BytesIO(base64.b64decode(payload["image_b64"]))))
@@ -189,6 +191,7 @@ def _png(im):
 
 def _frames(outputs):
     import io
+
     from PIL import Image
     return [Image.open(io.BytesIO(data)).convert("RGB") for _, data in outputs]
 
@@ -254,7 +257,27 @@ def sprite_sheet(agent, payload):
         return None, f"sprite server unreachable: {e}"
     if r.status_code != 200:
         return None, f"Status {r.status_code}: {r.text[:2000]}"
-    return r.json(), None
+    out = r.json()
+    if not out.get("fallback"):
+        out["safety"] = _worst([safety_vision.classify(_png(cell)) for cell in _cells(out)]
+                               or [{"error": "the sheet had no cells to score"}])
+    return out, None
+
+
+def _cells(sheet: dict):
+    import io
+
+    from PIL import Image
+    try:
+        im = Image.open(io.BytesIO(base64.b64decode(sheet["sheet_b64"]))).convert("RGB")
+    except Exception:
+        return []
+    cell = (sheet.get("manifest") or {}).get("cell") or {}
+    w, h = int(cell.get("w") or 0), int(cell.get("h") or 0)
+    if not w or not h:
+        return [im]
+    return [im.crop((x, y, x + w, y + h))
+            for y in range(0, im.height - h + 1, h) for x in range(0, im.width - w + 1, w)]
 
 
 HANDLERS = {

@@ -189,12 +189,51 @@ def _handler_with(monkeypatch, reply):
     return handlers, agent
 
 
+def _sheet_png(cells_wide=2, cells_high=2, cell=8):
+    import base64
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (cells_wide * cell, cells_high * cell), "white").save(buf, "PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
 def test_the_sheet_is_rendered_on_the_pod_that_made_the_mesh(monkeypatch):
     handlers, agent = _handler_with(monkeypatch, _Reply(body={"sheet_b64": "x", "manifest": {}}))
+    monkeypatch.setattr(handlers.safety_vision, "classify", lambda b: {"scores": {"NSFW": 0.0}})
     out, err = handlers.sprite_sheet(agent, {"glb_b64": "g", "anims": [], "facings": 4})
     assert err is None and out["sheet_b64"] == "x"
     url, _ = agent.calls[0]
     assert url == "http://127.0.0.1:8190/sheet"
+
+
+def test_a_rendered_sheet_is_scored_cell_by_cell_and_the_worst_cell_speaks(monkeypatch):
+    body = {"sheet_b64": _sheet_png(2, 2, 8), "manifest": {"cell": {"w": 8, "h": 8}}}
+    handlers, agent = _handler_with(monkeypatch, _Reply(body=body))
+    seen = []
+
+    def classify(png):
+        seen.append(png)
+        return {"scores": {"NSFW": 0.9 if len(seen) == 3 else 0.1}}
+
+    monkeypatch.setattr(handlers.safety_vision, "classify", classify)
+    out, err = handlers.sprite_sheet(agent, {"glb_b64": "g", "anims": [], "facings": 4})
+    assert err is None and len(seen) == 4
+    assert out["safety"] == {"scores": {"NSFW": 0.9}}
+
+
+def test_a_sheet_that_is_not_an_image_carries_a_verdict_that_refuses_it(monkeypatch):
+    handlers, agent = _handler_with(monkeypatch, _Reply(body={"sheet_b64": "x", "manifest": {}}))
+    out, err = handlers.sprite_sheet(agent, {"glb_b64": "g", "anims": [], "facings": 4})
+    assert err is None and "scores" not in out["safety"] and out["safety"]["error"]
+
+
+def test_a_fallback_sheet_is_not_scored(monkeypatch):
+    handlers, agent = _handler_with(monkeypatch, _Reply(body={"fallback": "not a humanoid"}))
+    monkeypatch.setattr(handlers.safety_vision, "classify",
+                        lambda b: (_ for _ in ()).throw(AssertionError("scored a fallback")))
+    out, err = handlers.sprite_sheet(agent, {"glb_b64": "g", "anims": [], "facings": 1})
+    assert err is None and "safety" not in out
 
 
 def test_a_silhouette_no_skeleton_fits_is_not_an_error(monkeypatch):

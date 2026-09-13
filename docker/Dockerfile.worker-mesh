@@ -120,7 +120,8 @@ ENV PYTHONPATH=/opt/maestro/src \
     TRITON_CACHE_DIR=/workspace/triton-cache \
     SPRITE_PYTHON=/opt/kimodo-venv/bin/python \
     SPRITE_PORT=8190 \
-    CHECKPOINT_DIR=/workspace/kimodo
+    CHECKPOINT_DIR=/workspace/kimodo \
+    SAFETY_MODEL_DIR=/workspace/safety
 
 # flex_gemm persists its autotune picks (ON by default) — but to ~/.flex_gemm, which is container
 # disk that dies with the pod, so every boot re-benchmarked every sparse-conv config: measured

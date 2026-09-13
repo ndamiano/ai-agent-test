@@ -17,6 +17,8 @@ set -euo pipefail
 
 test -d "$TRELLIS_WEIGHTS" || {
     echo "network volume not mounted: $TRELLIS_WEIGHTS is missing" >&2; exit 1; }
+test -f "$SAFETY_MODEL_DIR/model.pt" || {
+    echo "NSFW classifier missing: $SAFETY_MODEL_DIR/model.pt" >&2; exit 1; }
 
 # Volume throughput probe: one sequential GiB off the biggest ckpt. Cold-start diagnosis — if
 # this rate ≈ the pipeline load rate, the volume is the bottleneck and pre-copying to local disk

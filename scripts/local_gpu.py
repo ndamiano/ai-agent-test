@@ -34,9 +34,13 @@ def _worker_python(queue: str) -> str:
     """Which interpreter runs a queue's worker — image and video need ComfyUI's environment."""
     if queue in ("image", "video") and COMFY_PYTHON.exists():
         return str(COMFY_PYTHON)
+    if queue == "mesh" and TRELLIS_PYTHON.exists():
+        return str(TRELLIS_PYTHON)
     return sys.executable
 TRELLIS_PYTHON = Path(os.environ.get("TRELLIS_PYTHON",
                                      "/home/nick/cube3d-lab/trellis2-venv/bin/python"))
+SPRITE_PYTHON = Path(os.environ.get("SPRITE_PYTHON",
+    str(Path.home() / "Documents/Labs/rig-lab/venv-kimodo/bin/python")))
 TRELLIS_REPO = Path(os.environ.get("TRELLIS_REPO", "/home/nick/cube3d-lab/trellis2"))
 TRELLIS_WEIGHTS = Path(os.environ.get("TRELLIS_WEIGHTS", "/home/nick/cube3d-lab/trellis2-weights"))
 
@@ -115,6 +119,11 @@ def _leg(queue: str) -> dict:
                      "--host", "127.0.0.1", "--port", "8189", "--stage-dir", ""],
             "cwd": None,
             "env": {},
+            "sidecar": {
+                "ready": "http://127.0.0.1:8190/health",
+                "argv": [str(SPRITE_PYTHON), str(ROOT / "src" / "tools" / "sprite_server.py"),
+                         "--host", "127.0.0.1", "--port", "8190"],
+            },
         }
     raise SystemExit(f"unknown queue {queue!r}")
 
@@ -167,6 +176,13 @@ def _spawn(name: str, argv: list, cwd, env: dict) -> subprocess.Popen:
                             env={**os.environ, **env}, start_new_session=True)
 
 
+def _spawn_sidecar(queue: str, leg: dict):
+    side = leg.get("sidecar")
+    if side is None or _up(side["ready"]):
+        return None
+    return _spawn(f"{queue}-sidecar", side["argv"], None, {})
+
+
 def _spawn_worker(queue: str, leg: dict) -> subprocess.Popen:
     from db import workers
     worker_id = f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
@@ -178,7 +194,7 @@ def _spawn_worker(queue: str, leg: dict) -> subprocess.Popen:
          "--token", token, "--queue", queue, "--worker-id", worker_id,
          "--target", f"http://localhost:{leg['port']}"],
         str(ROOT / "src"),
-        {"SAFETY_MODEL_DIR": SAFETY_MODEL_DIR} if queue in ("image", "video") else {},
+        {"SAFETY_MODEL_DIR": SAFETY_MODEL_DIR},
     )
 
 
@@ -198,10 +214,12 @@ def _stop(name: str, process: subprocess.Popen, grace: float = 25) -> None:
         os.killpg(os.getpgid(process.pid), signal.SIGKILL)
 
 
-def hand_over(held: Optional[str], server, worker) -> None:
+def hand_over(held: Optional[str], server, worker, sidecar=None) -> None:
     """Give the card up: the worker first, with time to finish its job, then the server."""
     if worker is not None:
         _stop(f"{held}-worker", worker, grace=HANDOFF_SECONDS)
+    if sidecar is not None:
+        _stop(f"{held}-sidecar", sidecar)
     if server is not None:
         _stop(f"{held}-server", server)
 
@@ -251,9 +269,10 @@ def drain(queue: str, *, keep: bool, ready_timeout: float) -> None:
     print(f"[{queue}] {waiting} job(s) waiting", flush=True)
 
     server = _spawn(f"{queue}-server", leg["argv"], leg["cwd"], leg["env"])
-    worker = None
+    worker = sidecar = None
     try:
         _await_ready(f"{queue}-server", queue, leg["ready"], server, ready_timeout)
+        sidecar = _spawn_sidecar(queue, leg)
         worker = _spawn_worker(queue, leg)
 
         idle = 0
@@ -273,6 +292,8 @@ def drain(queue: str, *, keep: bool, ready_timeout: float) -> None:
     finally:
         if worker is not None:
             _stop(f"{queue}-worker", worker)
+        if sidecar is not None:
+            _stop(f"{queue}-sidecar", sidecar)
         if keep:
             print(f"[{queue}] leaving the model up (--keep)", flush=True)
         else:
@@ -312,6 +333,7 @@ def auto(idle_exit: Optional[float], ready_timeout: float) -> None:
     held: Optional[str] = None
     server: Optional[subprocess.Popen] = None
     worker: Optional[subprocess.Popen] = None
+    sidecar: Optional[subprocess.Popen] = None
     idle_ticks = {q: 0 for q in QUEUES}
     all_idle_since: Optional[float] = None
 
@@ -324,13 +346,13 @@ def auto(idle_exit: Optional[float], ready_timeout: float) -> None:
     signal.signal(signal.SIGTERM, _signal)
 
     def _stop_current():
-        nonlocal server, worker, held
-        hand_over(held, server, worker)
-        worker = server = None
+        nonlocal server, worker, sidecar, held
+        hand_over(held, server, worker, sidecar)
+        worker = server = sidecar = None
         held = None
 
     def _start(queue: str):
-        nonlocal server, worker, held
+        nonlocal server, worker, sidecar, held
         leg = _leg(queue)
         if _up(leg["ready"]):
             # Someone else's server on the port is the server to use, not a reason to stop: auto
@@ -341,6 +363,7 @@ def auto(idle_exit: Optional[float], ready_timeout: float) -> None:
         else:
             server = _spawn(f"{queue}-server", leg["argv"], leg["cwd"], leg["env"])
             _await_ready(f"{queue}-server", queue, leg["ready"], server, ready_timeout)
+        sidecar = _spawn_sidecar(queue, leg)
         worker = _spawn_worker(queue, leg)
         held = queue
 

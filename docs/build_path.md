@@ -264,10 +264,11 @@ src/
                          skeleton from the verb the build's `action` prose names, and four camera
                          angles are shot per animation. A video model conditioned on the still as
                          both first AND last frame answers a one-shot by not moving — 14 of 16
-                         clips in a shipped sheet were stills — so the drawn path
-                         (`build_anim_payload`, `worker/anim_sheet.py`) is what a silhouette no
-                         humanoid skeleton fits falls back to, and its cyclic clips were always
-                         the ones that worked. See `docs/experiments.md` 2026-09-04. Rendering every
+                         clips in a shipped sheet were stills. The drawn path
+                         (`build_anim_payload`, `worker/anim_sheet.py`) stays wired for a video
+                         model we can license (`docs/models.md`); until one lands, a silhouette no
+                         humanoid skeleton fits ships as its still, one frame per animation
+                         (`_save_still_as_sheet`). See `docs/experiments.md` 2026-09-04. Rendering every
                          kind through one item-icon path matted a game's floor tiles down to a
                          handful of planks — it said "tile" in every prompt and nothing could
                          hear it. A refused compute budget is answered as "draw this one with
@@ -378,9 +379,9 @@ src/
                          attached NSFW scores to the render, `assets.render_verdict` decides, and
                          a refused (or verdict-less) render is deleted, marked on the manifest and
                          recorded as a violation — a refused mesh source never reaches TRELLIS.
-                         `_anim_from_image` keeps the sprite render as `<id>.src.png` (a re-seed
-                         needs an image, not a sheet) the same way a mesh does, and enqueues it on
-                         the `video` queue; `_save_anim` writes the sheet PNG and its manifest to
+                         `_mesh_for_sheet` keeps the sprite render as `<id>.src.png` (a re-seed
+                         needs an image, not a sheet) the same way a mesh does, and a top-up with
+                         that still resumes at TRELLIS; `_save_anim` writes the sheet PNG and its manifest to
                          the promised path together, admitted on the worst NSFW score across the
                          sheet: a drawn sheet's four facing stills, since every frame descends
                          from one of them, or every cell of a rendered one (`handlers.sprite_sheet`
@@ -494,8 +495,8 @@ and `frontend/` (the React SPA, served same-origin by the API).
 
 Only inside a build, as a chain of `llm` jobs, with art riding three more queues off the same
 transport: `image` (sprite, tile, scene and mesh renders, TRELLIS), `mesh` (TRELLIS itself) and
-`video` (`anim_sheet` — MiniMax-H3 image-to-video, turning one matted sprite render into a
-directional sheet). The request paths, the completion dispatch and how
+`video` (`anim_sheet` — image-to-video, turning one matted sprite render into a directional
+sheet; wired, unused until a model we can license lands). The request paths, the completion dispatch and how
 a new stage registers are in `docs/architecture.md` § Request paths.
 
 ---

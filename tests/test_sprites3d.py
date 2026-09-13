@@ -291,17 +291,33 @@ def test_the_sheet_job_carries_the_verbs_the_build_named(tmp_path):
 def test_a_sheet_that_landed_enqueues_nothing_more(tmp_path, monkeypatch):
     from maestro.codegen import asset_chain
     monkeypatch.setattr(asset_chain, "asset_path", lambda run, aid, ext: tmp_path / f"{aid}.{ext}")
-    assert asset_chain.CONTINUATIONS["anim_from_still"](_md(), {"sheet_file": "s.png"}) is None
+    job = asset_chain.CONTINUATIONS["sheet_from_mesh"](_md(), {"glb_file": None})
+    assert job is None
 
 
-def test_a_silhouette_no_skeleton_fits_falls_back_to_the_drawn_sheet(tmp_path, monkeypatch):
+def test_a_silhouette_no_skeleton_fits_ships_its_still_as_a_one_frame_sheet(tmp_path, monkeypatch):
+    import json
+
+    from PIL import Image
+
     from maestro.codegen import asset_chain
-    still = tmp_path / "knight.src.png"
-    still.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+    im = Image.new("RGBA", (64, 96), (0, 0, 0, 0))
+    im.paste((200, 40, 40, 255), (16, 8, 48, 88))
+    im.save(tmp_path / "knight.src.png")
     monkeypatch.setattr(asset_chain, "asset_path", lambda run, aid, ext: tmp_path / f"{aid}.{ext}")
-    monkeypatch.setattr(asset_chain, "build_anim_payload",
-                        lambda b64, anims, facings: {"kind": "anim_sheet", "anims": anims})
-    job = asset_chain.CONTINUATIONS["anim_from_still"](_md(), {"fallback": "not a humanoid"})
-    assert job["queue"] == "video"
-    assert job["payload"]["kind"] == "anim_sheet"
-    assert job["metadata"]["then"]["operations"] == ["save_anim"]
+    landed = []
+    monkeypatch.setattr(asset_chain, "_mark_landed", lambda md: landed.append(md["asset_id"]))
+
+    asset_chain.OPERATIONS["save_anim"](_md(anims=[{"name": "walk", "action": "walks"},
+                                                   {"name": "attack", "action": "swings"}]),
+                                        {"fallback": "not a humanoid"})
+
+    sheet = Image.open(tmp_path / "knight.png")
+    manifest = json.loads((tmp_path / "knight.json").read_text())
+    assert landed == ["knight"]
+    assert sheet.size == (42, 90), "the still was cropped to its subject plus autocrop's margin"
+    assert manifest["cell"] == {"w": 42, "h": 90} and manifest["dirs"] == ["front"]
+    assert set(manifest["anims"]) == {"walk", "attack"}
+    assert manifest["anims"]["walk"] == {"rows": {"front": 0}, "frames": 1, "fps": 1}
+    assert manifest["warnings"] == ["not a humanoid: the still stands in for every animation"]
+    assert "anim_from_still" not in json.dumps(_md()), "nothing points the fallback at a queue"

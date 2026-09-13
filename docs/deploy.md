@@ -492,7 +492,8 @@ Settings block (`settings.json` → `runpod`, the full key list in `docs/local_d
 - `queues.video` is the image block with its own `template_id` (the `video-*` tag), the same cards
   and CUDA floor, and a longer `idle_exit_seconds` (90): an anim's sheet job lands ~20 s after
   its still renders, and a build asks for its characters together, so a video pod that exits on
-  a short idle re-pays its boot for the next character.
+  a short idle re-pays its boot for the next character. Nothing enqueues on it today
+  (`docs/models.md`), so no video pod is ever bought.
 
 Create-time `env` OVERRIDES the template's (verified 2026-09-04: every fleet pod dialed the
 `cp_url` in settings while the templates still named the retired funnel host). The template env

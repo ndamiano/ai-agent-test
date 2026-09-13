@@ -335,9 +335,7 @@ def test_an_anim_without_a_full_spec_is_refused_with_the_reason(run_dir, anims, 
     assert _image_jobs() == []
 
 
-def test_a_top_up_resumes_an_anim_from_its_source_render_onto_the_video_queue(run_dir):
-    """A mesh needs its source render to skip back to TRELLIS; an anim needs the same to skip
-    back to the video worker instead of re-paying for the still."""
+def test_a_top_up_resumes_an_anim_from_its_source_render_at_the_mesh(run_dir):
     request_media(RUN, run_dir, "b1", "knight", "a knight", STYLE, kind="actor", details={"anims": KNIGHT_ANIMS, "facings": 4})
     src = assets.asset_path(RUN, "knight", "src.png")
     src.parent.mkdir(parents=True, exist_ok=True)
@@ -345,13 +343,13 @@ def test_a_top_up_resumes_an_anim_from_its_source_render_onto_the_video_queue(ru
 
     assets.start_from_manifest(RUN, run_dir, "b1")
 
-    video_jobs = _jobs("video")
-    assert len(video_jobs) == 1, "the top-up went to the video worker, not back to ComfyUI"
-    assert video_jobs[0]["payload"]["kind"] == "anim_sheet"
-    assert set(video_jobs[0]["payload"]["anims"]) == {"walk", "attack"}
-    assert video_jobs[0]["payload"]["turn"] is not None
-    assert video_jobs[0]["metadata"]["then"]["operations"] == ["save_anim"]
+    mesh_jobs = _jobs("mesh")
+    assert len(mesh_jobs) == 1, "the top-up went to TRELLIS, not back to ComfyUI"
+    assert mesh_jobs[0]["payload"]["kind"] == "trellis_mesh"
+    assert mesh_jobs[0]["metadata"]["then"] == {"enqueue": "sheet_from_mesh", "finalize": "art_build"}
+    assert {a["name"] for a in mesh_jobs[0]["metadata"]["anims"]} == {"walk", "attack"}
     assert len(_jobs("image")) == 1, "no second still render was paid for"
+    assert _jobs("video") == []
 
 
 def test_an_anim_with_no_source_render_still_starts_at_the_image(run_dir):

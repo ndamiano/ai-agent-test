@@ -106,9 +106,6 @@ def _mesh_for_sheet(md: Dict, result: Dict) -> Optional[Dict]:
 
 
 def _sheet_from_mesh(md: Dict, result: Dict) -> Optional[Dict]:
-    """The mesh a sheet is rendered from: rigged, animated by the verbs the build named, and shot
-    from four camera angles. A silhouette that is not a humanoid never gets here — the worker says
-    so and the still goes back to the drawn path instead."""
     glb = (result or {}).get("glb_file")
     if not glb:
         return None
@@ -117,7 +114,6 @@ def _sheet_from_mesh(md: Dict, result: Dict) -> Optional[Dict]:
                         "glb_b64": base64.b64encode(Path(glb).read_bytes()).decode("ascii"),
                         "anims": md["anims"], "facings": md["facings"]},
             "metadata": {**md, "then": {"operations": ["save_anim"],
-                                        "enqueue": "anim_from_still",
                                         "finalize": md["then"]["finalize"]}}}
 
 
@@ -215,6 +211,9 @@ def _save_anim(md: Dict, result: Dict) -> None:
     """The sheet and its manifest land together at the promised path (the PNG the game named,
     the JSON beside it), after the same verdict a render gets: the worker scored the four facing
     stills every frame descends from, and the worst of them speaks for the sheet."""
+    if (result or {}).get("fallback"):
+        _save_still_as_sheet(md, result["fallback"])
+        return
     src = (result or {}).get("sheet_file")
     if not src:
         return
@@ -226,6 +225,24 @@ def _save_anim(md: Dict, result: Dict) -> None:
     _mark_landed(md)
     for warning in result["manifest"].get("warnings") or []:
         logger.warning("assets %s: %s anim %s", md["run_id"], md["asset_id"], warning)
+
+
+def _save_still_as_sheet(md: Dict, reason: str) -> None:
+    src = asset_path(md["run_id"], md["asset_id"], "src.png")
+    if not src.exists():
+        return
+    im = autocrop_image(Image.open(src).convert("RGBA"))
+    dst = asset_path(md["run_id"], md["asset_id"], "png")
+    save_image(im, dst)
+    dst.with_suffix(".json").write_text(json.dumps(
+        {"cell": {"w": im.width, "h": im.height}, "dirs": ["front"],
+         "anims": {a["name"]: {"rows": {"front": 0}, "frames": 1, "fps": 1}
+                   for a in md["anims"]},
+         "pivot": {"x": im.width / 2.0, "y": im.height - 4.0},
+         "warnings": [f"{reason}: the still stands in for every animation"]}))
+    _mark_landed(md)
+    logger.warning("assets %s: %s anim %s — shipped as its still",
+                   md["run_id"], md["asset_id"], reason)
 
 
 OPERATIONS = {"save_sprite": _save_sprite, "save_flat": _save_flat, "decimate": _decimate,

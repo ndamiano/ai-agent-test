@@ -40,7 +40,6 @@ from maestro.state import RunState
 from tools.comfyui_tools import (
     ANIM_STILL_FRAMING,
     MATTED_KINDS,
-    build_anim_payload,
     build_image_payload,
 )
 from tools.execution_context import run_scope
@@ -330,17 +329,9 @@ def _anim_fields(kind: str, details: Optional[Dict]) -> Dict:
 
 
 def _then_for(kind: str, finalize: str = "assets") -> Dict:
-    """What a finished render owes. A mesh's image leg chains TRELLIS and an anim's the video
-    model; a matted kind is cropped to
-    its subject on the way in and an unmatted one must not be, since cropping a tile to its
-    "subject" is how a floor becomes a handful of planks. `finalize` is `"art_build"` only when
-    the batch IS its build (a top-up, a regenerate) and its last landing may end the row."""
     if kind == "mesh":
         return {"enqueue": "mesh_from_image", "finalize": finalize}
     if kind == "anim":
-        # A sheet is RENDERED from a mesh of the thing, because a video model asked to animate a
-        # still it must also end on answers by not moving (measured: 14 of 16 clips in a shipped
-        # sheet were stills). The drawn path is still there for whatever no skeleton fits.
         return {"enqueue": "mesh_for_sheet", "finalize": finalize}
     op = "save_sprite" if kind in MATTED_KINDS else "save_flat"
     return {"operations": [op], "finalize": finalize}
@@ -446,16 +437,14 @@ def _enqueue_batch(run_id: str, entries: List[Dict], build_id: str) -> str:
         payload = build_image_payload(e["prompt"], kind)
         then = _then_for(kind, "art_build")
         src = asset_path(run_id, e["id"], "src.png")
-        if mesh and src.exists():
+        if kind in ("mesh", "anim") and src.exists():
             # A mesh needs ComfyUI and then TRELLIS, and one GPU can only hold one of them, so a
             # top-up that always restarted at the image leg could never reach the second half.
-            queue, then = "mesh", {"operations": ["decimate"], "finalize": "art_build"}
+            queue = "mesh"
+            then = ({"operations": ["decimate"], "finalize": "art_build"} if mesh
+                    else {"enqueue": "sheet_from_mesh", "finalize": "art_build"})
             payload = {"kind": "trellis_mesh",
                        "image_b64": base64.b64encode(src.read_bytes()).decode("ascii")}
-        elif kind == "anim" and src.exists():
-            queue, then = "video", {"operations": ["save_anim"], "finalize": "art_build"}
-            payload = build_anim_payload(base64.b64encode(src.read_bytes()).decode("ascii"),
-                                         e["details"]["anims"], e["details"]["facings"])
         if payload is None:
             logger.warning("assets %s: %s blocked by the safety filter — not sent", run_id, e["id"])
             continue

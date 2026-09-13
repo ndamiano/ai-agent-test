@@ -34,7 +34,7 @@ Our queues are simple queries on the jobs table in our sql database.
 | `llm` | one build turn | any OpenAI-shaped server |
 | `image` | one image render | ComfyUI |
 | `mesh` | image → 3D | TRELLIS |
-| `video` | image → an animated sprite sheet | ComfyUI |
+| `video` | image → an animated sprite sheet | ComfyUI — wired, nothing enqueues on it (`docs/models.md`) |
 
 ### Workers
 

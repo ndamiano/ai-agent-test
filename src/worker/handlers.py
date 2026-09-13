@@ -244,12 +244,6 @@ def trellis_mesh(agent, payload):
 
 
 def sprite_sheet(agent, payload):
-    """One mesh → one sprite sheet, rendered rather than drawn.
-
-    The sheet is made on the SAME pod that just made the mesh, by a second server beside the
-    TRELLIS one: a glb the size of ten megabytes never leaves the box, and no pod boots for it.
-    A silhouette no humanoid skeleton fits comes back as a `fallback`, not an error — the caller
-    draws that sheet with the video model instead."""
     url = os.environ.get("SPRITE_URL") or agent.target.rsplit(":", 1)[0] + ":8190"
     try:
         r = _post(agent, f"{url}/sheet", json=payload, timeout=1800)

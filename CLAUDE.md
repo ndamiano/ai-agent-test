@@ -26,6 +26,7 @@ switch.
 | `docs/build_path.md` | the build path module by module |
 | `docs/architecture.md` | processes, state, trust boundaries |
 | `docs/local_dev.md` | settings, model servers, how to run anything |
+| `docs/models.md` | every model weight in prod, its source, size and license obligations |
 | `docs/experiments.md` | what each change to the loop actually measured |
 | `labs/*` | previously run experiment details, must be pulled separately |
 

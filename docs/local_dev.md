@@ -137,6 +137,9 @@ where the MiniMax nodes landed) with the weights under `/var/lib/models/image` a
 checkpoints, and ~30 GB of VRAM for a clip — nothing else runs on the card while a `video` job is
 in flight, same as the mesh/image exclusion below.
 
+Nothing enqueues on `video` today: MiniMax-H3's license does not cover the US (`docs/models.md`),
+so a silhouette no skeleton fits ships as its still. The leg stays wired for the next model.
+
 ### Meshes — TRELLIS
 
 ```

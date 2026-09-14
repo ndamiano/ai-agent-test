@@ -76,7 +76,7 @@ tok/s), compiled for `sm_120a` alone. It serves `chat` only.
   --model-id qwen3.8_27b \
   --host 127.0.0.1 --port 8090 \
   --max-context 131072 \
-  --spec mtp --draft-tokens 3 --lm-head-draft \
+  --spec dflash2 --draft-tokens 7 --lm-head-draft \
   --presence-penalty 0 \
   --cors \
   --vision \
@@ -84,6 +84,7 @@ tok/s), compiled for `sm_120a` alone. It serves `chat` only.
   --preserve-thinking
 ```
 
+`--spec dflash2` is the DFlash2 drafter packed in the artifact beside the MTP head: measured 1.27–1.62× MTP3's decode on the design chain, flat at ~200 tok/s where MTP sags as the sequence grows (`docs/experiments.md`). `--spec mtp --draft-tokens 3` still runs from the same file.
 `--vision` is what lets a worldgen build show the model its own renders — the refine stages send
 images, and a server launched without it refuses every image-bearing turn (`vision_disabled`).
 Its fixed GPU allocations come out of the same card as the weights and KV, and they are the

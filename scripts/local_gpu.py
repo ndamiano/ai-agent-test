@@ -92,7 +92,7 @@ def _leg(queue: str) -> dict:
             "argv": [str(_ninfer_bin()), str(_ninfer_artifact()), "--model-id", _model_id(),
                      "--host", "127.0.0.1", "--port", "8090",
                      "--max-context", str((_settings().get("llm") or {}).get("n_ctx", 98304)),
-                     "--spec", "mtp", "--draft-tokens", "3", "--lm-head-draft",
+                     "--spec", "dflash2", "--draft-tokens", "7", "--lm-head-draft",
                      "--presence-penalty", "0", "--cors", "--vision",
                      # The same llm.ninfer_args a pod gets at create, so a flag that dies at
                      # launch dies here first.

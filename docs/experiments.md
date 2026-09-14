@@ -2413,3 +2413,37 @@ prompt; the integrator's Node-harness carry-over and its 20K-token stop on Flash
 
 **Details.** `labs/spec-skeleton/README.md` (§"Integrator on the p2 triples" onward), run ids in
 `labs/spec-skeleton/builds.tsv`.
+
+====================================================================================================
+
+## 2026-09-14 — DFlash2 drafter on the local 27B (5090, qwen3.8_27b quasar via ninfer)
+
+**Question.** Does the DFlash2 K=7 drafter beat MTP3 on the calls we actually make, with the
+QUASAR checkpoint it was not trained against?
+
+**Setup.** The station design chain (`--new`, four design calls at xhigh, one request at a
+time) on the same QUASAR weights: MTP3 from the old artifact vs DFlash2 from the v2 artifact that
+appends the z-lab companion to byte-identical base payloads. Engine: Mirko's ninfer fork at
+`8debca3`. Control run 17c92bff6bda, arm run a149981e8c49.
+
+**Result.**
+
+| call | prompt | decode MTP3 → DFlash2 (tok/s) | × | accepted of 7 |
+|---|---|---|---|---|
+| gameplay | 413 | 159 → 203 | 1.27 | 34% |
+| visual | 11.5K | 147 → 200 | 1.36 | 33% |
+| engineering | 11.6K | 139 → 202 | 1.45 | 34% |
+| integrator | 47.0K | 136 → 221 | 1.62 | 39% |
+
+Chain wall 29m27s → 16m15s; token-weighted decode 145 → 205 (1.41×), the rest is a shorter
+draft. GPU footprint unchanged at 131K int8 KV with vision.
+
+**Verdict.** DFlash2 holds ~200 tok/s regardless of sequence length where MTP3 sags, so the gain
+grows with exactly the long calls a design and a build are made of. Acceptance matches upstream's
+base-model figure: QUASAR takes the base-trained drafter without loss.
+
+**Ruling.** Adopted for local: the v2 artifact under the same filename and model id,
+`ninfer-quasar` at `8debca3`, `local_gpu.py` serves `--spec dflash2 --draft-tokens 7`. Prod is
+Flash-Next on SGLang and has no companion; untouched.
+
+**Details.** `labs/ninfer-dflash2/README.md`.

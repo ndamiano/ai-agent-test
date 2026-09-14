@@ -218,9 +218,14 @@ litigation against the model.
 
 ### Qwen3.8 27B
 
-- Weights: [Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) (NVFP4 artifact in a
-  separate repo, see `docs/local_dev.md`)
-- License: [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0)
+- Weights: [Qwen/Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B), served as the
+  QUASAR-QAT NVFP4 ninfer artifact from
+  [MirkoCovizzi/Qwen3.8-27B-QUASAR-NVFP4-NInfer](https://huggingface.co/MirkoCovizzi/Qwen3.8-27B-QUASAR-NVFP4-NInfer)
+  (sha256 `da5efb33…`), which packs the DFlash2 drafter from
+  [incoai/Qwen3.8-27B-DFlash2](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2) (via the
+  pinned z-lab mirror, revision `50307d4c`)
+- License: [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) for the base, the QUASAR
+  quantization, the drafter and the artifact
 
 27.8B dense model that stands in for Flash-Next on the 5090 (`settings.json` names it
 `qwen3.8_27b_quasar`, served by ninfer on :8090 at a 131072 int8-KV window). Never in production.

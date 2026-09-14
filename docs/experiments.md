@@ -2365,3 +2365,51 @@ raising it to 96 changes nothing and costs a third of KV). The fourth slot costs
 `--enable-cache-report` so recorded builds carry cached tokens per turn.
 
 **Details.** `labs/conc-replay/README.md`.
+
+====================================================================================================
+
+## 2026-09-14 — a design team and a spec on disk (local 5090, qwen3.8_27b quasar via ninfer)
+
+**Question.** Does a sequential design team (gameplay → visual → engineering → integrator) with
+the merged spec handed to the builder as files, under a build prompt written for that, make
+better games than the one-shot design in the prompt?
+
+**Setup.** Five asks (two lifted from prod prompts). Four designer calls per ask at xhigh: Nick's
+rewritten gameplay/visual/engineering prompts, each later one fed the earlier docs; the existing
+integrator prompt merged the three (65–80K output tokens, one call each). The merged spec was
+split into one file per section under `game/design/` and the build prompt reorganised into
+how-you-act / environment / rules with tool docs moved to `docs/*.md`; the user message is two
+lines naming the ask and the folder. 200-step cap, no other change. Nick played the six results
+and the earlier one-shot builds of the same prompts.
+
+**Result.**
+
+| ask | steps | outcome | Nick |
+|---|---:|---|---|
+| island | 174 | done | great bones, barren map |
+| station | 145 | done | best station yet, objective unclear |
+| collector | 200 | capped, playable | cleanest collector ever; selling broken in both runs |
+| platformer | 200 | capped, playable | legitimately good |
+| forest | 200 | broken | hand-authored map + validator ran the output cap dry 14× |
+
+"Blown away … all really good"; the one-shot builds of the same prompts: collector "awful",
+island "awful", platformer "good". Every run read the whole spec before writing (six prompt
+and spec shapes tried, none changed that; the model's own account: cross-reference anxiety,
+reading feels like progress). The two that finished tested as they wrote; the capped three wrote
+everything by turn ~25 then spent 175 turns on one play() probe per turn. Zero Node/npm
+attempts under the new prompt against 5/5 Node harnesses in the engineering docs. The done nudge
+cost 6 turns median across 34 old builds and never capped one; it capped one here.
+
+**Verdict.** The team + spec-on-disk + layered prompt is the new baseline: 2 of 5 done and 4 of 5
+playable where one-shot produced games Nick would not ship. What it does not fix: content the
+spec leaves to the builder (levels, maps, a first minute), and a builder that verifies one probe
+per turn until the cap.
+
+**Ruling.** Integrate: design stage becomes four calls, the spec lands as files, the build prompt
+is rewritten in the layered shape, the done nudge goes for spec builds. Open before it ships:
+tests-as-files + one in-page runner as a prompt line; level/content ownership in the gameplay
+prompt; the integrator's Node-harness carry-over and its 20K-token stop on Flash-Next
+(continuation call).
+
+**Details.** `labs/spec-skeleton/README.md` (§"Integrator on the p2 triples" onward), run ids in
+`labs/spec-skeleton/builds.tsv`.

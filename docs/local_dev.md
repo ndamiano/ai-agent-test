@@ -182,6 +182,39 @@ cd src && python -m maestro.codegen.run "<request>"     # prompt → build
 **Playing a build:** `runtime/games/<run_id>/index.html`. A game is plain browser files, but a 3D
 one needs http, not `file://` — `<script type="module">` is CORS-blocked from a file origin.
 
+## Builds on RunPod pods from this box
+
+The prod model on prod pods, driven by the local control plane, through the exact prod path. A
+pod never listens; it boots `worker.agent` and polls `CP_URL/worker/claim`, so the only thing
+this box has to add is a URL a pod can reach.
+
+1. `sudo tailscale funnel --bg 8000` (once: `sudo tailscale set --operator=$USER` lets you do
+   it without sudo). `tailscale funnel status` prints the URL. It is a public HTTPS door to
+   :8000 — the worker path is bearer-gated like prod, the landing page is not — so
+   `sudo tailscale funnel off` when done.
+2. In settings.json: prod's `runpod` block (`queues`, templates, volumes; take it from the
+   droplet's settings.json) with `enabled: true` and `cp_url` = the funnel URL; `llm` =
+   what the pod serves — `model` `pennyroyal`, `n_ctx` 131072, `slots` 2 — because the pod
+   refuses to boot on a model mismatch and every request names it. `max_workers: 1` per queue
+   bounds spend. `workqueue.job_timeout_seconds` ≥ the longest single call you will queue (a
+   100K-token design at xhigh runs past the 1800 s default).
+3. Stop `scripts/local_gpu.py auto` and any hand-started worker: a local worker claims the job
+   before the pod boots.
+   Prod's autoscaler shares the RunPod account and reaps every `maestro-<queue>-*` pod that
+   never registered with PROD inside `boot_deadline_seconds` — a pod that registered here dies
+   at exactly five minutes. The local scaler has to name its pods with its own prefix
+   (`src/scaler/autoscaler.py`, the two `maestro-{queue}-` strings), and then prod cannot see
+   them and it cannot see prod's.
+4. Restart `run.py`; the log says `RunPod autoscaler started`. Then build exactly as usual —
+   `python -m maestro.codegen.run "<ask>"`, or a pinned prompt through `run_build`. Scale-from-
+   zero fires on the first pending job (the `min_jobs_per_pod` rule only gates a second pod).
+   Rent → claim is ~3 min on a warm image; a stock-out shows as `scale-up llm: ... refused`
+   every tick and the pending job dies at the reaper's 30 min unless something re-enqueues it.
+
+The pod's own view: `GET /pods/<id>` on the RunPod API (`scaler.runpod_client`) has its env,
+uptime and GPU utilisation, and the control-plane log shows its claims and heartbeats arriving
+from a RunPod address.
+
 ---
 
 ## Frontend notes

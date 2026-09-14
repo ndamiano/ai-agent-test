@@ -1,8 +1,9 @@
 // lib/canvas.js — scales a fixed-size logical world onto YOUR <canvas>, whatever size the page
-// gives it, so the game looks the same in every window. It never creates or styles elements: the
-// canvas, the page layout and any HTML overlays (title screen, HUD, dialogue) stay yours.
+// gives it, so the game looks the same in every window. It never creates elements: the canvas, the
+// page layout and any HTML overlays (title screen, HUD, dialogue) stay yours. A canvas your CSS
+// leaves unsized fills the window; size it in CSS or inline to make it smaller.
 //
-//   <canvas id="game"></canvas>                       in index.html, sized by your CSS (e.g. width:100vw;height:100vh)
+//   <canvas id="game"></canvas>                       in index.html; fills the window unless your CSS sizes it
 //   import { createCanvas } from './lib/canvas.js';
 //   const view = createCanvas(document.getElementById('game'), { width: 960, height: 540 });  // LOGICAL size: draw as if 960x540
 //   const { canvas, ctx } = view;
@@ -27,6 +28,10 @@ export function createCanvas(canvas, { width = 960, height = 540, pixelArt = fal
   const ctx = canvas.getContext('2d');
   const view = { canvas, ctx, width, height, scale: 1, offX: 0, offY: 0, dpr: 1,
                  cam: { x: width / 2, y: height / 2 }, _listeners: [] };
+
+  if (!canvas.style.width && !canvas.style.height && canvas.clientWidth === 300 && canvas.clientHeight === 150) {
+    canvas.style.width = '100vw'; canvas.style.height = '100vh';
+  }
 
   function resize() {
     view.dpr = window.devicePixelRatio || 1;

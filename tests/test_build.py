@@ -20,12 +20,6 @@ def _cursor(**kw):
     return BuildCursor(build_id="b1", **kw)
 
 
-def _done(tmp_path, tools, cursor):
-    """Spend the one `done` the build answers instead of accepting, so a test about what the SECOND
-    done does starts from the state a real build reaches."""
-    build_steps.step({}, tmp_path, tools, cursor, _reply(code='done(summary="first pass")'))
-
-
 def _reply(content="", code=None, usage=None, programs=None, reasoning=None):
     """A turn: the model's reply carrying one `python` call whose `code` is the program."""
     msg = {"role": "assistant", "content": content}
@@ -96,84 +90,18 @@ def test_the_first_turn_sends_the_request_and_nothing_else(tmp_path, tools):
     assert [t["function"]["name"] for t in out.schemas] == ["python"]
 
 
-def test_the_system_prompt_stays_the_measured_one(tmp_path, tools):
-    """Every line here is read on every turn of every build. Additions regressed the artifact once
-    already, so the prompt is pinned: the grid's six rules, plus the renderer and the media tool —
-    the two things in the project the model cannot infer from a file listing."""
-    cursor = _cursor()
-    out = build_steps.step({"request": "a card game"}, tmp_path, tools, cursor, {})
-    system = out.messages[0]["content"]
-    assert "three.module.js" in system and "generate_media" in system
-    # Measured 2026-08-22: the library closed three ledger items 6/6 against a control arm.
-    assert "lib/input.js" in system
-    assert "seeded generator" in system
-    # Pinned to its measurement: 2/2 games sized the canvas with this line, 0/2 without.
-    assert "sized to the window" in system
-    # The functions are documented here, once per turn, rather than in seven schemas re-read with
-    # every tool: 1,831 tokens of window against 266 (measured 2026-09-07).
-    assert "check_syntax" in system and "read_file(path" in system
-    assert "nothing you bind survives" in system
-    # assets.json is written by the platform, so naming it here would invite the model to write it.
-    assert "assets.json" not in system
-
-
 def test_fix_note_replaces_the_request(tmp_path, tools):
     cursor = _cursor(request="the player cannot move")
     out = build_steps.step({"request": "a card game"}, tmp_path, tools, cursor, {})
     assert "the player cannot move" in out.messages[-1]["content"]
 
 
-def test_the_first_done_is_answered_not_accepted(tmp_path, tools):
-    """A model's own bar for playable is that it wrote the files. One bounded turn asks it to look
-    once more, and is satisfiable by naming nothing."""
-    cursor = _cursor()
-    build_steps.step({}, tmp_path, tools, cursor, {})
-    out = build_steps.step({}, tmp_path, tools, cursor, _reply(code='done(summary="shipped")'))
-    assert isinstance(out, build_steps.Infer)
-    assert cursor.finished is False and cursor.done_nudged is True
-    assert cursor.history[-1]["role"] == "tool"
-    assert build_steps._DONE_NUDGE in cursor.history[-1]["content"]
-
-
-def test_the_nudge_carries_what_the_art_audit_found(tmp_path, tools):
-    """The one place the build already asks what is unfinished. A build that asked for art and drew
-    the game without it has no other moment to hear so — generate_media answers with a path and
-    never learns whether the path was used."""
-    game = tmp_path / "game"
-    game.mkdir(parents=True, exist_ok=True)
-    (game / "assets.json").write_text(
-        '{"images": [{"id": "ghost", "file": "assets/ghost.png", "prompt": "a ghost"}]}')
-    (game / "game.js").write_text("ctx.fillRect(0, 0, 32, 32)")
-
-    cursor = _cursor()
-    build_steps.step({}, tmp_path, tools, cursor, {})
-    build_steps.step({}, tmp_path, tools, cursor, _reply(code='done(summary="shipped")'))
-
-    nudge = cursor.history[-1]["content"]
-    assert build_steps._DONE_NUDGE in nudge
-    assert "ghost" in nudge
-
-
 def test_done_ends_the_build(tmp_path, tools):
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
-    _done(tmp_path, tools, cursor)
     out = build_steps.step({}, tmp_path, tools, cursor, _reply(code='done(summary="shipped")'))
     assert isinstance(out, build_steps.Done)
     assert cursor.finished is True and "shipped" in out.report
-
-
-def test_the_nudge_is_asked_once_not_every_done(tmp_path, tools):
-    """Work happens between the two dones. The second one must be accepted whatever came between —
-    a bar the model cannot get past grinds to the step cap."""
-    cursor = _cursor()
-    build_steps.step({}, tmp_path, tools, cursor, {})
-    _done(tmp_path, tools, cursor)
-    build_steps.step({}, tmp_path, tools, cursor,
-                     _reply(code='write_file(path="help.html", content="controls")'))
-    out = build_steps.step({}, tmp_path, tools, cursor,
-                           _reply(code='done(summary="added the controls screen")'))
-    assert isinstance(out, build_steps.Done)
 
 
 def test_tool_call_lands_on_disk_and_continues(tmp_path, tools):
@@ -266,7 +194,6 @@ def test_no_result_re_asks_instead_of_inventing_an_empty_turn(tmp_path, tools):
 def test_a_long_done_summary_is_cut_on_a_word_boundary(tmp_path, tools):
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
-    _done(tmp_path, tools, cursor)
     out = build_steps.step({}, tmp_path, tools, cursor, _reply(
         code='done(summary="' + "built the thing " * 60 + '")'))
     assert isinstance(out, build_steps.Done)
@@ -581,7 +508,7 @@ def test_seed_places_the_renderer_and_leaves_edits_alone(tmp_path, monkeypatch):
     (tmp_path / "game" / "index.html").write_text("<h1>hi</h1>")
     staging.seed_vendor(tmp_path)
     assert (tmp_path / "game" / "index.html").read_text() == "<h1>hi</h1>"
-    assert sorted(p.name for p in (tmp_path / "game").iterdir()) == ["index.html", "lib", "three.module.js"]
+    assert sorted(p.name for p in (tmp_path / "game").iterdir()) == ["docs", "index.html", "lib", "three.module.js"]
 
 
 def test_seed_places_the_world_loader(tmp_path):
@@ -1008,19 +935,6 @@ def test_a_program_with_hundreds_of_calls_reports_a_readable_ledger(tmp_path, to
     said = cursor.history[-1]["content"]
     assert "… 20 more …" in said
     assert said.count("write_file") == 40
-
-
-def test_the_prompt_still_says_how_to_ask_for_art(tmp_path, tools):
-    """The art direction used to ride generate_media's schema. With one tool the schema is gone,
-    so the same guidance has to be in the prompt — the `details` shape is not guessable, and the
-    style phrase is what keeps one game's art one game's art."""
-    cursor = _cursor()
-    out = build_steps.step({"request": "a card game"}, tmp_path, tools, cursor, {})
-    system = out.messages[0]["content"]
-    for kind in ("sprite", "actor", "tile", "scene", "mesh"):
-        assert f'"{kind}"' in system
-    assert "facings" in system and "anims" in system and "body plan" in system
-    assert "ONE style phrase" in system
 
 
 def test_the_feed_line_folds_failures_too(tmp_path, tools):

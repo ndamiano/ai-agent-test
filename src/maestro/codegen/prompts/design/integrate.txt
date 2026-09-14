@@ -1,0 +1,113 @@
+You are the lead designer on a design team for a browser game an agentic AI will build. Three 
+colleagues each wrote one portion of the design of the same request — gameplay.md, visual.md, and
+engineering.md. Gameplay was written first, and visual and engineering were given the gameplay as
+reference.
+
+Your goal is to take the documents they created and merge them into a single design that supersedes
+the original. You will need to make rulings on anything they disagree about, and fill in any gaps
+that they left because they didn't have the others documents. If you drop anything from their
+designs, you have to document why.
+
+The design spec has these sections, in this order, with these headings:
+
+# 0. SCOPE
+## 0.1 Asked
+A table with requirements that come directly from the user's request, as well as the designs from
+the gameplay design.
+| Requirement | Where it lives |
+| --- | --- |
+
+## 0.2 Decisions
+Document any decisions you made here with why. This should be in tabular format, with the designs
+each in their own column, and your ruling / reasoning in the final column. Your rulings are *final*,
+so it is important that the decision is documented as to why. 
+
+## 0.3 Tiers
+This is a priority list of segments. Tier 1 is what you'd say, given the user's and design's
+requirements means "minimal viable game." Tiers 2+ should be incremental improvements that make the
+game into a better game. You may create as many tiers as you'd like, and each system in future
+sections should get its tier listed so that the agent building this can make a decision on whether
+it can say it's finished or not. Tier 1 will be guaranteed to build, while higher tiers may be
+left unbuilt.
+
+# 1. CONVENTIONS
+## 1.1 Units, axes, frames
+In general, this should come from the engineering design. In any case, the first section is all of
+the universal important numbers. Units for anything that needs it (IE, speed units), etc.
+
+## 1.2 Important conventions
+This section should include important rules all files should follow, such as using a specific random
+source or the fixed step loop. 
+
+# 2. CONTRACTS
+## 2.1 Module layout
+## 2.2 Global context
+## 2.3 Module specifics
+
+From engineering.md, with every field the gameplay records need present in the global context and
+every function a rule or a test needs present in a module.
+
+# 3. VISUAL SPEC
+The look in one paragraph, then lighting and atmosphere, then the space, then the recipe table, from
+visual.md; ruled against gameplay where a visual implies a rule.
+
+# 4. GAMEPLAY SPEC
+The game in one paragraph, then the records with their rosters, then one subsection per system made
+of its rules with the numbers, tagged with its tier; then progression and difficulty; then feel.
+From gameplay.md, with every number gameplay gave carried as given.
+
+# 5. CHARACTERS
+Silhouettes, animations by name with their motion rules, facings; from visual.md, with the states
+gameplay's rules need.
+
+# 6. AUDIO
+The builder has access to an audio API, and so you should include a table of synthesized sounds,
+giving the name, the recipe of how to make it (waveforms / frequencies, etc) and when it plays.
+
+# 7. UX
+HTML and CSS only; the screens as a state machine and the HUD as a table of element → record field →
+when visible, merged from gameplay's screens and visual's feedback.
+
+# 8. DEBUG API
+From engineering.md, extended with one function per gameplay system that reaches its state directly,
+and the player's inputs as functions.
+
+# 9. TESTS
+The list of tests that should be run that validate each tier. Effectively, this should be tied to
+the definition of done you generate later, but give the agent a set of high level tests that will be
+sufficient for proving that it's done each tier code-wise.
+
+# 10. BUILD ORDER
+A high level set of things the agent should build in order to get to done. This serves mostly as A
+nudge to the agent, as the next section will be more concrete. 
+
+# 11. DEFINITION OF DONE
+High level definitions that line up with the tiers in section 0.3, as well as check boxes with lower
+level definitions of done that "add up" to the high level definition of done. The goal here is to
+give the agent workable definitions that they can use to say "okay, I'm done with this tier." and
+move on to the next one.
+
+# A. SANITY
+Re-read the sections above, and check them here. This should be a list of the checks you made and
+their results. Even with this section, if you find an error, you should fix it in the sections above
+and this section should exist as a small log of "here's what I validated, here's why it was or was
+not valid, and here's what it is now."
+
+Carry tables as tables and numbers as numbers. Do not summarize where a colleague wrote the detail;
+the builder gets the detail only from you.
+
+<request>
+{request}
+</request>
+
+<gameplay.md>
+{gameplay}
+</gameplay.md>
+
+<visual.md>
+{visual}
+</visual.md>
+
+<engineering.md>
+{engineering}
+</engineering.md>

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Union
 
 from llm_clients.message_builder import MessageBuilder
-from maestro.codegen import asset_use, code_map, file_state, turn_log
+from maestro.codegen import code_map, file_state, turn_log
 from maestro.codegen.pyexec import runner
 from maestro.codegen.staging import game_dir
 from maestro.services import parse_args, parse_args_checked
@@ -79,25 +79,6 @@ def _nudge(streak: int, run_dir) -> str:
 # one every time, so the model reads the same sentence rather than three descriptions of one event.
 _TOO_BIG = ("Write the file in smaller pieces: split the game across several files, or write one "
             "section at a time. Do not repeat a whole large file to change a small part of it.")
-
-
-# Satisfiable by naming nothing, so a finished game passes it on the next turn. A bar the model
-# cannot clear is answered by contorting the game until the step cap.
-_DONE_NUDGE = (
-    "Not finished yet. Call list_files, then name anything a player meets in the first thirty "
-    "seconds that is missing or unfinished — how they learn the controls, what the first screen "
-    "shows, whether every button does something. Every name your code uses must be declared "
-    "somewhere — a variable referenced but never defined crashes the game on load. Build what "
-    "you find, then call done again. If nothing is missing, call done again."
-)
-
-
-def _done_nudge(run_dir) -> str:
-    """The nudge, plus whatever the art audit found. It rides the nudge rather than a turn of its
-    own because the nudge is already the one place the build asks what is unfinished — and it is
-    asked ONCE, so a model told twice does not start inventing work."""
-    art = asset_use.report(asset_use.audit(run_dir))
-    return f"{_DONE_NUDGE} {art}" if art else _DONE_NUDGE
 
 
 @dataclass
@@ -371,13 +352,6 @@ def _apply(tools, cursor, tc, run_dir) -> bool:
     content = _result_of(outcome) + (_repeat_note(cursor, code, outcome) or "")
 
     finished = [t for name, t, ok in outcome.ledger if name == "done" and ok]
-    if finished and not cursor.done_nudged:
-        # The nudge is the TOOL RESULT, not a user message after it: one message answers one call,
-        # and no round is left with its `tool` half missing.
-        cursor.done_nudged = True
-        cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"),
-                               "content": content + "\n\n" + _done_nudge(run_dir)})
-        return False
     cursor.history.append({"role": "tool", "tool_call_id": tc.get("id"), "content": content})
     if finished:
         cursor.finished = True

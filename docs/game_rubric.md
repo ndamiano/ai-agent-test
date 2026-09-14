@@ -204,7 +204,7 @@ Expect low for a while.
 **art integration** — Is generated art load-bearing in the game, or decoration bolted beside code
 primitives? This is the human half of the coverage question the static audit can only count: the
 audit says an asset was referenced, only a person can say it was used well. Expect low for a while.
-*Levers:* `generate_media`, the done-nudge art audit, the asset store.
+*Levers:* `generate_media`, the asset store.
 
 **sound** — Is there any, does it respond to what you do, does it fit? Currently absent on nearly
 every build, which is the point of tracking it. Expect low for a while.

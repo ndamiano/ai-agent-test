@@ -99,7 +99,7 @@ def test_every_request_the_build_sent_replays_from_the_log(run):
     schemas and every added slice up to k. Including across a compaction, which drops rounds from
     the live transcript that the log still has to account for."""
     build_id = build_chain.kickoff(run)
-    landed = [_land(run, build_id, _reply([_write("index.html", 3000)])),
+    landed = [_land(run, build_id, _reply([_write("index.html", 6000)])),
               _land(run, build_id, _reply([_write("game.js", 300)], prompt_tokens=3000)),
               _land(run, build_id, _reply([_write("style.css")]))]
 

@@ -1,10 +1,6 @@
-"""Worker endpoints — the pull side of the inference queue.
-
-Worker agents (worker/agent.py) claim jobs, heartbeat their lease, and land results here.
-Mounted at /worker, OUTSIDE the user-auth gate: workers are not users. Auth is the shared
-workqueue token from settings, checked on every call; unset token = everything refused, so
-the queue is fail-closed until explicitly configured.
-"""
+"""Worker endpoints, the pull side of the inference queue: workers claim jobs, heartbeat their
+lease and land results here. Mounted at /worker outside the user-auth gate, behind the shared
+workqueue token; an unset token refuses everything, so the queue is fail-closed until configured."""
 
 import asyncio
 import base64
@@ -17,19 +13,14 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from config.settings_manager import settings_manager
-from db import games, jobs, workers
+from db import jobs, workers
 from maestro.codegen import asset_chain, build_chain, design
 
 router = APIRouter()
 
 CLAIM_LONG_POLL_SECONDS = 25.0
-# A build is a serial chain of turns, so scan cadence is paid once per turn. Ticks are a
-# lock-free peek — idle workers cost reads, not writer-lock churn. Postgres LISTEN/NOTIFY
-# replaces the scan outright when that migration lands.
 _CLAIM_POLL_INTERVAL = 0.05
 
-# Fire-and-forget completion work. asyncio holds only weak references to tasks, so an unheld
-# task can be collected mid-run.
 _BACKGROUND: set = set()
 
 
@@ -54,10 +45,6 @@ class ClaimBody(BaseModel):
     gpu_type: Optional[str] = None
     source: Optional[str] = None
     pod_id: Optional[str] = None
-    # The worker's requested long-poll window. This doubles as the scale-down debounce: an
-    # idle-exit worker passes its idle_exit_seconds here, and a null claim then MEANS "the queue
-    # stayed empty that long" — no client-side timer. Maps 1:1 to SQS ReceiveMessage
-    # WaitTimeSeconds. Capped at the server max.
     wait_seconds: Optional[float] = None
 
 
@@ -107,8 +94,6 @@ async def claim(body: ClaimBody, request: Request):
 async def heartbeat(body: HeartbeatBody, request: Request):
     cfg = _require_worker(request)
     ok = jobs.heartbeat_job(body.job_id, body.worker_id, cfg.get("lease_seconds", 120))
-    # A busy worker only ever hits this endpoint — without the touch its last_seen_at goes stale
-    # over any long job and the reaper would kill a pod mid-work.
     workers.touch_worker(body.worker_id)
     return {"ok": ok}
 
@@ -130,10 +115,6 @@ _JOB_ID_RE = re.compile(r"[0-9a-f]{16,32}")
 
 
 def _offload_blobs(job_id: str, result: Optional[Dict]) -> list:
-    """Big binaries do not belong in jobs rows: decode them to <data_dir>/blobs and hand the
-    row paths instead — a mesh's glb_b64 becomes glb_file, an anim's sheet_b64 sheet_file, each
-    image entry's b64 file. The job_id names the files, so it must be one of ours (hex), not a path. Caller
-    removes the files if the completion turns out to be stale."""
     if not result:
         return []
     has_images = any("b64" in img for img in result.get("images") or [])
@@ -208,10 +189,8 @@ async def complete(body: CompleteBody, request: Request):
         follow_up = (build_chain.on_completion, metadata["run_id"], metadata.get("build_id"),
                      body.result, body.error, body.job_id, body.exec_seconds)
     elif metadata.get("stage") == "design":
-        if outcome["build_id"]:
-            games.build_finished(outcome["build_id"],
-                                    "succeeded" if body.error is None else "failed", steps=1)
-        follow_up = (design.on_complete, metadata["run_id"], body.result, body.error)
+        follow_up = (design.on_complete, metadata["run_id"], outcome["build_id"], body.result,
+                     body.error, metadata.get("step", "gameplay"))
     else:
         follow_up = (asset_chain.on_completion, metadata, body.result, outcome["batch_id"],
                      outcome["batch_complete"])

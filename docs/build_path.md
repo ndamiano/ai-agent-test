@@ -76,8 +76,7 @@ src/
                          the transcript (each turn's thinking kept until the next cut, because the
                          server's cache is the sequence as generated), compaction (`CLAUDE.md`; the
                          note it ends with carries
-                         `code_map`), the DONE-NUDGE (`cursor.done_nudged` — asked
-                         once, then the next `done` is taken), and
+                         `code_map`), and
                          every way a reply TOO BIG TO LAND arrives. A reply cut off before any tool
                          call is DISCARDED and the turn re-sent, carrying nothing into the
                          transcript; the other two are answered with the one remedy (write it in
@@ -97,7 +96,7 @@ src/
                          into old_text, where it matches nothing (measured 2026-07-28: 17 of one
                          build's 32 turns, resent byte-identical).
       build_state.py     the durable build CURSOR (runs/<id>/build_state.json) — phase, step count,
-                         the PAUSE flag, the done-nudge flag, the growing transcript, and the
+                         the PAUSE flag, the growing transcript, and the
                          read→edit tool grounding, rehydrated into build_tools each completion (a
                          fresh process would else refuse a resumed edit). Job metadata carries only
                          {stage,run_id,build_id}; this file is the single source the completion
@@ -279,7 +278,7 @@ src/
                          question as whether the game plays right, so the gallery SHOWS the defect
                          and nothing acts on it. An already-rendered file, a blocked prompt
                          and a refused budget are all answered, never retried blind. A REPEATED id
-                         is answered ONCE and then obeyed — the done-nudge shape: the first repeat
+                         is answered ONCE and then obeyed: the first repeat
                          says "not requeued, call again to replace it", the second re-renders and
                          rewrites the entry's prompt. Silently keeping the old picture was worse
                          than either, because "redraw these" got agreement and no new art.
@@ -290,22 +289,28 @@ src/
                          A top-up RESUMES a mesh from its `<id>.src.png` if one is there: the chain
                          needs ComfyUI and then TRELLIS, and a one-GPU box holds one at a time, so
                          always restarting at the image leg never reached the second half.
-      design.py          the DESIGNER — the one inference between the user's words and the build.
-                         One llm call (prompts/design.txt) turns spec.json's `ask` (the words,
-                         verbatim, kept for the human to see) into `request` (a 900–1400-word
-                         systems design: the systems named, every entity a record with fields,
-                         structure from seeded generators with verifiers, numbers given, art named
-                         as art, screens as a state machine — `CLAUDE.md`). `request` is what
-                         builds; it is absent while the design is pending. Web: an llm job tagged
-                         metadata.stage="design", whose completion writes `request`, emits
-                         `prompt_proposed` and KICKS OFF THE BUILD — no human reads the design
-                         first; a failed or empty design writes `request = ask` and builds on
-                         that. A kickoff the budget refuses leaves the run designed and idle, and
-                         the page's Build button retries it. The built page renders `request` as
-                         headed sections read from its shape (the lead line, the SYSTEMS list, one
-                         section per NAME: paragraph) over the SAME string the edit box holds
-                         and a rebuild sends — a view, never a second copy. CLI: synchronous,
-                         and the build is the CLI's own next call. The
+      design.py          the DESIGN TEAM — four inferences between the user's words and the build.
+                         Each is its own prompt under prompts/design/: gameplay from spec.json's
+                         `ask` (the words, verbatim, kept for the human to see); visual and
+                         engineering from the ask and gameplay.md, enqueued together; the integrator
+                         from all three, merging them into one spec with fixed sections (scope with
+                         tiers, conventions, contracts, visual, gameplay, characters, audio, UX,
+                         debug API, tests, build order, definition of done, sanity). A reply that
+                         stops before the last section is continued (integrate_continue.txt appended
+                         to the same prompt with the text so far), up to three times. Every reply is
+                         kept under runs/<id>/design/; the merged spec is runs/<id>/design.md, seeded
+                         into the game folder as design/design.md beside docs/ (the generate_media
+                         and compose_world guidance). Neither folder is published: they are ours, not
+                         the game's. `request` is the two-line prompt (prompts/request.txt) naming
+                         the ask and the spec; it is absent while the design is pending. Web: one llm
+                         job per step, tagged metadata.stage="design" and .step, each completion
+                         enqueuing the next (an atomic marker makes the integrator ask happen once
+                         when visual and engineering land together); the last writes `request`,
+                         emits `prompt_proposed` and KICKS OFF THE BUILD — no human reads the design
+                         first. A step that fails or comes back empty writes `request = ask` and
+                         builds on that. A kickoff the budget refuses leaves the run designed and
+                         idle, and the page's Build button retries it. CLI: the same chain,
+                         synchronous, and the build is the CLI's own next call. The
                          create call is where the game is charged — the credit, and the
                          compute-seconds grant the queue meters against (`db_store.charge_game`,
                          through `tools/execution_context.run_scope`): the design is the game's
@@ -355,18 +360,6 @@ src/
                          guardrail. Stops at MAX_ROUNDS or the same fact twice running. A session
                          that cannot run logs and stands — boundary, like the error gate. Round
                          state in runs/<id>/play_gate.json.
-      asset_use.py       does the game LOAD the art it asked for — static analysis over the game's
-                         own source, no model and no GPU. Two facts: an asset the source never
-                         names (paid for, never seen) and an `assets/…` path in neither the manifest
-                         nor the folder (a broken image, and no top-up can fill it because nothing
-                         ever asked). An asset still RENDERING is neither — it is in the manifest,
-                         so the source naming it is right. It rides the DONE-NUDGE, which is already
-                         the one place the build asks what is unfinished and is asked ONCE.
-                         Matching is generous one way and literal the other so the count
-                         under-reports: an id named ANYWHERE counts as loaded (a game may build
-                         `"assets/" + id + ".png"` at runtime), while a missing path must be written
-                         out in full. The vendored renderer is not the game's source — GLTFLoader
-                         discusses `assets/` paths in its comments.
       asset_chain.py     what a finished asset job does NEXT — the names in its `metadata.then`: a
                          CONTINUATION to enqueue (mesh_from_image, anim_from_image), OPERATIONS on
                          this result (save_sprite / save_flat / decimate / save_anim), and the
@@ -395,7 +388,8 @@ src/
                          for the admin panel. The image side of the same policy is asset_chain's
                          `_admit` above.
       prompts/           build.txt (the one system prompt every build turn reads),
-                         design.txt (the designer call), play_turn.txt / play_verdict.txt /
+                         request.txt (the build's user message), design/*.txt (the four design
+                         calls and the integrator's continuation suffix), play_turn.txt / play_verdict.txt /
                          play_fix_note.txt (the play gate's session, closing report and fix
                          note), probe_targets.txt (the gate asking
                          where to press), error_gate_note.txt (the fix note an
@@ -515,7 +509,8 @@ What settles it is COVERAGE — how much of what the player sees got art — not
 whose art never lands renders its placeholders (2026-08-24: before them, a card game drew a
 never-landed webp and was black every frame).
 
-Coverage, counted (2026-08-01, `asset_use.audit` over the 35 staged games): 352 assets asked for,
+Coverage, counted (2026-08-01, a static audit over the 35 staged games — since removed with the
+done nudge it rode on): 352 assets asked for,
 **128 rendered and never referenced by the game's source**, and **115 `assets/…` paths referenced
 that were never asked for**. One ghost game asked for all 11 of its assets before writing a line of
 code, wrote the game with 89 canvas primitives, read its own `assets.json`, and loaded none of them.

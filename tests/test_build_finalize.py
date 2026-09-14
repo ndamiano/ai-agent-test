@@ -26,8 +26,6 @@ def seen(monkeypatch):
     monkeypatch.setattr(build_chain, "stage_for_play", lambda *a, **k: None)
     monkeypatch.setattr(build_chain.snapshots, "take", lambda *a, **k: None)
     monkeypatch.setattr(build_chain.artifact_screen, "screen_artifact", lambda *a, **k: None)
-    monkeypatch.setattr(build_chain.asset_use, "audit",
-                        lambda *a, **k: {"unreferenced": [], "missing": []})
 
     class _Thread:                       # the gates are driven by hand, so the test is not a race
         def __init__(self, target=None, args=(), daemon=None):

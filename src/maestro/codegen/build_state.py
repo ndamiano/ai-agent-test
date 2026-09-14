@@ -48,7 +48,6 @@ class BuildCursor:
     # re-reads between retries, and that read must not clear the failing edit's count.
     repeat_counts: Dict[str, int] = field(default_factory=dict)
     actions: List[str] = field(default_factory=list)   # last turn's tool calls, for the build feed
-    done_nudged: bool = False                     # the first `done` was answered, not accepted
     finished: bool = False                        # the model called `done`
     summary: str = ""
     system: str = ""

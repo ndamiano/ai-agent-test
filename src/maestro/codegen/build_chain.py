@@ -14,7 +14,6 @@ from db import errors, games, jobs
 from llm_clients.connector import get_connector
 from maestro.codegen import (
     artifact_screen,
-    asset_use,
     build_state,
     build_steps,
     error_gate,
@@ -287,14 +286,9 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
 
 
 def _announce(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool) -> None:
-    """The end of the whole chain, said once: the run's status, the art audit and `build_done`."""
+    """The end of the whole chain, said once: the run's status and `build_done`."""
     games.set_status(run_id, "built" if ok else "failed")
-    art = asset_use.audit(rs.run_dir)
-    if art["unreferenced"] or art["missing"]:
-        logger.warning("build %s art: %d asked for and never loaded, %d loaded and never asked for",
-                       run_id, len(art["unreferenced"]), len(art["missing"]))
-    _emit("build_done", run_id, build_id=cursor.build_id, ok=ok, steps=cursor.step,
-          art_unreferenced=art["unreferenced"], art_missing=art["missing"])
+    _emit("build_done", run_id, build_id=cursor.build_id, ok=ok, steps=cursor.step)
 
 
 def _settle(run_id: str) -> None:

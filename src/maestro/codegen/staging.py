@@ -1,10 +1,6 @@
-"""Where a game lives on disk, and how it reaches the browser.
-
-A game is a folder `<run_dir>/game/` of plain browser files — `index.html` plus whatever scripts,
-styles and data the model wrote beside it, and the vendored renderer `seed_vendor` put there before
-it started. There is no build step and no transform: staging copies the folder to
-`runtime/games/<slug>/`, which is what `/play` serves.
-"""
+"""Where a game lives on disk (`<run_dir>/game/`: the model's files plus what seed_vendor put there)
+and how it reaches the browser: copied to `runtime/games/<slug>/` minus design/ and docs/, which
+are ours, not the game's."""
 
 import os
 import re
@@ -15,10 +11,18 @@ from typing import Optional
 RUNTIME_DIR = Path(__file__).resolve().parents[3] / "runtime"
 GAME_DIR = "game"
 ENTRY = "index.html"
+SPEC_FILE = "design.md"
+DESIGN_DIR = "design"
+DOCS_DIR = "docs"
+_PRIVATE = (DESIGN_DIR, DOCS_DIR)
 
 
 def game_dir(run_dir) -> Path:
     return Path(run_dir) / GAME_DIR
+
+
+def spec_path(run_dir) -> Path:
+    return Path(run_dir) / SPEC_FILE
 
 
 def seed_vendor(run_dir) -> None:
@@ -32,17 +36,23 @@ def seed_vendor(run_dir) -> None:
         dst = d / src.name
         if not dst.exists():
             shutil.copy2(src, dst)
-    (d / "lib").mkdir(exist_ok=True)
-    for src in sorted((RUNTIME_DIR / "vendor" / "lib").glob("*.js")):
-        dst = d / "lib" / src.name
-        if not dst.exists():
-            shutil.copy2(src, dst)
+    for sub, pattern in (("lib", "*.js"), (DOCS_DIR, "*.md")):
+        (d / sub).mkdir(exist_ok=True)
+        for src in sorted((RUNTIME_DIR / "vendor" / sub).glob(pattern)):
+            dst = d / sub / src.name
+            if not dst.exists():
+                shutil.copy2(src, dst)
+    spec = spec_path(run_dir)
+    if spec.is_file() and not (d / DESIGN_DIR / SPEC_FILE).exists():
+        (d / DESIGN_DIR).mkdir(exist_ok=True)
+        shutil.copy2(spec, d / DESIGN_DIR / SPEC_FILE)
 
 
 def is_vendored(path: Path, game_dir: Path) -> bool:
-    """Seeded by the platform, not written by the model: the renderer beside the entry and the
-    helper library under lib/."""
+    """Seeded by the platform, not written by the model."""
     rel = path.relative_to(game_dir)
+    if rel.parts and rel.parts[0] in _PRIVATE:
+        return True
     return rel.suffix == ".js" and (RUNTIME_DIR / "vendor" / rel).is_file()
 
 
@@ -96,7 +106,9 @@ def stage_for_play(run_dir, slug: str) -> str:
     stale = games / f"_{slug}.stale"
     for leftover in (fresh, stale):                 # a previous crash owes us nothing
         shutil.rmtree(leftover, ignore_errors=True)
-    shutil.copytree(game_dir(run_dir), fresh, ignore=shutil.ignore_patterns("_*"))
+    src = game_dir(run_dir)
+    shutil.copytree(src, fresh, ignore=lambda d, names: [n for n in names if n.startswith("_")
+                                                          or (Path(d) == src and n in _PRIVATE)])
     if dst.exists():
         os.replace(dst, stale)
     os.replace(fresh, dst)

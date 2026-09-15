@@ -1,4 +1,4 @@
-"""The five tools (maestro/codegen/tools.py) — deliberately the smallest surface that works."""
+"""The functions a build's program calls."""
 import json
 
 import pytest
@@ -47,16 +47,12 @@ def test_edit_replaces_a_unique_snippet(tools, tmp_path):
 
 
 def test_edit_that_changes_nothing_is_refused(tools, tmp_path):
-    """A 27B stuck at the end of a long build repeats one edit whose old and new text are the
-    same, and a tool that answers ok to it keeps the loop fed — measured at 10 and 25 identical
-    trailing calls in two capped builds (2026-08-24)."""
     r = tools["edit_file"](path="game.js", old_text="const b = 2;", new_text="const b = 2;")
     assert r["ok"] is False and "changes nothing" in r["error"]
     assert "const b = 2;" in (tmp_path / "game" / "game.js").read_text()
 
 
 def test_edit_needs_no_prior_read(tools):
-    """The grid harness had no read-before-edit rule; adding one only invents a failure mode."""
     assert tools["edit_file"](path="game.js", old_text="const b = 2;", new_text="x")["ok"] is True
 
 
@@ -123,7 +119,6 @@ def _numbered(n):
 
 
 def test_a_window_ends_on_a_line_boundary(tmp_path):
-    """The measured loop: a read cut mid-line is copied into old_text, where it matches nothing."""
     body = _numbered(400)
     _game(tmp_path, {"big.js": body})
     r = build_tools(RunState(tmp_path), "b1")["read_file"](path="big.js")
@@ -133,10 +128,6 @@ def test_a_window_ends_on_a_line_boundary(tmp_path):
 
 
 def test_a_whole_file_comes_back_whole(tmp_path):
-    """The ceiling on a read was a context guard, and a read now lands in a program's variable —
-    only what the program prints costs the window. Left in place it made a partial read look like
-    a whole one, which is worse than a long one: the model reasoned from a fragment without ever
-    seeing the note that said so (measured 2026-09-07)."""
     body = _numbered(400)
     _game(tmp_path, {"big.js": body})
     r = build_tools(RunState(tmp_path), "b1")["read_file"](path="big.js")
@@ -145,7 +136,6 @@ def test_a_whole_file_comes_back_whole(tmp_path):
 
 
 def test_offset_and_lines_read_one_range_of_a_file(tmp_path):
-    """Reading the whole file is free, but a program that wants one function still asks for it."""
     body = _numbered(400)
     _game(tmp_path, {"big.js": body})
     read = build_tools(RunState(tmp_path), "b1")["read_file"]
@@ -168,7 +158,6 @@ def test_a_whole_file_still_reads_from_line_one(tmp_path, tools):
 
 
 def test_a_long_single_line_is_not_elided_below_the_ceiling(tmp_path):
-    """Mid-file elision broke edit anchors; the harness only ever truncated the tail."""
     line = "const DATA = [" + ",".join(str(i) for i in range(2000)) + "];\n"
     _game(tmp_path, {"data.js": line})
     r = build_tools(RunState(tmp_path), "b1")["read_file"](path="data.js")
@@ -180,8 +169,6 @@ def test_read_missing_file_is_an_error(tools):
 
 
 def test_read_requested_but_unrendered_asset_answers_pending_not_missing(tools, tmp_path):
-    # "no such file" on a queued render reads as a failed ask and the model re-requests its art
-    # under new ids. ok=True keeps the repeat ledger quiet on a legitimate second look.
     _game(tmp_path, {"assets.json": json.dumps({"images": [
         {"id": "goblin", "file": "assets/goblin.webp", "kind": "sprite", "prompt": "a goblin"}]})})
     r = tools["read_file"](path="assets/goblin.webp")
@@ -198,8 +185,6 @@ def test_read_missing_asset_nobody_requested_is_still_an_error(tools, tmp_path):
 
 
 def test_read_vendor_renderer_names_its_purpose_instead_of_its_4k_lines(tools, tmp_path):
-    # Only the seeded copy at the game root is vendor; the model's own file under a subdir with
-    # a colliding name stays readable.
     (tmp_path / "game" / "GLTFLoader.js").write_text("// thousands of lines of loader\n")
     r = tools["read_file"](path="GLTFLoader.js")
     assert r["ok"] is False
@@ -224,9 +209,6 @@ def test_list_files_skips_scratch(tools, tmp_path):
 
 
 def test_write_without_a_path_is_an_error_not_a_default(tools, tmp_path):
-    """THE regression. Defaulting a missing `path` to index.html meant every write in a run landed
-    on the same file and the last one — the game's JavaScript — won, so index.html held no HTML and
-    the page rendered its own source. Told the argument is missing, the model resends correctly."""
     r = tools["write_file"](content="const x = 1;")
     assert r["ok"] is False and "path" in r["error"]
     assert not (tmp_path / "game" / "index.html").exists()
@@ -254,33 +236,26 @@ def test_an_explicit_empty_new_text_still_deletes(tools, tmp_path):
 
 
 def test_a_wrong_type_is_reported_not_coerced(tools, tmp_path):
-    """Coercing an object body into JSON was a guess at intent. The harness reported the type it
-    wanted and the model resent a string; that is the whole recovery mechanism."""
     r = tools["write_file"](path="assets.json", content={"images": []})
     assert r["ok"] is False and "content" in r["error"] and "string" in r["error"]
     assert not (tmp_path / "game" / "assets.json").exists()
 
 
 def test_a_path_escape_is_reported_not_raised(tools):
-    """The guard still holds; it answers the model instead of killing the completion."""
     r = tools["write_file"](path="../escaped.js", content="x")
     assert r["ok"] is False and "escapes" in r["error"]
 
 
 def test_lines_reads_one_function_by_its_range(tmp_path):
-    """The code map in a compaction note gives every declaration its line range; `lines` is what
-    turns that into a read of the function rather than the file."""
     body = _numbered(400)
     _game(tmp_path, {"big.js": body})
     r = build_tools(RunState(tmp_path), "b1")["read_file"](path="big.js", offset=53, lines=25)
     assert r["ok"] and r["lines"] == "53-77/400"
     assert r["content"] == "".join(body.splitlines(keepends=True)[52:77])
-    assert "too long to read" not in r["content"]     # a window the model asked for is complete
+    assert "too long to read" not in r["content"]
 
 
 def test_check_syntax_finds_the_file_that_does_not_parse(tmp_path):
-    """It can only ever answer BROKEN or not — a file parses or it does not, and a parse error can
-    only be satisfied by fixing the syntax. Nothing here judges what the code DOES."""
     _game(tmp_path, {"good.js": "export const a = 1;\n",
                      "bad.js": "export const = ;\n",
                      "js/deep.js": "const y = {;\n"})
@@ -291,16 +266,12 @@ def test_check_syntax_finds_the_file_that_does_not_parse(tmp_path):
 
 
 def test_check_syntax_reads_a_module_as_a_module(tmp_path):
-    """node 22 sees `export` in a .js, answers "retry as a module" and returns 0 — so a game
-    checked as a script is always clean and the check is worthless."""
     _game(tmp_path, {"m.js": "export const a = ;\n"})
     checked = build_tools(RunState(tmp_path), "b1")["check_syntax"]()["checked"]
     assert checked["m.js"] != "OK"
 
 
 def test_check_syntax_leaves_the_vendored_renderer_alone(tmp_path):
-    """three.js and the helper library are not this game's code, and checking them on every call
-    would cost a second of every turn that asks."""
     from maestro.codegen.staging import seed_vendor
     seed_vendor(tmp_path)
     (tmp_path / "game" / "mine.js").write_text("const a = 1;\n")
@@ -309,9 +280,6 @@ def test_check_syntax_leaves_the_vendored_renderer_alone(tmp_path):
 
 
 def test_check_syntax_names_the_file_a_game_loads_but_does_not_have(tmp_path):
-    """A dead path is BROKEN the same way a parse error is: `./lib/audio.js` written from a
-    subfolder is a module that never loads, and neither node nor the error gate's chromium
-    reports it as an exception."""
     _game(tmp_path, {"js/main.js": "import { sfx } from './lib/audio.js';\nsfx('hit');\n",
                      "index.html": '<script type="module" src="js/main.js"></script>'})
     (tmp_path / "game" / "lib").mkdir()
@@ -331,7 +299,6 @@ def test_check_syntax_leaves_a_reference_that_resolves_alone(tmp_path):
 
 
 def test_check_syntax_does_not_call_queued_art_missing(tmp_path):
-    """Art is enqueued and lands later; a path the build was GIVEN is not a broken reference."""
     import json
 
     from maestro.codegen.assets import manifest_path
@@ -350,8 +317,6 @@ def test_check_syntax_names_a_file_that_is_not_there(tmp_path):
 
 
 def test_done_carries_its_summary_back(tmp_path):
-    """The driver reads `done` off the ledger of what the program called; the tool itself only has
-    to answer with the summary it was given."""
     _game(tmp_path, {})
     assert build_tools(RunState(tmp_path), "b1")["done"](summary="it plays") == {
         "ok": True, "summary": "it plays"}
@@ -412,3 +377,38 @@ def test_play_blocks_and_reports_a_request_that_tries_to_leave(playable):
     r = playable(js="try { await fetch('https://example.com/'); } catch (e) {} return 1;")
     assert r["ok"] and r["result"] == 1
     assert any("example.com" in b for b in r.get("blocked", []))
+
+
+DESIGN = """# 11. DEFINITION OF DONE
+
+## Tier 1 Definition of Done
+
+- [ ] Syntax check passes.
+- [ ] Game boots to `title` screen.
+- [ ] Pylon can be placed, upgraded, and sold.
+
+## Tier 2 Definition of Done
+
+- [ ] Syntax check passes.
+- [ ] All 6 maps load and validate.
+"""
+
+
+def test_check_off_ticks_a_list_of_rows_and_reports_what_is_left(tools, tmp_path):
+    _game(tmp_path, {"design/design.md": DESIGN})
+    res = tools["check_off"](rows=["- [ ] Syntax check passes.", "game boots to `TITLE` screen",
+                                   "placed, upgraded", "Music plays."])
+    assert res["ok"] is True
+    assert res["ticked"] == ["Syntax check passes.", "Game boots to `title` screen.",
+                             "Pylon can be placed, upgraded, and sold."]
+    assert res["unmatched"] == ["Music plays."]
+    assert res["unchecked"] == ["Syntax check passes.", "All 6 maps load and validate."]
+    body = (tmp_path / "game" / "design" / "design.md").read_text()
+    assert body.count("- [x] ") == 3 and body.count("- [ ] ") == 2
+    assert body.index("- [x] Syntax") < body.index("- [ ] Syntax")
+    again = tools["check_off"](rows="Syntax check passes.")
+    assert again["ticked"] == ["Syntax check passes."] and again["unchecked"] == ["All 6 maps load and validate."]
+
+
+def test_check_off_without_a_design_says_so(tools):
+    assert tools["check_off"](rows=["anything"])["ok"] is False

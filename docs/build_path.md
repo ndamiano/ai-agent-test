@@ -76,10 +76,12 @@ src/
                          the transcript (each turn's thinking kept until the next cut, because the
                          server's cache is the sequence as generated), compaction (`CLAUDE.md`; the
                          note it ends with carries
-                         `code_map`), and
+                         `code_map`, and replaces the previous compaction's note rather than
+                         stacking a stale one beside it), and
                          every way a reply TOO BIG TO LAND arrives. A reply cut off before any tool
-                         call is DISCARDED and the turn re-sent, carrying nothing into the
-                         transcript; the other two are answered with the one remedy (write it in
+                         call is DISCARDED and the turn re-sent for the whole window, carrying nothing
+                         into the transcript, and compacted first when the transcript is past the
+                         keep fraction, since that is what shrank the room the reply ran out of; the other two are answered with the one remedy (write it in
                          pieces) because the model can act on them: the call whose ARGUMENTS stop
                          mid-write (unreadable, so nothing ran — reported as the truncation it is,
                          never as the missing `path` it parses to), and the 500 the inference
@@ -122,8 +124,11 @@ src/
                          costs more in lost cache than the read it saves.
       code_map.py        the project as one message: every source file, what it imports, and each
                          declaration — exported or private, and the functions one level inside it
-                         — with the line range it occupies. Regex over JavaScript, no parser;
-                         art, `world/` and the vendored renderer are left out. It is what the
+                         — with the line range it occupies. Regex over JavaScript, no parser; a
+                         file wrapped in one column-0 closure is mapped one level in. A markdown
+                         file is mapped by its headings with their ranges, so the design's
+                         sections survive a compaction as `read_file` calls rather than a whole
+                         re-read. Art, `world/` and the vendored renderer are left out. It is what the
                          compaction note re-grounds the model on, and with `read_file`'s `offset`
                          and `lines` it turns "read the file" into "read lines 68-120".
       archive.py         the run dir's OFF-BOX copy. tools/s3.py is a minimal SigV4 client over
@@ -163,7 +168,7 @@ src/
                          call from `build_tools`, caps the calls and the wall clock, and runs
                          `check` first as a courtesy, never as the boundary (`CLAUDE.md`).
       tools.py           list_files / read_file / write_file / edit_file / generate_media /
-                         compose_world / check_syntax / play / done — the smallest surface that works,
+                         compose_world / check_syntax / play / check_off / done — the smallest surface that works,
                          and kept that way. They are FUNCTIONS the program calls, so a failure
                          comes back as a value it can read rather than an exception that abandons
                          the rest of the program. `read_file` returns the WHOLE file however long:
@@ -186,6 +191,11 @@ src/
                          deadline, because a page that never yields hangs the driver too, and the
                          thread serving the call is the control plane's. It answers what the page
                          DID, never whether that was good — the tests it runs are the design's own.
+                         `check_off` ticks definition-of-done rows (a list, or one) in the game
+                         folder's design/design.md and answers with what is still unchecked:
+                         the record of what is finished lives on disk, where a compaction cannot
+                         take it. Bookkeeping only; it never looks at the game, and `done` does
+                         not consult it.
                          `done` does nothing but carry its summary: the driver reads it off the
                          ledger.
                          compose_world is worldgen's build face: one 3D world per game, refused
@@ -307,8 +317,8 @@ src/
                          enqueuing the next (an atomic marker makes the integrator ask happen once
                          when visual and engineering land together); the last writes `request`,
                          emits `prompt_proposed` and KICKS OFF THE BUILD — no human reads the design
-                         first. A step that fails or comes back empty writes `request = ask` and
-                         builds on that. A kickoff the budget refuses leaves the run designed and
+                         first. A step that comes back empty is asked once more; one that fails, or
+                         comes back empty again, writes `request = ask` and builds on that. A kickoff the budget refuses leaves the run designed and
                          idle, and the page's Build button retries it. CLI: the same chain,
                          synchronous, and the build is the CLI's own next call. The
                          create call is where the game is charged — the credit, and the
@@ -339,7 +349,9 @@ src/
       play_gate.py       the PLAY GATE (branch experiment) — after the error gate is clean, play
                          the staged game in the same no-egress headless browser: one persistent
                          page, one session of MAX_TURNS llm turns. Each turn the model sees the
-                         current screenshot, presses ONE input (key, click, or a held key), states
+                         current screenshot, presses ONE input (key, click, or a held key; a tap is
+                         held TAP_MS, because a 0 ms press never shows to a game that polls whether
+                         a key is down), states
                          the VISIBLE change it expects, and next turn says met / unmet / unclear
                          about its own prediction (prompts/play_turn.txt — the design rides along
                          so the model knows the documented controls). The session's page also

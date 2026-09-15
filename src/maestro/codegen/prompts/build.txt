@@ -18,6 +18,7 @@ tool result.
     compose_world(description, seed=None) -> the path the world will appear at
     check_syntax(paths=None) -> {path: "OK" or what is wrong}, every game file by default
     play(js, seconds=20) -> {"result", "errors", "console"}
+    check_off(rows) -> {"ticked", "unchecked"}   rows: definition of done lines, ticked in design/design.md
     done(summary)
 
 You have the full base python to run. You can use variables, loops, helpers, etc. Use them to
@@ -69,5 +70,5 @@ you need.
 - Where `design/design.md` places things, write them as it placed them. Where it leaves layout to
   you decide if it should be manually placed, or whether a seeded generator makes more sense.
 - To change existing code, use edit_file. Never rewrite a whole file to change part of it.
-- Before you call done, call check_syntax, and ensure you've checked every box in "definition of
+- Before you call done, call check_syntax, and check_off every box in "definition of
   done". 

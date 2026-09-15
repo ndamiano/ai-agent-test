@@ -1,16 +1,8 @@
-"""The confined side: import what is allowed, lock the process down, then run the model's program.
-
-Order is the whole design. Every import happens FIRST, because the filter denies `openat` and an
-import after it would fail; the filter goes on SECOND, before a single byte of model code is
-compiled; the program runs THIRD, with the tool names bound to stubs that carry each call over the
-socket to the parent. A failure to install the filter exits non-zero rather than running the
-program unconfined.
-"""
+"""The confined side: every allowed import first, then the seccomp filter, then the model's program
+with each tool a stub over the socket. No filter, no program."""
 
 from __future__ import annotations
 
-# Everything the program may use, imported before the door closes. Anything absent here cannot be
-# imported later, whatever the program asks for.
 import json  # noqa: F401
 import math  # noqa: F401
 import random  # noqa: F401
@@ -40,9 +32,6 @@ import traceback
 
 from maestro.codegen.pyexec import rpc, seccomp
 
-# The tools reach the parent as keyword arguments, but a program calls them the way any Python
-# function is called — `read_file("game.js")` is what the model writes, and refusing it fails
-# nearly every program. These are the signatures build.txt documents, in order.
 TOOLS = {
     "list_files": (),
     "read_file": ("path", "offset", "lines"),
@@ -52,6 +41,7 @@ TOOLS = {
     "compose_world": ("description", "seed"),
     "check_syntax": ("paths",),
     "play": ("js", "seconds"),
+    "check_off": ("rows",),
     "done": ("summary",),
 }
 
@@ -82,17 +72,10 @@ def main() -> int:
 
     try:
         seccomp.install()
-    except Exception as e:                       # never run the program unconfined
+    except Exception as e:
         print(f"pyexec: could not confine the process: {e}", file=sys.stderr)
         return 3
 
-    # The modules the harness needed to start are not the program's to inherit. This is tidiness,
-    # not the boundary: os and a few others are FROZEN into the interpreter and import from
-    # bytecode with no file read, so a program can still reach the name. What makes that harmless
-    # is the filter — every syscall those modules exist to make is denied — and an environment
-    # holding nothing but the fd number and a PATH.
-    # sys, importlib and traceback stay: the import machinery and this function's own error
-    # handling are built on them, and their syscalls are denied like everything else.
     for name in ("os", "socket", "subprocess", "shutil", "pathlib", "ctypes", "tempfile",
                  "glob", "platform", "inspect", "pickle", "webbrowser", "urllib", "http"):
         sys.modules.pop(name, None)
@@ -108,8 +91,6 @@ def main() -> int:
     except SystemExit:
         pass
     except BaseException:
-        # The harness's own frames are not the model's business: the traceback starts at the
-        # program.
         tb = traceback.format_exc()
         keep = [line for line in tb.splitlines(keepends=True)
                 if "pyexec/child.py" not in line and "in main" not in line]

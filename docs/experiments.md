@@ -2374,9 +2374,8 @@ raising it to 96 changes nothing and costs a third of KV). The fourth slot costs
 the merged spec handed to the builder as files, under a build prompt written for that, make
 better games than the one-shot design in the prompt?
 
-**Setup.** Five asks (two lifted from prod prompts). Four designer calls per ask at xhigh: Nick's
-rewritten gameplay/visual/engineering prompts, each later one fed the earlier docs; the existing
-integrator prompt merged the three (65–80K output tokens, one call each). The merged spec was
+**Setup.** Five asks, four designer calls per ask at xhigh, each later one fed the earlier docs. 
+the existing integrator prompt merges them. The merged spec was 
 split into one file per section under `game/design/` and the build prompt reorganised into
 how-you-act / environment / rules with tool docs moved to `docs/*.md`; the user message is two
 lines naming the ask and the folder. 200-step cap, no other change. Nick played the six results
@@ -2447,3 +2446,49 @@ base-model figure: QUASAR takes the base-trained drafter without loss.
 Flash-Next on SGLang and has no companion; untouched.
 
 **Details.** `labs/ninfer-dflash2/README.md`.
+
+====================================================================================================
+
+## 2026-09-15 — the design in the code map, one compaction note, a check_off tool (local 5090, qwen3.8_27b quasar via ninfer)
+
+**Question.** After a compaction the builder re-read the whole design and lost its section 9 tests
+(control `f91ade83c0d0`: 41 whole reads, 1 of 121 tests named after the design, 478 turns). Does
+putting the design's headings with line ranges in the compaction note fix that, and does a
+`check_off(rows)` tool end the box-by-box Definition-of-Done crawl that capped builds after a green
+suite?
+
+**Setup.** Whole prod path on this box: design chain → build at cap 200 → error and play gates.
+`code_map` maps `.md` files by heading; `compact` keeps one note, not one per compaction (it had
+been stacking them). Five fresh asks overnight, then one more ask with `check_off` (a list or one
+row, ticks `- [ ]` in the game's design/design.md, answers what is unchecked; no done nudge) and a
+cut-off reply compacting before its re-send. Nick played all six.
+
+**Result.**
+
+| run | ask | design reads whole / ranged | tests design-named | end | gates | Nick |
+|---|---|---|---|---|---|---|
+| 9c62c1d1e58c | tower defense | 0 / 33 | 58/58 | done 120 | clean | good first pass |
+| e9d964fc34c7 | fishing lake | 1 / 23 | 65/66 | done 100 | clean | good first pass |
+| 112ec65202b2 | rhythm platformer | 2 / 21 | 1/3 | cap 200 | not run | really bad: black screen, loud |
+| 202198c78de5 | space salvage | 18 / 31 | 35/36 | cap 200 | not run | a delight |
+| 9e6f192bd791 | pipe puzzle | 10 / 23 | 0 | died 96, 4 cut-offs | not run | — |
+| 194354ba2b2e | museum heist (+check_off) | — | — | done 129, 2 fixes | clean | good first pass |
+
+The two cap-outs spent 40–55 turns after a green suite reading one DoD row per turn. With
+`check_off`, the heist build still probed ~25 rows with `play`, then ticked all 65 in one
+`write_file` of the design and called `check_off` on rows already ticked: green to done in 19
+turns. The design was otherwise untouched. The cut-off re-send at turn 20 landed with the full
+window (64K tokens out); the compact-first branch did not fire.
+
+**Verdict.** With headings in the map and one note, every build read the design by range and
+every build that wrote tests named them after the design; the control did neither. Five asks
+against one control, so this is a direction, not a measured rate. `check_off` did not become the bookkeeping path, and nothing says a done nudge or a
+read-only design would earn its upkeep while a build ticks only the DoD and ends.
+
+**Ruling.** Merge all of it: markdown headings in the map, one compaction note, check_off, compact
+before a cut-off re-send, one retry for an empty design step, and a 200 ms play-gate tap (a 0 ms
+press never shows to a game polling key state). Not added: a done nudge over unchecked rows, a
+read-only design; revisit only if a build ticks rows it never built and ships broken, or edits
+the design beyond the DoD.
+
+**Details.** `labs/design-map/README.md`, `labs/dod-checkoff/README.md`.

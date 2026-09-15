@@ -1,6 +1,5 @@
-"""The DESIGN stage: four llm calls (gameplay; visual and engineering together; the integrator,
-continued when it stops short) write the build spec, which lands as design/design.md in the game
-folder while `request` becomes the two-line prompt that points at it; the ask is the fallback."""
+"""The design stage: four llm calls write the build spec, landed as design/design.md in the game
+folder, with the ask itself as the fallback prompt."""
 
 from __future__ import annotations
 
@@ -23,6 +22,7 @@ DESIGN_DIR = "design"
 STEPS = ("gameplay", "visual", "engineering", "integrate")
 SECTIONS = [str(n) for n in range(12)] + ["A"]
 CONTINUATIONS = 3
+RETRIES = 1
 _HEADING = re.compile(r"^#+\s*(\d+|A)\.", re.M)
 
 
@@ -59,7 +59,6 @@ def missing_sections(text: str) -> List[str]:
 
 
 def _reply_text(result: Optional[Dict]) -> str:
-    """The reply verbatim — a continuation is appended to the text before it byte for byte."""
     msg = ((result or {}).get("choices") or [{}])[0].get("message", {}) or {}
     return msg.get("content") or ""
 
@@ -128,15 +127,30 @@ def _integrator_ready(run_id: str) -> bool:
     return True
 
 
+def _retry(run_id: str, step: str) -> bool:
+    d = _design_dir(run_id)
+    marker = d / f".retried-{step}"
+    n = int(marker.read_text()) if marker.is_file() else 0
+    if n >= RETRIES:
+        return False
+    marker.write_text(str(n + 1))
+    return True
+
+
 def on_complete(run_id: str, build_id: Optional[str], result: Optional[Dict],
                 error: Optional[str], step: str) -> None:
     from maestro.state import RunState
     ask = (RunState(run_id).read_spec() or {}).get("ask", "")
     text = _reply_text(result) if error is None else ""
+    d = _design_dir(run_id)
     if not text.strip():
+        if error is None and _retry(run_id, step):
+            spec = d / "spec.md"
+            _next(run_id, build_id, ask, step,
+                  spec_so_far=spec.read_text(encoding="utf-8") if step == "integrate" and spec.is_file() else "")
+            return
         _fallback(run_id, build_id, ask, f"{step} landed with nothing ({error or 'empty reply'})")
         return
-    d = _design_dir(run_id)
     if step == "integrate":
         spec = d / "spec.md"
         text = (spec.read_text(encoding="utf-8") if spec.is_file() else "") + text
@@ -167,8 +181,16 @@ def _next(run_id: str, build_id: Optional[str], ask: str, step: str, spec_so_far
         _fallback(run_id, build_id, ask, f"{step} refused")
 
 
+def _call(step: str, ask: str, docs: Dict[str, str], spec_so_far: str = "") -> str:
+    for _ in range(RETRIES + 1):
+        text = _reply_text(get_connector().generate_with_tools(
+            _messages(step, ask, docs, spec_so_far), [], max_tokens=MAX_TOKENS))
+        if text.strip():
+            return text
+    raise ValueError(f"{step} came back empty")
+
+
 def generate(run_id: str, ask: str) -> str:
-    """The CLI's synchronous chain: the same prompts, the same landing, no queue."""
     from tools.execution_context import run_scope
     build_id = games.create_build(run_id, kind="design")
     games.build_started(build_id)
@@ -176,15 +198,10 @@ def generate(run_id: str, ask: str) -> str:
     try:
         with run_scope(run_id, build_id):
             for step in STEPS[:3]:
-                text = _reply_text(get_connector().generate_with_tools(
-                    _messages(step, ask, _docs(run_id)), [], max_tokens=MAX_TOKENS))
-                if not text.strip():
-                    raise ValueError(f"{step} came back empty")
-                (d / f"{step}.md").write_text(text, encoding="utf-8")
+                (d / f"{step}.md").write_text(_call(step, ask, _docs(run_id)), encoding="utf-8")
             spec = ""
             for _ in range(CONTINUATIONS + 1):
-                spec += _reply_text(get_connector().generate_with_tools(
-                    _messages("integrate", ask, _docs(run_id), spec), [], max_tokens=MAX_TOKENS))
+                spec += _call("integrate", ask, _docs(run_id), spec)
                 if not missing_sections(spec):
                     break
         if not spec.strip():

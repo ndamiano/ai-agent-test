@@ -1,12 +1,5 @@
-"""The tools the build dispatches: list_files, read_file, write_file, edit_file, generate_media,
-compose_world.
-
-Two invariants. A path is resolved and must land inside the game folder, so no write can escape it.
-And every failure is REPORTED to the model rather than guessed at — see `_reported`.
-
-What an argument must BE is declared on the tool's signature, so a body only ever runs on a call
-that already satisfies it.
-"""
+"""The functions a build's program calls. Every path stays inside the game folder, and every failure
+comes back to the model as text."""
 
 import json
 import os
@@ -25,11 +18,13 @@ from maestro.codegen.staging import RUNTIME_DIR, game_dir
 
 _VENDOR_FILES = {p.name for p in (RUNTIME_DIR / "vendor").glob("*.js")}
 
-# Every local file one game file names: an import, a <script src>, a <link href>, an image path.
 _REF = re.compile(r"""(?:from|import)\s*\(?\s*['"]([^'"\s]+)['"]|(?:src|href)\s*=\s*["']([^"'\s]+)["']""")
 _REF_SKIP = ("http://", "https://", "data:", "blob:", "//", "#", "mailto:")
 
 MAX_READ_CHARS = 8_000_000
+
+DESIGN = "design/design.md"
+_CHECKBOX = re.compile(r"^[ \t]*[-*][ \t]+\[( |x|X)\][ \t]*(.*?)[ \t]*$", re.M)
 
 
 _ESCAPES = {"\\r\\n": "\n", "\\n": "\n", "\\t": "\t", "\\\"": "\"", "\\'": "'"}
@@ -69,19 +64,14 @@ Kind = Literal[KINDS]
 
 
 def _safe(root: Path, path: str) -> Path:
-    """A path inside the game folder. Resolved, so `../` can never escape."""
     p = (root / path).resolve()
     if not str(p).startswith(str(root.resolve()) + os.sep):
         raise ValueError(f"path escapes the project directory: {path!r}")
     return p
 
 
-
 def _dead_refs(path: Path, text: str, root: Path, pending) -> list:
-    """Local paths this file names that resolve to nothing. A dead `./lib/audio.js` written from a
-    subfolder is a module that never loads and a game that never starts, and neither parser sees
-    it: the file itself is valid JavaScript and a browser reports the 404 on the console rather
-    than as an uncaught exception. Art still queued for rendering is not missing."""
+    """Local paths this file names that resolve to nothing; art still queued is not missing."""
     out = []
     for a, b in _REF.findall(text):
         ref = (a or b).split("?")[0].split("#")[0]
@@ -93,11 +83,14 @@ def _dead_refs(path: Path, text: str, root: Path, pending) -> list:
             out.append(ref)
     return out
 
+
+def _row_key(text: str) -> str:
+    text = re.sub(r"^[ \t]*[-*][ \t]+\[[ xX]\]", "", text)
+    return " ".join(text.split()).lower()
+
+
 def _argument_problem(name: str, kw: dict, e: ValidationError) -> str:
-    """What the call got wrong, in one sentence. A missing argument also lists what WAS sent,
-    because the model gets here by sending the right value under the wrong name (measured in prod:
-    a read sent as `file`) and cannot otherwise see which name it used."""
-    # `missing_argument` is what a signature with **kwargs reports; `missing` is the plain form.
+    """What the call got wrong, in one sentence; a missing argument also lists what was sent."""
     missing = [str(err["loc"][0]) for err in e.errors()
                if err["type"] in ("missing", "missing_argument") and err["loc"]]
     if missing:
@@ -109,7 +102,6 @@ def _argument_problem(name: str, kw: dict, e: ValidationError) -> str:
 
 
 def _said(err: dict) -> str:
-    # A rule written here raises ValueError, and its message already names its own argument.
     if err["type"] == "value_error":
         return err["msg"].removeprefix("Value error, ")
     loc = ".".join(str(x) for x in err["loc"]) or "arguments"
@@ -131,17 +123,9 @@ def build_tools(state, build_id: str) -> dict:
     @validate_call
     def read_file(path: GamePath, offset: Optional[int] = None, lines: Optional[int] = None,
                   **_) -> dict:
-        """A window of the file, whole lines, starting at 1-based `offset`, at most `lines` long.
-
-        The window ends on a line boundary: a cut mid-line is text the model copies into old_text,
-        where it matches nothing (measured 2026-07-29: 12 byte-identical failing edits, 248 of 249
-        chars matching, the 249th the cut). `offset` is what makes the tail past the ceiling
-        reachable at all."""
+        """Whole lines from 1-based `offset`, at most `lines` of them."""
         p = _safe(root, path)
         if not p.exists():
-            # A requested-but-unrendered asset is not a missing file: "no such file" reads as a
-            # failed ask and the model re-requests its art under new ids. ok=True keeps the
-            # repeat ledger from scolding a legitimate second look.
             rel = str(p.relative_to(root.resolve()))
             entry = next((e for e in read_manifest(state.run_dir) if e.get("file") == rel), None)
             if entry:
@@ -178,7 +162,6 @@ def build_tools(state, build_id: str) -> dict:
         content = "".join(window)
         end = start + len(window)
         if len(content) > MAX_READ_CHARS:
-            # A single line past the ceiling: cutting it is the only bound left, so say where.
             content = content[:MAX_READ_CHARS] + (
                 f"\n\n[line {end} is longer than one read and was cut here, mid-line — text ending "
                 f"at that cut is not what the file says, so do not use it as an edit anchor.]")
@@ -186,8 +169,6 @@ def build_tools(state, build_id: str) -> dict:
             content += (
                 f"\n\n[showed lines {start + 1}-{end} of {total}; read the rest with offset "
                 f"{end + 1}.]")
-        # Against the WHOLE file, not the window: what a later compaction needs to say is whether
-        # the file changed under the model, not how much of it it chose to look at.
         file_state.record_read(state.run_dir, str(p.relative_to(root.resolve())), p.read_bytes())
         return {"ok": True, "path": path, "content": content, "lines": f"{start + 1}-{end}/{total}"}
 
@@ -200,8 +181,6 @@ def build_tools(state, build_id: str) -> dict:
         p.write_text(content, encoding="utf-8")
         return {"ok": True, "path": path, "chars": len(content)}
 
-    # new_text is required, never defaulted: an omitted one would silently DELETE the matched
-    # region, and deleting is legitimate only when the model sends "" and means it.
     @validate_call
     def edit_file(path: GamePath, old_text: str, new_text: str, **_) -> dict:
         p = _safe(root, path)
@@ -225,8 +204,6 @@ def build_tools(state, build_id: str) -> dict:
         p.write_text(body.replace(old, new), encoding="utf-8")
         return {"ok": True, "path": path, "chars": len(new)}
 
-    # The order here is free: a program's positional call is mapped to names by `pyexec.child`
-    # before it is sent, and every tool is dispatched by keyword.
     @validate_call
     def generate_media(id: AssetId, subject: Subject, style: Style, kind: Optional[Kind] = None,
                        details: Any = None, **_) -> dict:
@@ -235,8 +212,6 @@ def build_tools(state, build_id: str) -> dict:
 
     @validate_call
     def compose_world(description: Description, seed: Optional[int] = None, **_) -> dict:
-        # One world per game: a second one would replace the ground under a game already
-        # written against the first one's metres and regions.
         from maestro.worldgen.compose import coming, compose
         if coming(state.run_dir):
             return {"ok": False,
@@ -248,12 +223,7 @@ def build_tools(state, build_id: str) -> dict:
 
     @validate_call
     def check_syntax(paths: Optional[Union[str, List[str]]] = None, **_) -> dict:
-        """Does the game's JavaScript parse, and does every file it loads exist? The error gate's
-        own parser, run HERE — the program that asks is confined and cannot start anything itself.
-
-        It only ever answers BROKEN or not: a file parses or it does not, a path resolves or it
-        does not, and either can only be satisfied by fixing it. Nothing here judges what the code
-        DOES."""
+        """Does the game's JavaScript parse, and does every file it loads exist?"""
         from maestro.codegen.error_gate import _node_message
         if paths is None:
             paths = [str(p.relative_to(root)) for p in sorted(root.rglob("*.js"))
@@ -297,18 +267,42 @@ def build_tools(state, build_id: str) -> dict:
             return {"ok": False, "error": "play could not run: " + err.decode(errors="replace")[-400:]}
         return json.loads(out)
 
+    @validate_call
+    def check_off(rows: Union[str, List[str]], **_) -> dict:
+        p = root / DESIGN
+        if not p.exists():
+            return {"ok": False, "error": f"no such file: {DESIGN}"}
+        body = p.read_text(encoding="utf-8")
+        boxes = list(_CHECKBOX.finditer(body))
+        ticked, unmatched, at = [], [], set()
+        for row in ([rows] if isinstance(rows, str) else rows):
+            want = _row_key(row)
+            exact = [m for m in boxes if _row_key(m.group(2)) == want]
+            open_ = [m for m in exact if m.group(1) == " " and m.start() not in at] or exact
+            hits = open_ or [m for m in boxes if want and want in _row_key(m.group(2))]
+            if not want or not hits or (not exact and len(hits) > 1):
+                unmatched.append(row)
+                continue
+            m = hits[0]
+            at.add(m.start())
+            ticked.append(m.group(2))
+        for m in sorted(boxes, key=lambda m: -m.start()):
+            if m.start() in at:
+                body = body[:m.start(1)] + "x" + body[m.end(1):]
+        p.write_text(body, encoding="utf-8")
+        unchecked = [m.group(2) for m in _CHECKBOX.finditer(body) if m.group(1) == " "]
+        out = {"ok": True, "ticked": ticked, "unchecked": unchecked}
+        if unmatched:
+            out["unmatched"] = unmatched
+            out["note"] = ("unmatched rows were left alone: pass each row's text as it reads in "
+                           f"{DESIGN}.")
+        return out
+
     def done(summary=None, **_) -> dict:
-        """The build says it is finished. Nothing happens here: the driver reads `done` off the
-        ledger of what the program called, answers the FIRST one with the nudge, and ends the
-        build on the second."""
         return {"ok": True, "summary": str(summary or "")}
 
     def _reported(fn):
-        """A tool result is a BOUNDARY: anything the call raises comes back as text the model can
-        act on. Never substitute a default for a bad argument — the report is what lets it retry.
-
-        Every problem in one call is reported together: a model that learns one bad argument per
-        turn spends a turn on each."""
+        """Anything the call raises comes back as an error the model can act on."""
         def call(**kw):
             try:
                 return fn(**kw)
@@ -325,4 +319,5 @@ def build_tools(state, build_id: str) -> dict:
              "compose_world": compose_world,
              "check_syntax": check_syntax,
              "play": play,
+             "check_off": check_off,
              "done": done}.items()}

@@ -15,9 +15,10 @@ from maestro.codegen.error_gate import VIEWPORT, _FENCE, _KEY_NAMES, _serve
 
 logger = logging.getLogger(__name__)
 
-MAX_TURNS = 10            # enough to start the game and try each documented input once
-MAX_ROUNDS = 2            # a fix per fact, twice; a game still failing its inputs goes to a human
+MAX_TURNS = 10
+MAX_ROUNDS = 2
 SETTLE_MS = 1500
+TAP_MS = 200
 IMAGE_WINDOW = 4
 STATE_FILE = "play_gate.json"
 REPORT_FILE = "play_report.json"
@@ -28,8 +29,6 @@ _VERDICT = Path(__file__).parent / "prompts" / "play_verdict.txt"
 _NOTE = Path(__file__).parent / "prompts" / "play_fix_note.txt"
 
 
-# ---------------------------------------------------------------- parsing
-
 def _parse_json(text: str) -> Optional[dict]:
     try:
         data = json.loads(_FENCE.sub("", (text or "").strip()))
@@ -39,7 +38,6 @@ def _parse_json(text: str) -> Optional[dict]:
 
 
 def _parse_turn(text: str) -> Optional[Dict]:
-    """One play turn as the model answered it, or None when it answered off-shape."""
     data = _parse_json(text)
     if data is None or _action_of(data.get("action")) is None:
         return None
@@ -93,7 +91,6 @@ def _describe_action(action) -> str:
 
 
 def _parse_report(text: str, turns: List[Dict]) -> Dict:
-    """The final report; an off-shape answer still yields a report with the turns played."""
     data = _parse_json(text) or {}
     broken = [f for f in (data.get("broken") or []) if isinstance(f, dict)
               and f.get("action") and f.get("expected")]
@@ -104,11 +101,8 @@ def _parse_report(text: str, turns: List[Dict]) -> Dict:
     return {"broken": thrown + broken, "judgment": judgment, "turns": turns}
 
 
-# ---------------------------------------------------------------- the session
-
 def _elided(history: List[Dict]) -> List[Dict]:
-    """The transcript with only the last IMAGE_WINDOW screenshots kept as pixels — an old frame's
-    content lives on in the model's own observed/expected text, so the stub costs nothing."""
+    """The transcript with only the last IMAGE_WINDOW screenshots kept as pixels."""
     user_idx = [i for i, m in enumerate(history) if m["role"] == "user"]
     keep = set(user_idx[-IMAGE_WINDOW:])
     out = []
@@ -151,7 +145,7 @@ def _act(page, action: Tuple) -> None:
             page.wait_for_timeout(seconds * 1000)
             page.keyboard.up(name)
         else:
-            page.keyboard.press(what)
+            page.keyboard.press(what, delay=TAP_MS)
     except Exception as e:
         logger.warning("play gate: could not press %s (%s)", what, e)
 
@@ -172,8 +166,7 @@ def _attach_errors(turns: List[Dict], errors: List[Dict], game_dir: Path) -> Non
 
 
 def play(game_dir: Path, request: str) -> Optional[Dict]:
-    """One playtest session over the staged game; the report dict, or None when the session could
-    not run at all. The page has NO network egress, same as the error gate's probe."""
+    """One playtest session over the staged game, or None when it could not run."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -202,8 +195,6 @@ def play(game_dir: Path, request: str) -> Optional[Dict]:
 
             for n in range(1, MAX_TURNS + 1):
                 history.append(_frame(page, n))
-                # A local model's turn is sometimes reasoning-only or off-shape; one fresh ask
-                # usually lands. Retry whole, never salvage from a partial answer.
                 turn = answer = None
                 for attempt in (1, 2):
                     answer = _ask(system, history, max_tokens=2500)
@@ -234,8 +225,6 @@ def play(game_dir: Path, request: str) -> Optional[Dict]:
     return _parse_report(answer or "", turns)
 
 
-# ---------------------------------------------------------------- the note
-
 def note_for_fact(fact: Dict) -> str:
     thrown = ""
     error = fact.get("error")
@@ -249,8 +238,6 @@ def note_for_fact(fact: Dict) -> str:
         observed=str(fact.get("observed", "")).strip() or "(no visible change)",
         thrown=thrown).strip() + "\n"
 
-
-# ---------------------------------------------------------------- the loop
 
 def _state_path(run_dir) -> Path:
     return Path(run_dir) / STATE_FILE
@@ -268,12 +255,8 @@ def _save_state(run_dir, state: Dict) -> None:
 
 
 def after_build(run_id: str, build_id: str) -> bool:
-    """Playtest a build the error gate passed; a watched-failed input re-enters the fix machine
-    with ONE fact's note. Returns whether a fix build was started. The judgment half of the
-    report only ever lands in play_report.json — it is for the human.
-
-    Same stops as the error gate: MAX_ROUNDS spent, or the same fact twice running."""
-    from maestro.codegen import build_chain     # late import — build_chain imports this module
+    """Playtest a build the error gate passed; returns whether a fix build was started."""
+    from maestro.codegen import build_chain
     from maestro.state import RunState
     from maestro.codegen.staging import game_dir
     from tools.execution_context import run_scope

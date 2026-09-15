@@ -1,6 +1,4 @@
-"""The design stage: four llm calls write the spec, it lands as a file, the build starts on a
-prompt that points at it. `request` absent in spec.json is the create page's only "still designing"
-signal, and every way the chain can fail lands the ask itself as the request."""
+"""The design stage: four llm calls write the spec and the build starts on it."""
 
 import pytest
 
@@ -49,7 +47,6 @@ def finished(monkeypatch):
 
 @pytest.fixture
 def kicked(monkeypatch):
-    """The builds the design's completion starts."""
     started = []
     monkeypatch.setattr(build_chain, "kickoff", lambda rid, **kw: started.append((rid, kw)) or "bid")
     return started
@@ -57,7 +54,6 @@ def kicked(monkeypatch):
 
 @pytest.fixture
 def enqueued(monkeypatch):
-    """Every llm job the chain asks for: (step, the user message it carries, metadata)."""
     out = []
 
     def _enqueue(queue, payload, **kw):
@@ -70,7 +66,6 @@ def enqueued(monkeypatch):
 
 @pytest.fixture
 def connector(monkeypatch):
-    """The designer's calls. Web builds jobs; the CLI answers them in order from `replies`."""
     class Fake:
         replies = []
         model_name = "m"
@@ -97,7 +92,6 @@ def _propose(run_id):
 
 def test_the_ask_is_stored_verbatim_and_gameplay_is_asked_first(tmp_runs, events, connector,
                                                                  enqueued):
-    """An absent `request` is the create page's only 'still designing' signal."""
     run_id = run_mod.create_run("u1")
     spec = _propose(run_id)
 
@@ -111,7 +105,6 @@ def test_the_ask_is_stored_verbatim_and_gameplay_is_asked_first(tmp_runs, events
 
 def test_the_chain_fans_out_after_gameplay_and_joins_at_the_integrator(
         tmp_runs, events, connector, enqueued, kicked, finished):
-    """Visual and engineering run together; the integrator is asked once, after both."""
     run_id = run_mod.create_run("u1")
     _propose(run_id)
 
@@ -140,7 +133,6 @@ def test_the_chain_fans_out_after_gameplay_and_joins_at_the_integrator(
 
 def test_an_integrator_that_stops_early_is_asked_to_continue(tmp_runs, events, connector,
                                                              enqueued, kicked):
-    """A reply missing a section is cut, not done: the next call appends to it."""
     run_id = run_mod.create_run("u1")
     _propose(run_id)
     for step in ("gameplay", "visual", "engineering"):
@@ -158,18 +150,33 @@ def test_an_integrator_that_stops_early_is_asked_to_continue(tmp_runs, events, c
     assert kicked == [(run_id, {"kind": "build"})]
 
 
-@pytest.mark.parametrize("step, result, error", [
-    ("gameplay", None, "the worker died"),
-    ("visual", _reply(""), None),
-    ("integrate", {}, None),
+def test_an_empty_reply_is_asked_for_again_before_the_ask_is_the_prompt(
+        tmp_runs, events, connector, enqueued, kicked, finished):
+    run_id = run_mod.create_run("u1")
+    _propose(run_id)
+    design.on_complete(run_id, "dbuild", _reply(DOCS["gameplay"]), None, "gameplay")
+    asked = len(enqueued)
+
+    design.on_complete(run_id, "dbuild", _reply(""), None, "engineering")
+
+    assert [e[0] for e in enqueued[asked:]] == ["engineering"]
+    assert enqueued[-1][1] == enqueued[-2][1]
+    assert RunState(run_id).read_spec().get("request") is None
+    assert kicked == [] and finished == []
+
+
+@pytest.mark.parametrize("step, result, error, replies", [
+    ("gameplay", None, "the worker died", 1),
+    ("visual", _reply(""), None, 2),
+    ("integrate", {}, None, 2),
 ])
 def test_a_step_that_never_lands_leaves_the_ask_as_the_prompt(
-        tmp_runs, events, connector, enqueued, kicked, finished, step, result, error):
-    """A dead designer at any stage must not cost the user their build."""
+        tmp_runs, events, connector, enqueued, kicked, finished, step, result, error, replies):
     run_id = run_mod.create_run("u1")
     _propose(run_id)
 
-    design.on_complete(run_id, "dbuild", result, error, step)
+    for _ in range(replies):
+        design.on_complete(run_id, "dbuild", result, error, step)
 
     assert RunState(run_id).read_spec()["request"] == ASK
     assert [e[0] for e in events] == ["prompt_proposed"]
@@ -179,7 +186,6 @@ def test_a_step_that_never_lands_leaves_the_ask_as_the_prompt(
 
 def test_an_enqueue_that_is_refused_lands_the_ask_immediately(tmp_runs, events, connector,
                                                               monkeypatch):
-    """A refused enqueue has no completion coming, so the fallback lands here."""
     monkeypatch.setattr(design.jobs, "enqueue_job",
                         lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no compute")))
     run_id = run_mod.create_run("u1")
@@ -191,7 +197,6 @@ def test_an_enqueue_that_is_refused_lands_the_ask_immediately(tmp_runs, events, 
 
 
 def test_the_human_edit_moves_only_the_request(tmp_runs, events, connector, enqueued, kicked):
-    """Editing the prompt never rewrites the ask or the title."""
     run_id = run_mod.create_run("u1")
     _propose(run_id)
     for step in ("gameplay", "visual", "engineering"):
@@ -209,15 +214,14 @@ def test_the_human_edit_moves_only_the_request(tmp_runs, events, connector, enqu
 
 def test_the_cli_runs_the_whole_chain_before_it_builds(tmp_runs, events, connector, monkeypatch,
                                                        finished, capsys):
-    """The CLI has no completion handler, so its chain is synchronous."""
     monkeypatch.setattr(run_mod.store, "list_users", lambda: [type("U", (), {"id": "u1"})()])
-    connector.replies = [DOCS["gameplay"], DOCS["visual"], DOCS["engineering"], HALF, REST]
+    connector.replies = [DOCS["gameplay"], DOCS["visual"], "", DOCS["engineering"], HALF, REST]
 
     run_id = run_mod._new_run(ASK)
 
     spec = RunState(run_id).read_spec()
     assert ASK in spec["request"] and spec["ask"] == ASK
     assert staging.spec_path(RunState(run_id).run_dir).read_text() == HALF + REST
-    assert len(connector.seen) == 5
+    assert len(connector.seen) == 6 and connector.seen[2] == connector.seen[3]
     assert finished == [("dbuild", "succeeded")]
     assert "designing" in capsys.readouterr().out

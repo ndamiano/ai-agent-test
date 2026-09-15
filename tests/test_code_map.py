@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from maestro.codegen import code_map
 
 COMBAT = """import { weaponOf } from './units.js';
@@ -49,6 +47,22 @@ SCREEN = """export function BattleScreen({ battle }) {
 """
 
 
+WRAPPED = """// game.js — the whole simulation in one closure, exposed on window.__game.
+(function () {
+  'use strict';
+  const TICK = 1 / 60;
+  function reset(seed) {
+    state = { seed };
+  }
+  function step(dt) {
+    function tick() { }
+    tick();
+  }
+  window.__game = { reset, step };
+})();
+"""
+
+
 def _project(tmp_path, files):
     for name, src in files.items():
         p = tmp_path / name
@@ -64,8 +78,6 @@ def test_every_declaration_gets_its_line_range(tmp_path):
     assert "  4  TRIANGLE = {…}  (private)" in lines
     assert "  6  accuracy(w)" in lines
     assert "  8-12  triangleBonus(aType, dType)" in lines
-    # The range runs to the function's own closing brace, past braces in comments and strings
-    # and past a destructured default parameter on the signature line.
     assert "  14-24  resolveCombat(attacker, defender, battle, { preview = false, log = () => {} } = {})" in lines
     assert "  26  XP = […]" in lines
     assert "  27-29  CONFIG = {…}" in lines
@@ -98,3 +110,39 @@ def test_art_and_the_vendored_renderer_are_not_in_the_map(tmp_path, monkeypatch)
 
 def test_an_empty_project_maps_to_nothing(tmp_path):
     assert code_map.render(tmp_path) == ""
+
+
+def test_a_file_that_is_one_closure_is_mapped_one_level_in(tmp_path):
+    out = code_map.render(_project(tmp_path, {"game.js": WRAPPED}))
+    assert out.splitlines() == [
+        "game.js (14 lines)",
+        "  2-13  (function () {…})()",
+        "  4  TICK = 1 / 60  (private)",
+        "  5-7  reset(seed)  (private)",
+        "  8-11  step(dt)  (private)",
+        "      9  tick()",
+    ]
+
+
+DESIGN = """# 0. SCOPE
+asked for a thing
+## 0.1 Asked
+## 0.2 Tiers
+# 9. TESTS
+tests run in the page
+
+| Tier | Test file |
+# 10. BUILD ORDER
+last"""
+
+
+def test_a_markdown_file_is_mapped_by_its_headings(tmp_path):
+    out = code_map.render(_project(tmp_path, {"design/design.md": DESIGN}))
+    assert out.splitlines() == [
+        "design/design.md (10 lines)",
+        "  1-4  0. SCOPE",
+        "    3  0.1 Asked",
+        "    4  0.2 Tiers",
+        "  5-8  9. TESTS",
+        "  9-10  10. BUILD ORDER",
+    ]

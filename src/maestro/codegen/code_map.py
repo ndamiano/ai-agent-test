@@ -1,36 +1,22 @@
-"""The project as one message: every file, what it imports, and each declaration with the lines it
-occupies — so a model that has lost its transcript regains the whole picture without reading a
-file, and reads by line range when it does.
-
-After a compaction the model's own question is "does render.js export syncRunes, what does
-resolveCombat take, which file owns the roster" — and its only answer was to read every file
-again (measured 2026-09-06: 149 of 176 post-compaction reads were of files it had already read).
-This map answers those questions for the whole project in a couple of thousand tokens.
-
-Regex over JavaScript, not a parser: top-level exports and declarations, and the function
-declarations one level inside them, because a screen written as one exported closure is where
-the whole file's structure lives. A declaration's range runs to its matching close brace.
-"""
+"""The project as one message: every file, its imports, and each declaration or markdown heading
+with its line range. Regex, not a parser."""
 
 import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 _SKIP_DIRS = ("assets/", "world/")
-_TEXT = (".js", ".mjs", ".html", ".css", ".json")
+_TEXT = (".js", ".mjs", ".html", ".css", ".json", ".md")
 
 _IMPORT = re.compile(r'^import\s+[^;\n]*?from\s+[\'"]([^\'"]+)[\'"]', re.M)
-# `export function name(`, `export const name =`, `export class Name`, and the same without
-# `export` at column 0 — a file's private top-level functions are part of its shape too.
 _TOP = re.compile(r'^(export\s+)?(?:async\s+)?(?:function\s*\*?\s*(\w+)\s*\(|(?:const|let|var)\s+(\w+)\s*=|class\s+(\w+))', re.M)
-# Function declarations nested one level in: `  function name(`, `  const name = (` … `) =>`,
-# and `  name(args) {` methods on an object or class body.
 _INNER = re.compile(r'^[ \t]+(?:async\s+)?(?:function\s*\*?\s*(\w+)\s*\(|(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)\n]*\)|\w+)\s*=>|(\w+)\s*\([^)\n]*\)\s*\{)', re.M)
 _EXPORT_LIST = re.compile(r'^export\s*\{([^}]*)\}', re.M)
+_HEADING = re.compile(r'^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$', re.M)
+_WRAPPER = re.compile(r'^\(\s*(?:async\s+)?(?:function\s*\*?\s*\w*\s*\([^)\n]*\)|\([^)\n]*\))\s*(?:=>\s*)?\{', re.M)
 
 
 def render(root: Path) -> str:
-    """The map of every source file under `root`, in path order, or "" for an empty project."""
     out = []
     for p in sorted(root.rglob("*")):
         rel = str(p.relative_to(root))
@@ -46,7 +32,24 @@ def render(root: Path) -> str:
         out.append(head)
         if p.suffix in (".js", ".mjs"):
             out.extend(_declarations(src))
+        elif p.suffix == ".md":
+            out.extend(_headings(src))
     return "\n".join(out)
+
+
+def _headings(src: str) -> List[str]:
+    heads = [(m.start(), len(m.group(1)), m.group(2)) for m in _HEADING.finditer(src)]
+    total = src.count("\n") + 1
+    lines = []
+    for i, (at, level, text) in enumerate(heads):
+        start = src.count("\n", 0, at) + 1
+        end = total
+        for at2, level2, _ in heads[i + 1:]:
+            if level2 <= level:
+                end = src.count("\n", 0, at2)
+                break
+        lines.append(f"  {'  ' * (level - 1)}{_range(start, end)}  {text}")
+    return lines
 
 
 def _is_vendor(p: Path) -> bool:
@@ -59,24 +62,40 @@ def _short(spec: str) -> str:
 
 
 def _declarations(src: str) -> List[str]:
+    lines = _scan(src, _TOP, 0)
+    for m in _WRAPPER.finditer(src):
+        close = _matching(src, m.end() - 1)
+        if close is None:
+            continue
+        start, end = src.count("\n", 0, m.start()) + 1, src.count("\n", 0, close) + 1
+        lines.append(f"  {_range(start, end)}  {m.group(0).strip()}…}})()")
+        body = src[m.end():close]
+        indent = re.search(r'^([ \t]+)\S', body, re.M)
+        if indent:
+            top = re.compile("^" + re.escape(indent.group(1)) + _TOP.pattern[1:], re.M)
+            lines.extend(_scan(body, top, src.count("\n", 0, m.end())))
+    for m in _EXPORT_LIST.finditer(src):
+        lines.append("  exports " + " ".join(m.group(1).split()))
+    return lines
+
+
+def _scan(src: str, top: "re.Pattern", base: int) -> List[str]:
     lines = []
-    for m in _TOP.finditer(src):
+    for m in top.finditer(src):
         name = m.group(2) or m.group(3) or m.group(4)
         start, end = _span(src, m)
         sig = _signature(src, m)
         mark = "" if m.group(1) else "  (private)"
-        lines.append(f"  {_range(start, end)}  {name}{sig}{mark}")
+        lines.append(f"  {_range(base + start, base + end)}  {name}{sig}{mark}")
         if m.group(2) or m.group(4):
             body = src[m.end():_offset_of_line(src, end + 1)]
-            base = start - 1            # body starts mid-way through the declaration's first line
+            inner = base + start - 1
             for im in _INNER.finditer(body):
                 iname = im.group(1) or im.group(2) or im.group(3)
                 if iname in ("if", "for", "while", "switch", "catch", "return"):
                     continue
                 istart, iend = _span(body, im)
-                lines.append(f"      {_range(base + istart, base + iend)}  {iname}{_signature(body, im)}")
-    for m in _EXPORT_LIST.finditer(src):
-        lines.append("  exports " + " ".join(m.group(1).split()))
+                lines.append(f"      {_range(inner + istart, inner + iend)}  {iname}{_signature(body, im)}")
     return lines
 
 
@@ -121,8 +140,7 @@ def _signature(src: str, m: "re.Match") -> str:
 
 
 def _span(src: str, m: "re.Match") -> Tuple[int, int]:
-    """1-based first and last line of the declaration: to its closing brace or bracket when it
-    opens one on its first line, else the line itself."""
+    """1-based first and last line: to the closing bracket when the first line opens one."""
     start = src.count("\n", 0, m.start()) + 1
     eol = src.find("\n", m.start())
     eol = len(src) if eol < 0 else eol
@@ -138,8 +156,7 @@ def _span(src: str, m: "re.Match") -> Tuple[int, int]:
 
 
 def _body_opener(src: str, i: int, eol: int) -> Optional[int]:
-    """The `{` or `[` that opens the declaration's body on its first line — past a parameter list
-    if there is one, so a destructured default parameter's braces are never mistaken for it."""
+    """The bracket opening the body on the first line, past any parameter list."""
     if i < len(src) and src[i] == "(":
         close = _matching(src, i)
         if close is None:
@@ -161,8 +178,7 @@ def _body_opener(src: str, i: int, eol: int) -> Optional[int]:
 
 
 def _matching(src: str, i: int) -> Optional[int]:
-    """Index of the bracket closing the one at `i`, skipping strings, template literals and
-    comments; None when the file never closes it."""
+    """Index of the bracket closing the one at `i`, skipping strings and comments."""
     pairs = {"(": ")", "[": "]", "{": "}"}
     stack = [pairs[src[i]]]
     j = i + 1

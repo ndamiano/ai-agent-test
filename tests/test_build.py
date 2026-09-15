@@ -21,7 +21,6 @@ def _cursor(**kw):
 
 
 def _reply(content="", code=None, usage=None, programs=None, reasoning=None):
-    """A turn: the model's reply carrying one `python` call whose `code` is the program."""
     msg = {"role": "assistant", "content": content}
     if reasoning:
         msg["reasoning_content"] = reasoning
@@ -59,15 +58,27 @@ def test_compact_drops_oldest_and_regrounds(tmp_path):
     (tmp_path / "game" / "game.js").write_text("x")
     cursor = _cursor(history=_history())
     assert build_steps.compact(tmp_path, cursor, keep_chars=1200) > 0
-    assert cursor.history[0]["content"] == "make a game"     # the request is never dropped
-    assert "game.js" in cursor.history[1]["content"]         # re-grounded on the real file list
-    # No orphan: every tool result still follows an assistant message carrying its call id.
+    assert cursor.history[0]["content"] == "make a game"
+    assert "game.js" in cursor.history[1]["content"]
     open_ids = set()
     for m in cursor.history:
         if m.get("tool_calls"):
             open_ids |= {c["id"] for c in m["tool_calls"]}
         if m["role"] == "tool":
             assert m["tool_call_id"] in open_ids
+
+
+def test_a_second_compaction_replaces_the_first_note(tmp_path):
+    (tmp_path / "game").mkdir()
+    (tmp_path / "game" / "game.js").write_text("x")
+    cursor = _cursor(history=_history())
+    build_steps.compact(tmp_path, cursor, keep_chars=1200)
+    (tmp_path / "game" / "later.js").write_text("y")
+    cursor.history += _history()[1:]
+    build_steps.compact(tmp_path, cursor, keep_chars=1200)
+    notes = [m for m in cursor.history if build_steps.is_note(m)]
+    assert len(notes) == 1 and "later.js" in notes[0]["content"]
+    assert cursor.history[1] is notes[0]
 
 
 def test_compact_noop_when_it_fits(tmp_path):
@@ -79,8 +90,6 @@ def test_compact_noop_when_it_fits(tmp_path):
 
 
 def test_the_first_turn_sends_the_request_and_nothing_else(tmp_path, tools):
-    """The brief is for the human and the audit. Prepending its restated mechanics puts a second,
-    more concrete instruction beside the request on every turn — the small-model failure mode."""
     cursor = _cursor()
     spec = {"request": "a card game", "design": {"look": "inky woodcut", "audio": "lute",
                                                  "mechanics": ["draw five cards a turn"]}}
@@ -115,8 +124,6 @@ def test_tool_call_lands_on_disk_and_continues(tmp_path, tools):
 
 
 def test_the_step_report_says_what_the_turn_did(tmp_path, tools):
-    """The feed line is the only view a watcher has of a running build, so it names the files the
-    turn touched rather than counting turns."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     out = build_steps.step({}, tmp_path, tools, cursor, _reply(code=(
@@ -124,14 +131,11 @@ def test_the_step_report_says_what_the_turn_did(tmp_path, tools):
         'read_file(path="index.html")')))
     assert out.report == "wrote index.html, read index.html"
 
-    # Each turn reports its OWN actions — not the whole build's.
     out2 = build_steps.step({}, tmp_path, tools, cursor, _reply(code="list_files()"))
     assert out2.report == "listed files"
 
 
 def test_the_report_folds_a_program_that_touched_many_files(tmp_path, tools):
-    """A program may write a dozen files and ask for twenty pictures. The feed is read by a person,
-    so the line says how many, not all of them."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     out = build_steps.step({}, tmp_path, tools, cursor, _reply(code=(
@@ -141,7 +145,6 @@ def test_the_report_folds_a_program_that_touched_many_files(tmp_path, tools):
 
 
 def test_a_failed_tool_call_reports_its_reason(tmp_path, tools):
-    """"failed" alone sends the watcher to the logs; the reason is the whole value of the line."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     out = build_steps.step({}, tmp_path, tools, cursor,
@@ -176,8 +179,6 @@ def test_a_turn_with_no_tool_call_says_so(tmp_path, tools):
 
 
 def test_no_result_re_asks_instead_of_inventing_an_empty_turn(tmp_path, tools):
-    """A resume, or a reaper re-drive, has no turn to apply. Treating that as a turn that answered
-    with nothing scolds the model for a reply it never sent, and burns a turn against the cap."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     build_steps.step({}, tmp_path, tools, cursor,
@@ -199,14 +200,10 @@ def test_a_long_done_summary_is_cut_on_a_word_boundary(tmp_path, tools):
     assert isinstance(out, build_steps.Done)
     assert cursor.summary.endswith("…")
     assert not cursor.summary.rstrip("…").endswith(" ")
-    # cut BETWEEN words, never through one
     assert cursor.summary.rstrip("…").split()[-1] in ("built", "the", "thing")
 
 
 def test_a_truncated_reply_is_thrown_away_and_the_turn_sent_again(tmp_path, tools):
-    """A reply that ran out of room is an inference failure, not a transcript one: the same prompt
-    resampled produces a normal turn (measured 2 failures in 36 replays of six such positions), and
-    telling the model it was cut off makes the next turn 7x bigger. So nothing is kept from it."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     before = [dict(m) for m in cursor.history]
@@ -216,6 +213,19 @@ def test_a_truncated_reply_is_thrown_away_and_the_turn_sent_again(tmp_path, tool
     assert isinstance(outcome, build_steps.Infer)
     assert cursor.history == before, "the cut-off reply must leave no trace in the transcript"
     assert not any("cut off" in str(m.get("content", "")) for m in cursor.history)
+
+
+def test_a_cut_off_turn_is_re_sent_with_the_window_compacted(tmp_path, tools, monkeypatch):
+    monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
+    cursor = _cursor(started=True, system="s", history=_history(), prompt_tokens=100_000,
+                     chars_per_token=3.0, logged=13)
+    small = build_steps._infer(tmp_path, cursor).max_tokens
+    outcome = build_steps.step({}, tmp_path, tools, cursor,
+                               _reply(content="const x = ",
+                                      usage={"prompt_tokens": 100_000, "completion_tokens": small}))
+    assert isinstance(outcome, build_steps.Infer)
+    assert cursor.compacted == 1 and outcome.max_tokens > small * 2
+    assert build_steps.is_note(cursor.history[1])
 
 
 def test_the_build_gives_up_after_repeated_cut_offs(tmp_path, tools):
@@ -230,8 +240,6 @@ def test_the_build_gives_up_after_repeated_cut_offs(tmp_path, tools):
 
 
 def _raw_reply(raw_args):
-    """A reply whose tool-call arguments are the literal string given — what a call cut off at the
-    output cap looks like, which `_reply` (which serializes a dict) can never produce."""
     return {"choices": [{"message": {"role": "assistant", "content": "",
                                      "tool_calls": [{"id": "c0", "type": "function",
                                                      "function": {"name": "python",
@@ -240,9 +248,6 @@ def _raw_reply(raw_args):
 
 
 def test_a_call_cut_off_mid_argument_says_so_and_writes_nothing(tmp_path, tools):
-    """The measured build-killer: a 64 KB write_file cut at the output cap parses to no arguments,
-    which reached the model as `KeyError: 'path'` — so it resent the same oversized call until the
-    server itself refused it."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     build_steps.step({}, tmp_path, tools, cursor,
@@ -254,7 +259,6 @@ def test_a_call_cut_off_mid_argument_says_so_and_writes_nothing(tmp_path, tools)
 
 
 def test_a_call_that_takes_no_arguments_is_not_read_as_cut_off(tmp_path, tools):
-    """`{}` is a whole argument list, not a truncated one — list_files carries exactly that."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     build_steps.step({}, tmp_path, tools, cursor,
@@ -265,8 +269,6 @@ def test_a_call_that_takes_no_arguments_is_not_read_as_cut_off(tmp_path, tools):
 
 
 def test_a_turn_the_server_refused_is_not_a_turn_that_said_nothing(tmp_path, tools):
-    """A 500 from the server's own tool-call parser reaches the driver as an error and no message.
-    Told only 'that reply contained no tool call', the model resends what earned the 500."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     out = build_steps.step({}, tmp_path, tools, cursor, {},
@@ -280,7 +282,6 @@ def test_a_turn_the_server_refused_is_not_a_turn_that_said_nothing(tmp_path, too
 
 
 def test_a_refused_error_is_clipped_before_it_reaches_the_transcript(tmp_path, tools):
-    """The 500 body carries the whole oversized argument back — 48 KB of it, in one build."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     build_steps.step({}, tmp_path, tools, cursor, {}, error="Status 500: " + "x" * 50_000)
@@ -304,12 +305,16 @@ def test_a_landed_turn_after_a_refusal_clears_the_streak(tmp_path, tools):
     assert cursor.no_call_streak == 0
 
 
-def test_turn_cap_ends_the_build(tmp_path, tools):
+def test_the_cursor_cap_ends_the_build(tmp_path, tools):
     cursor = _cursor()
+    cursor.max_steps = 500
     build_steps.step({}, tmp_path, tools, cursor, {})
-    cursor.turn = build_steps.MAX_TURNS - 1
+    cursor.turn = 499
     out = build_steps.step({}, tmp_path, tools, cursor, _reply(content="thinking"))
-    assert isinstance(out, build_steps.Done) and "cap" in out.report
+    assert isinstance(out, build_steps.Done) and "500-turn cap" in out.report
+    cursor.turn, cursor.max_steps = 499, 1000
+    assert isinstance(build_steps.step({}, tmp_path, tools, cursor, _reply(content="more")),
+                      build_steps.Infer)
 
 
 def test_no_tool_call_is_nudged_not_failed(tmp_path, tools):
@@ -324,9 +329,6 @@ _QUOTED = "function f() {\n  el.innerHTML = '<div style=\"color:#888\">?</div>';
 
 
 def test_a_read_reaches_the_program_as_the_file_itself(tmp_path, tools):
-    """The measured loop: `\\"` copied out of a serialized read into old_text matches nothing. A
-    read is a VALUE now, so nothing encodes it on the way — and the program proves it by editing
-    against text it read a moment earlier."""
     (tmp_path / "game" / "game.js").write_text(_QUOTED, encoding="utf-8")
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
@@ -340,9 +342,6 @@ def test_a_read_reaches_the_program_as_the_file_itself(tmp_path, tools):
 
 
 def test_only_what_the_program_prints_reaches_the_transcript(tmp_path, tools):
-    """A read costs the window nothing unless the model chooses to spend it. This is what keeps a
-    build's transcript small enough to never compact: 37 turns and 19 reads left the prompt at 72K
-    of 131K (measured 2026-09-07)."""
     (tmp_path / "game" / "big.js").write_text("y" * 50_000, encoding="utf-8")
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
@@ -355,9 +354,6 @@ def test_only_what_the_program_prints_reaches_the_transcript(tmp_path, tools):
 
 
 def test_a_whole_file_reaches_the_program_however_long(tmp_path, tools):
-    """The ceiling on a read was a context guard, and a program's read never touches the context.
-    Left in place it made a partial read look like a whole one: the model counted occurrences over
-    43% of a file and read the zeroes as missing edits (measured 2026-09-07)."""
     (tmp_path / "game" / "big.js").write_text("z" * 300_000, encoding="utf-8")
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
@@ -367,8 +363,6 @@ def test_a_whole_file_reaches_the_program_however_long(tmp_path, tools):
 
 
 def test_a_failed_call_returns_its_error_and_the_program_carries_on(tmp_path, tools):
-    """A raise abandons every statement after it: one bad edit lost ten good ones and the model
-    had to work out how far it got (measured 2026-09-07: 5 of 16 applied)."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     build_steps.step({}, tmp_path, tools, cursor, _reply(code=(
@@ -381,8 +375,6 @@ def test_a_failed_call_returns_its_error_and_the_program_carries_on(tmp_path, to
 
 
 def test_the_result_lists_the_calls_and_names_the_ones_that_failed(tmp_path, tools):
-    """With failures returned rather than raised, a program that ignores what a call gave back
-    would never learn it failed — so every result carries the ledger."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     build_steps.step({}, tmp_path, tools, cursor, _reply(code=(
@@ -396,8 +388,6 @@ def test_the_result_lists_the_calls_and_names_the_ones_that_failed(tmp_path, too
 
 
 def test_a_program_that_reaches_outside_the_session_is_refused_before_it_runs(tmp_path, tools):
-    """The static check is not the boundary — the seccomp filter is — but it refuses the obvious
-    reach with a sentence the model can act on, and says plainly that nothing ran."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     out = build_steps.step({}, tmp_path, tools, cursor, _reply(code=(
@@ -410,8 +400,6 @@ def test_a_program_that_reaches_outside_the_session_is_refused_before_it_runs(tm
 
 
 def test_only_the_first_program_of_a_reply_runs(tmp_path, tools):
-    """Two programs in one reply means the second wants to act on the first's output, which it has
-    not seen. Running both would be acting on a result the model never read."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     build_steps.step({}, tmp_path, tools, cursor, _reply(programs=[
@@ -429,7 +417,6 @@ def _fail(tmp_path, tools, cursor, code, times):
 
 
 def test_an_identical_failing_call_is_told_it_is_repeating(tmp_path, tools):
-    """The loop this ends: a failing edit resent byte for byte to the step cap."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     prog = 'edit_file(path="game.js", old_text="a", new_text="b")'
@@ -439,8 +426,6 @@ def test_an_identical_failing_call_is_told_it_is_repeating(tmp_path, tools):
 
 
 def test_a_succeeding_call_between_retries_does_not_reset_the_count(tmp_path, tools):
-    """The measured loop: read → failing edit → read → the SAME failing edit, twelve times, every
-    one counted as the first because the read in between succeeded."""
     (tmp_path / "game" / "game.js").write_text("hello\n", encoding="utf-8")
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
@@ -467,7 +452,6 @@ def test_a_changed_argument_is_not_a_repeat(tmp_path, tools):
 
 
 def test_the_repeat_note_stays_out_of_the_build_feed(tmp_path, tools):
-    """The feed line is one clipped sentence."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     prog = 'read_file(path="nope.js")'
@@ -477,8 +461,6 @@ def test_the_repeat_note_stays_out_of_the_build_feed(tmp_path, tools):
 
 
 def test_generate_media_reaches_the_tool_and_its_path_reaches_the_transcript(tmp_path):
-    """The model writes code against the path it gets back on the same turn, so the tool result has
-    to carry it."""
     seen = {}
 
     def _spy(**kw):
@@ -495,8 +477,6 @@ def test_generate_media_reaches_the_tool_and_its_path_reaches_the_transcript(tmp
 
 
 def test_seed_places_the_renderer_and_leaves_edits_alone(tmp_path, monkeypatch):
-    """A game fetches nothing at runtime, so the renderer has to be in the folder before the model
-    starts writing. A re-seed (a fix, a resumed build) must not overwrite what is there."""
     from maestro.codegen import staging
     monkeypatch.setattr(staging, "RUNTIME_DIR", tmp_path / "runtime")
     vendor = tmp_path / "runtime" / "vendor"
@@ -512,9 +492,6 @@ def test_seed_places_the_renderer_and_leaves_edits_alone(tmp_path, monkeypatch):
 
 
 def test_seed_places_the_world_loader(tmp_path):
-    """The world loader rides along with three.js, from the real vendor folder: a game fetches
-    nothing at runtime, and the terrain shader is not something a build should be writing. The
-    page the pipeline renders worlds with is not a game's, and does not go."""
     from maestro.codegen import staging
     staging.seed_vendor(tmp_path)
     game = tmp_path / "game"
@@ -573,7 +550,6 @@ def test_seed_places_the_helper_library_and_leaves_edits_alone(tmp_path):
 
 
 def _file_history(n=6):
-    """A build's shape: a round that writes a file out, then a round that only looks at it."""
     h = [{"role": "user", "content": "make a game"}]
     for i in range(n):
         h.append({"role": "assistant", "content": f"step {i}",
@@ -586,27 +562,22 @@ def _file_history(n=6):
 
 
 def _bodies(history):
-    """Which messages still carry a whole 1500-char body, by index."""
     return [i for i, m in enumerate(history) if "y" * 1500 in json.dumps(m)]
 
 
 def test_compact_stubs_the_oldest_bodies_only_until_the_tail_fits(tmp_path):
     (tmp_path / "game").mkdir()
     cursor = _cursor(history=_file_history())
-    # Six files written, each in its own round. A budget two bodies short means the two OLDEST
-    # writes lose their bytes and the four newest keep them.
     kept = build_steps.drop_read_only_rounds(cursor.history)
     keep = sum(len(json.dumps(m)) for m in kept[1:]) - 2 * 1400
     assert build_steps.compact(tmp_path, cursor, keep_chars=keep) > 0
-    assert "whole project" in cursor.history[1]["content"]   # the map leads every compaction
+    assert "whole project" in cursor.history[1]["content"]
     assert "the 1500 chars written to f0.js" in json.dumps(cursor.history[2])
     assert "the 1500 chars written to f1.js" in json.dumps(cursor.history[4])
-    assert _bodies(cursor.history) == [6, 8, 10, 12]         # f2..f5, whole
+    assert _bodies(cursor.history) == [6, 8, 10, 12]
 
 
 def test_a_stubbed_program_still_says_what_the_model_did(tmp_path):
-    """The round keeps its shape — the loop, the art asks, the order — and loses only bytes that
-    are on disk. Without that the model edits code it no longer remembers writing."""
     (tmp_path / "game").mkdir()
     code = ('for name in ["a", "b"]:\n'
             '    generate_media(id=name, kind="sprite", subject=name, style="ink")\n'
@@ -622,7 +593,7 @@ def test_a_stubbed_program_still_says_what_the_model_did(tmp_path):
     assert "y" * 100 not in left
     assert "the 1500 chars written to game.js" in left
     import ast
-    ast.parse(left)                                          # still a program, not a ruin
+    ast.parse(left)
 
 
 def test_compact_keeps_only_the_newest_copy_of_each_file(tmp_path):
@@ -634,13 +605,11 @@ def test_compact_keeps_only_the_newest_copy_of_each_file(tmp_path):
         h.append({"role": "tool", "tool_call_id": f"c{k}", "content": "ok"})
     cursor = _cursor(history=h)
     assert build_steps.compact(tmp_path, cursor, keep_chars=10_000_000) == 1
-    assert _bodies(cursor.history) == [len(cursor.history) - 2]   # the newest write alone
+    assert _bodies(cursor.history) == [len(cursor.history) - 2]
     assert "read it again" not in json.dumps(cursor.history)
 
 
 def test_an_edit_is_never_stubbed(tmp_path):
-    """An edit is a delta, not a body: what it replaced and what it became is the only record of
-    what the model changed since it wrote the file."""
     (tmp_path / "game").mkdir()
     wrote = f'write_file(path="f0.js", content={"y" * 3000!r})'
     edited = f'edit_file(path="f0.js", old_text={"a" * 900!r}, new_text={"b" * 900!r})'
@@ -650,16 +619,12 @@ def test_an_edit_is_never_stubbed(tmp_path):
          {"role": "assistant", "content": "", "tool_calls": [_program(edited, 1)]},
          {"role": "tool", "tool_call_id": "c1", "content": "ok"}]
     cursor = _cursor(history=h)
-    # A budget that the write's body alone overshoots: stubbing it is enough, and the edit's
-    # delta is never a candidate however tight the budget gets.
     build_steps.compact(tmp_path, cursor, keep_chars=2500)
     assert "the 3000 chars written to f0.js" in json.dumps(cursor.history)
     assert "a" * 900 in json.dumps(cursor.history)
 
 
 def test_a_body_built_at_runtime_is_left_alone(tmp_path):
-    """Only a literal has a span to cut. A body the program assembled is not repeated anywhere —
-    the program IS the record of how it was made."""
     (tmp_path / "game").mkdir()
     built = ('rows = [f"const x{i} = {i};" for i in range(400)]\n'
              'write_file(path="data.js", content="\\n".join(rows))')
@@ -692,8 +657,6 @@ def _left_after_compact(tmp_path, code):
 
 
 def test_a_body_bound_to_a_name_and_passed_by_position_is_stubbed(tmp_path):
-    """The shape of turn 9 of run 8988a28a746e, which wrote every file this way and never had a
-    body stubbed in 30 compactions: sections bound to names, the path passed positionally."""
     code = (f"util = {'u' * 1281!r}\n"
             f"data = {'d' * 7904!r}\n"
             "print(write_file('js/util.js', util))\n"
@@ -708,7 +671,6 @@ def test_a_body_bound_to_a_name_and_passed_by_position_is_stubbed(tmp_path):
 
 
 def test_a_body_added_from_a_bound_literal_is_stubbed(tmp_path):
-    """Turn 29 of the same run: a section plus a marker the next write appends after."""
     code = (f"chunk1 = {'c' * 7143!r}\n"
             "print(write_file('js/main.js', chunk1 + '\\n// __NEXT__\\n'))\n"
             "print(check_syntax(['js/main.js']))")
@@ -718,14 +680,12 @@ def test_a_body_added_from_a_bound_literal_is_stubbed(tmp_path):
 
 
 def test_a_name_that_refers_to_itself_is_left_whole():
-    """Bound once, but only to itself: it has no literal to reach, and must not be chased forever."""
     for code in (f"x = x + {'y' * 900!r}\nwrite_file('a.js', x)",
                  f"a = b + {'y' * 900!r}\nb = a + ''\nwrite_file('a.js', a)"):
         assert build_steps._stub_call(_program(code, 0), "on disk") is None
 
 
 def test_a_body_read_back_and_replaced_is_left_whole():
-    """The live build's edits-by-write: a name assigned more than once is built at runtime."""
     code = ("t = read_file('src/nav.js')\n"
             f"t = t.replace('old', {'n' * 900!r})\n"
             "write_file('src/nav.js', t)")
@@ -748,7 +708,7 @@ def test_compact_drops_rounds_only_when_trimming_is_not_enough(tmp_path):
     (tmp_path / "game" / "f0.js").write_text("x")
     cursor = _cursor(history=_file_history())
     assert build_steps.compact(tmp_path, cursor, keep_chars=1500) > 0
-    assert "f0.js" in cursor.history[1]["content"]           # re-grounded: rounds went
+    assert "f0.js" in cursor.history[1]["content"]
     assert len(cursor.history) < len(_file_history())
 
 
@@ -763,8 +723,6 @@ def test_compaction_replays_the_trim_from_the_turn_log(tmp_path):
 
 
 def test_a_turns_thinking_rides_the_transcript(tmp_path, tools):
-    """The server's cached sequence ends in the thinking it generated; a history without it
-    diverges there and the next turn re-prefills the whole window."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     build_steps.step({}, tmp_path, tools, cursor, _reply(code="print(1)", reasoning="plan it"))
@@ -774,8 +732,6 @@ def test_a_turns_thinking_rides_the_transcript(tmp_path, tools):
 
 
 def test_compaction_drops_every_turns_thinking(tmp_path):
-    """Kept past a cut, thinking would fill the window; the cut already breaks the cached prefix,
-    so it is where the thinking goes — even when nothing else needed to."""
     (tmp_path / "game").mkdir()
     history = [{**m, "reasoning_content": "why"} if m["role"] == "assistant" else m
                for m in _history()]
@@ -788,8 +744,6 @@ def test_compaction_drops_every_turns_thinking(tmp_path):
 
 
 def test_replies_cut_off_at_the_cap_count_toward_the_stall(tmp_path, tools):
-    """A model looping on one oversized write burned every turn to the cap: the cut-off branch never
-    advanced the stall streak, so the give-up that ends every other no-call loop never fired."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     out = None
@@ -801,8 +755,6 @@ def test_replies_cut_off_at_the_cap_count_toward_the_stall(tmp_path, tools):
 
 
 def test_a_turn_re_sent_forever_ends_the_build(tmp_path, tools):
-    """A re-drive with nothing to apply enqueues a fresh job each time; a worker that dies on every
-    one of them would otherwise re-drive without end."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     out = None
@@ -812,8 +764,6 @@ def test_a_turn_re_sent_forever_ends_the_build(tmp_path, tools):
 
 
 def test_the_last_nudge_never_tells_a_fix_to_write_a_fresh_page(tmp_path, tools):
-    """On a fix or a later stage the game already has its index.html; telling the model to write a
-    minimal one would overwrite the finished game."""
     (tmp_path / "game" / "index.html").write_text("<h1>done</h1>")
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
@@ -825,8 +775,6 @@ def test_the_last_nudge_never_tells_a_fix_to_write_a_fresh_page(tmp_path, tools)
 
 
 def test_a_misnamed_argument_is_named_back(tmp_path, tools):
-    """Seen in prod: `read — failed: KeyError: 'path'` for a read sent as `file`. The model copies
-    exact feedback, so the error names the argument it needs and the ones it sent."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     build_steps.step({}, tmp_path, tools, cursor,
@@ -837,9 +785,6 @@ def test_a_misnamed_argument_is_named_back(tmp_path, tools):
 
 
 def test_the_output_cap_is_the_ceiling_until_a_turn_overruns_it(tmp_path, tools, monkeypatch):
-    """p99 of turns that produced a tool call is 22,138 tokens, so the first attempt is capped there
-    rather than at the whole window — what a runaway costs is what the cap bounds. A turn that
-    genuinely needs more overruns, and the retry is given everything the window has left."""
     monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
@@ -854,9 +799,6 @@ def test_the_output_cap_is_the_ceiling_until_a_turn_overruns_it(tmp_path, tools,
 
 def test_a_turn_that_merely_called_no_tool_does_not_earn_the_whole_window(tmp_path, tools,
                                                                           monkeypatch):
-    """Only an overrun asks for more room. The ordinary no-tool-call nudge shares the same streak
-    counter, and keying the ceiling off that would hand the whole window to turns that never
-    needed it."""
     monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
@@ -873,8 +815,6 @@ def test_the_cap_never_exceeds_what_the_window_has_left(tmp_path, tools, monkeyp
     build_steps.step({}, tmp_path, tools, cursor,
                      _reply(code=f'write_file(path="a.js", content={"z" * 3000!r})',
                             usage={"prompt_tokens": 110_000}))
-    # The last counted prompt plus this round (a 3K write and its result), never the whole
-    # transcript re-estimated: a transcript of 110K tokens is well over 330K chars.
     assert 131_072 - 110_000 - 1200 < cursor.out_cap < 131_072 - 110_000 - 1000
 
 
@@ -883,7 +823,7 @@ def test_compaction_fires_when_the_window_has_less_than_the_room_left(tmp_path, 
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     cursor.history = _file_history()
-    cursor.logged = len(cursor.history)      # every round below is one the server already counted
+    cursor.logged = len(cursor.history)
     cursor.prompt_tokens = 131_072 - build_steps._COMPACT_ROOM - 1
     build_steps._infer(tmp_path, cursor)
     assert cursor.compacted == 0
@@ -902,13 +842,11 @@ def test_the_server_count_sets_the_chars_per_token(tmp_path, tools):
 
 
 def test_the_keep_target_is_a_third_of_the_window_in_tokens(tmp_path, monkeypatch):
-    """Measured 2026-09-11: a build's transcript ran at 2.9 chars a token, so a target counted at
-    4 kept ~60K of a 131K window instead of a third."""
     seen = []
     monkeypatch.setattr(build_steps, "compact",
                         lambda run_dir, cursor, keep_chars: seen.append(keep_chars) or 0)
     build_steps._compact(tmp_path, _cursor(chars_per_token=1.9), 131_072)
-    build_steps._compact(tmp_path, _cursor(), 131_072)       # nothing counted yet
+    build_steps._compact(tmp_path, _cursor(), 131_072)
     assert seen == [int(131_072 * build_steps._COMPACT_KEEP * 1.9),
                     int(131_072 * build_steps._COMPACT_KEEP * 3)]
 
@@ -925,8 +863,6 @@ def test_the_compaction_note_carries_the_code_map(tmp_path):
 
 
 def test_a_program_with_hundreds_of_calls_reports_a_readable_ledger(tmp_path, tools):
-    """The ledger rides every result, and a program may ask for a hundred pictures. Listing every
-    one would cost more window than the output it is annotating."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     build_steps.step({}, tmp_path, tools, cursor, _reply(code=(
@@ -938,8 +874,6 @@ def test_a_program_with_hundreds_of_calls_reports_a_readable_ledger(tmp_path, to
 
 
 def test_the_feed_line_folds_failures_too(tmp_path, tools):
-    """A program whose twenty-two art asks all fail is one event, not twenty-two: naming each one
-    made a 500-character feed line out of a turn a watcher reads at a glance."""
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     out = build_steps.step({}, tmp_path, tools, cursor, _reply(code=(
@@ -958,23 +892,17 @@ def _fat_history(rounds=40, body=6000):
 
 
 def test_compaction_fires_on_the_round_that_jumps_the_window(tmp_path, tools, monkeypatch):
-    """The trigger reads the prompt about to be SENT, not the last one the server counted. A single
-    round big enough to cross the window lands between two counts, and reading only the stale count
-    left the transcript untrimmed while the server refused it."""
     monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
     cursor.history = _fat_history()
     cursor.logged = 1
-    cursor.prompt_tokens = 100_000          # comfortably under the trigger on its own
-    build_steps._infer(tmp_path, cursor)    # ...but the rounds since add well over the room left
+    cursor.prompt_tokens = 100_000
+    build_steps._infer(tmp_path, cursor)
     assert cursor.compacted == 1
 
 
 def test_a_prompt_over_the_window_is_trimmed_and_re_sent(tmp_path, tools, monkeypatch):
-    """Measured 2026-09-08 (run 90a89ba593ee): the server refused the PROMPT for its size and the
-    driver answered as though the REPLY was unreadable — a note that was false and that made the
-    next prompt bigger, three identical refusals apart. A prompt-side refusal compacts instead."""
     monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
@@ -991,8 +919,6 @@ def test_a_prompt_over_the_window_is_trimmed_and_re_sent(tmp_path, tools, monkey
 
 
 def test_the_build_gives_up_when_the_prompt_cannot_be_trimmed(tmp_path, tools, monkeypatch):
-    """Nothing left to trim and the prompt still over: the build stops rather than re-sending a
-    prompt the server will refuse forever."""
     monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
@@ -1003,8 +929,6 @@ def test_the_build_gives_up_when_the_prompt_cannot_be_trimmed(tmp_path, tools, m
 
 
 def test_the_cap_stays_positive_when_the_window_is_full(tmp_path, tools, monkeypatch):
-    """The cap is what the window has left, and a full window is what compaction is for: after the
-    trim there is room for a reply again."""
     monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
     cursor = _cursor()
     build_steps.step({}, tmp_path, tools, cursor, {})
@@ -1016,8 +940,6 @@ def test_the_cap_stays_positive_when_the_window_is_full(tmp_path, tools, monkeyp
 
 
 def test_the_compaction_note_says_what_is_already_read_and_unchanged(tmp_path, tools, monkeypatch):
-    """The whole point of the block: the model is cut back to a code map and then goes and reads
-    the same files again (measured 2026-09-08: 90 of 95 post-compaction reads)."""
     monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
     (tmp_path / "game" / "main.js").write_text("const a = 1;\n", encoding="utf-8")
     tools["read_file"](path="main.js")
@@ -1031,14 +953,11 @@ def test_the_compaction_note_says_what_is_already_read_and_unchanged(tmp_path, t
 
 
 def test_dedup_alone_can_be_enough_and_the_older_bodies_stay(tmp_path, tools, monkeypatch):
-    """A superseded body costs the model nothing to lose — the newest copy is still there. A
-    trimmed round costs it the memory of its own work, so when dedup recovers a third of the
-    transcript the rounds keep their bodies."""
     monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
     cursor = _cursor()
     body = "z" * 9000
     cursor.history = [{"role": "user", "content": "make a game"}]
-    for i in range(4):                       # the same file written four times over: three go
+    for i in range(4):
         cursor.history.append({"role": "assistant", "content": f"step {i}",
                                "tool_calls": [_program(
                                    f'write_file(path="a.js", content={body!r})', i)]})
@@ -1046,18 +965,15 @@ def test_dedup_alone_can_be_enough_and_the_older_bodies_stay(tmp_path, tools, mo
     keep = sum(len(json.dumps(m)) for m in cursor.history) // 2
     assert build_steps.compact(tmp_path, cursor, keep_chars=keep) > 0
     kept = json.dumps(cursor.history)
-    assert kept.count(body) == 1             # only the newest copy of the file survives
-    assert "step 0" in kept                  # ...and the round that wrote it is still readable
+    assert kept.count(body) == 1
+    assert "step 0" in kept
 
 
 def test_a_transcript_over_the_window_never_asks_for_a_negative_reply(tmp_path, tools, monkeypatch):
-    """Measured 2026-09-10 against DeepSeek Flash: a prompt the trim could not get under the window
-    sent `max_tokens: -408`, which the server rejects as a malformed BODY — and a malformed body
-    reads as "your reply was unparseable", which is false and makes the next prompt bigger."""
     monkeypatch.setattr(build_steps, "_n_ctx", lambda: 131_072)
-    monkeypatch.setattr(build_steps, "compact", lambda *a, **k: False)   # nothing left to trim
+    monkeypatch.setattr(build_steps, "compact", lambda *a, **k: False)
     cursor = _cursor()
-    cursor.prompt_tokens = 200_000                                       # the window, overrun
+    cursor.prompt_tokens = 200_000
     build_steps.step({}, tmp_path, tools, cursor, {})
     assert cursor.out_cap >= build_steps._MIN_OUT
 
@@ -1074,9 +990,6 @@ def test_a_full_window_retry_is_positive_too(tmp_path, tools, monkeypatch):
 
 
 def test_staging_never_leaves_the_played_game_half_deleted(tmp_path, monkeypatch):
-    """Measured 2026-09-10: a render landing while `stage_for_play` was deleting the live copy
-    failed it with `Directory not empty: 'assets'` — after it had already removed 31 of the game's
-    55 assets, from the copy someone was playing."""
     from maestro.codegen import staging
     monkeypatch.setattr(staging, "RUNTIME_DIR", tmp_path / "runtime")
     gd = tmp_path / "game"
@@ -1118,7 +1031,6 @@ def test_staging_swaps_in_and_leaves_nothing_behind(tmp_path, monkeypatch):
 
 
 def test_a_crashed_staging_does_not_block_the_next_one(tmp_path, monkeypatch):
-    """A leftover working folder from a killed process is owed nothing."""
     from maestro.codegen import staging
     monkeypatch.setattr(staging, "RUNTIME_DIR", tmp_path / "runtime")
     games = tmp_path / "runtime" / "games"

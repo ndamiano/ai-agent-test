@@ -186,7 +186,7 @@ one needs http, not `file://` — `<script type="module">` is CORS-blocked from 
 ## Builds on RunPod pods from this box
 
 The prod model on prod pods, driven by the local control plane, through the exact prod path. A
-pod never listens; it boots `worker.agent` and polls `CP_URL/worker/claim`, so the only thing
+pod never listens; it boots the worker and polls `CP_URL/worker/claim`, so the only thing
 this box has to add is a URL a pod can reach.
 
 1. `sudo tailscale funnel --bg 8000` (once: `sudo tailscale set --operator=$USER` lets you do

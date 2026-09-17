@@ -28,6 +28,9 @@ COMFY_PYTHON = Path(os.environ.get("COMFY_PYTHON",
                                    "/home/nick/Documents/Comfy/comfy-env/bin/python"))
 COMFY_DIR = Path(os.environ.get("COMFY_DIR", "/home/nick/comfy/mess-with-comfy"))
 SAFETY_MODEL_DIR = os.environ.get("SAFETY_MODEL_DIR", "/home/nick/comfy-models/safety")
+IMAGES_DIR = Path(os.environ.get("IMAGES_REPO_DIR", str(Path.home() / "Documents/gamesummoner-images")))
+WORKER_DIR = Path(os.environ.get("WORKER_REPO_DIR", str(Path.home() / "Documents/gamesummoner-workers")))
+IMAGE_PORT = 8700
 
 
 def _worker_python(queue: str) -> str:
@@ -114,14 +117,14 @@ def _leg(queue: str) -> dict:
         return {
             "port": 8189,
             "ready": "http://127.0.0.1:8189/health",
-            "argv": [str(TRELLIS_PYTHON), str(ROOT / "src" / "tools" / "trellis_server.py"),
+            "argv": [str(TRELLIS_PYTHON), str(IMAGES_DIR / "engines" / "trellis" / "trellis_server.py"),
                      "--repo", str(TRELLIS_REPO), "--weights", str(TRELLIS_WEIGHTS),
                      "--host", "127.0.0.1", "--port", "8189", "--stage-dir", ""],
             "cwd": None,
             "env": {},
             "sidecar": {
                 "ready": "http://127.0.0.1:8190/health",
-                "argv": [str(SPRITE_PYTHON), str(ROOT / "src" / "tools" / "sprite_server.py"),
+                "argv": [str(SPRITE_PYTHON), str(IMAGES_DIR / "engines" / "sprites" / "sprite_server.py"),
                          "--host", "127.0.0.1", "--port", "8190"],
             },
         }
@@ -183,19 +186,34 @@ def _spawn_sidecar(queue: str, leg: dict):
     return _spawn(f"{queue}-sidecar", side["argv"], None, {})
 
 
-def _spawn_worker(queue: str, leg: dict) -> subprocess.Popen:
+def _spawn_image(queue: str, leg: dict) -> subprocess.Popen:
+    argv = [_worker_python(queue), "-m", f"local.{queue}.server", "--image-id", "local",
+            "--engine-url", f"http://127.0.0.1:{leg['port']}", "--port", str(IMAGE_PORT)]
+    if leg.get("sidecar"):
+        argv += ["--sprite-url", "http://127.0.0.1:8190"]
+    return _spawn(f"{queue}-image", argv, str(IMAGES_DIR),
+                  {"PYTHONPATH": str(IMAGES_DIR), "SAFETY_MODEL_DIR": SAFETY_MODEL_DIR})
+
+
+def _spawn_worker(queue: str) -> subprocess.Popen:
     from db import workers
     worker_id = f"{socket.gethostname()}-{uuid.uuid4().hex[:6]}"
     workers.worker_created(worker_id, None, queue, None, 0.0)
-    token = (_settings().get("workqueue") or {}).get("token") or ""
-    return _spawn(
-        f"{queue}-worker",
-        [_worker_python(queue), "-m", "worker.agent", "--server", "http://localhost:8000",
-         "--token", token, "--queue", queue, "--worker-id", worker_id,
-         "--target", f"http://localhost:{leg['port']}"],
-        str(ROOT / "src"),
-        {"SAFETY_MODEL_DIR": SAFETY_MODEL_DIR},
-    )
+    settings = _settings()
+    env_file = LOGS / f"{queue}-env.json"
+    env_file.write_text(json.dumps({
+        "CP_URL": "http://localhost:8000",
+        "WORKER_TOKEN": (settings.get("workqueue") or {}).get("token") or "",
+        "WORKER_QUEUE": queue,
+        "WORKER_ID": worker_id,
+        "WORKER_SLOTS": str((settings.get("llm") or {}).get("slots", 1) if queue == "llm" else 1),
+        "IDLE_EXIT_SECONDS": "31536000",
+        "JOB_TIMEOUT_SECONDS": str((settings.get("workqueue") or {}).get("job_timeout_seconds", 1800)),
+    }))
+    return _spawn(f"{queue}-worker",
+                  [sys.executable, "-m", "gamesummoner_worker", "--env-file", str(env_file),
+                   "--image", f"http://127.0.0.1:{IMAGE_PORT}"],
+                  None, {"PYTHONPATH": str(WORKER_DIR / "src")})
 
 
 def _stop(name: str, process: subprocess.Popen, grace: float = 25) -> None:
@@ -214,10 +232,12 @@ def _stop(name: str, process: subprocess.Popen, grace: float = 25) -> None:
         os.killpg(os.getpgid(process.pid), signal.SIGKILL)
 
 
-def hand_over(held: Optional[str], server, worker, sidecar=None) -> None:
+def hand_over(held: Optional[str], server, worker, sidecar=None, image=None) -> None:
     """Give the card up: the worker first, with time to finish its job, then the server."""
     if worker is not None:
         _stop(f"{held}-worker", worker, grace=HANDOFF_SECONDS)
+    if image is not None:
+        _stop(f"{held}-image", image)
     if sidecar is not None:
         _stop(f"{held}-sidecar", sidecar)
     if server is not None:
@@ -269,17 +289,20 @@ def drain(queue: str, *, keep: bool, ready_timeout: float) -> None:
     print(f"[{queue}] {waiting} job(s) waiting", flush=True)
 
     server = _spawn(f"{queue}-server", leg["argv"], leg["cwd"], leg["env"])
-    worker = sidecar = None
+    worker = sidecar = image = None
     try:
         _await_ready(f"{queue}-server", queue, leg["ready"], server, ready_timeout)
         sidecar = _spawn_sidecar(queue, leg)
-        worker = _spawn_worker(queue, leg)
+        image = _spawn_image(queue, leg)
+        worker = _spawn_worker(queue)
 
         idle = 0
         while idle < IDLE_TICKS:
             time.sleep(POLL_SECONDS)
             if worker.poll() is not None:
                 raise SystemExit(f"[{queue}] worker exited — see {LOGS / f'{queue}-worker.log'}")
+            if image.poll() is not None:
+                raise SystemExit(f"[{queue}] contract server exited — see {LOGS / f'{queue}-image.log'}")
             left = _waiting(queue)
             if left:
                 idle = 0
@@ -292,6 +315,8 @@ def drain(queue: str, *, keep: bool, ready_timeout: float) -> None:
     finally:
         if worker is not None:
             _stop(f"{queue}-worker", worker)
+        if image is not None:
+            _stop(f"{queue}-image", image)
         if sidecar is not None:
             _stop(f"{queue}-sidecar", sidecar)
         if keep:
@@ -334,6 +359,7 @@ def auto(idle_exit: Optional[float], ready_timeout: float) -> None:
     server: Optional[subprocess.Popen] = None
     worker: Optional[subprocess.Popen] = None
     sidecar: Optional[subprocess.Popen] = None
+    image: Optional[subprocess.Popen] = None
     idle_ticks = {q: 0 for q in QUEUES}
     all_idle_since: Optional[float] = None
 
@@ -346,13 +372,13 @@ def auto(idle_exit: Optional[float], ready_timeout: float) -> None:
     signal.signal(signal.SIGTERM, _signal)
 
     def _stop_current():
-        nonlocal server, worker, sidecar, held
-        hand_over(held, server, worker, sidecar)
-        worker = server = sidecar = None
+        nonlocal server, worker, sidecar, image, held
+        hand_over(held, server, worker, sidecar, image)
+        worker = server = sidecar = image = None
         held = None
 
     def _start(queue: str):
-        nonlocal server, worker, sidecar, held
+        nonlocal server, worker, sidecar, image, held
         leg = _leg(queue)
         if _up(leg["ready"]):
             # Someone else's server on the port is the server to use, not a reason to stop: auto
@@ -364,7 +390,8 @@ def auto(idle_exit: Optional[float], ready_timeout: float) -> None:
             server = _spawn(f"{queue}-server", leg["argv"], leg["cwd"], leg["env"])
             _await_ready(f"{queue}-server", queue, leg["ready"], server, ready_timeout)
         sidecar = _spawn_sidecar(queue, leg)
-        worker = _spawn_worker(queue, leg)
+        image = _spawn_image(queue, leg)
+        worker = _spawn_worker(queue)
         held = queue
 
     try:
@@ -399,6 +426,8 @@ def auto(idle_exit: Optional[float], ready_timeout: float) -> None:
 
             if worker is not None and worker.poll() is not None:
                 raise SystemExit(f"[{held}] worker exited — see {LOGS / f'{held}-worker.log'}")
+            if image is not None and image.poll() is not None:
+                raise SystemExit(f"[{held}] contract server exited — see {LOGS / f'{held}-image.log'}")
 
             time.sleep(POLL_SECONDS)
     finally:

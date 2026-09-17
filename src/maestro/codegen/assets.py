@@ -268,10 +268,6 @@ NSFW_REFUSE_THRESHOLD = 0.98
 
 
 def render_verdict(img_entry: Optional[Dict]) -> Optional[str]:
-    """Why a rendered image may not enter the game, or None to admit it. The worker reports
-    scores (`worker/safety_vision.py`); the DECISION lives here, so a future surface with
-    different rules is a new policy over the same verdicts. A render that arrives without
-    scores is refused too: fail closed, because this is the legal boundary."""
     safety = (img_entry or {}).get("safety") or {}
     scores = safety.get("scores")
     if not scores:

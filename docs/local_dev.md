@@ -203,9 +203,8 @@ this box has to add is a URL a pod can reach.
    before the pod boots.
    Prod's autoscaler shares the RunPod account and reaps every `maestro-<queue>-*` pod that
    never registered with PROD inside `boot_deadline_seconds` — a pod that registered here dies
-   at exactly five minutes. The local scaler has to name its pods with its own prefix
-   (`src/scaler/autoscaler.py`, the two `maestro-{queue}-` strings), and then prod cannot see
-   them and it cannot see prod's.
+   at exactly five minutes. Set `runpod.pod_prefix` to something else (`gsdev`), and then prod
+   cannot see these pods and this scaler cannot see prod's.
 4. Restart `run.py`; the log says `RunPod autoscaler started`. Then build exactly as usual —
    `python -m maestro.codegen.run "<ask>"`, or a pinned prompt through `run_build`. Scale-from-
    zero fires on the first pending job (the `min_jobs_per_pod` rule only gates a second pod).

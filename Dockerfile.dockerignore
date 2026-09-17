@@ -1,8 +1,5 @@
-# Context excludes for the CONTROL-PLANE image only (BuildKit per-Dockerfile ignore: this file
-# REPLACES .dockerignore for builds of `Dockerfile`, so it repeats those rules). The worker
-# images (Dockerfile.worker-*) keep using .dockerignore — they COPY src/worker and
-# src/tools/trellis_server.py, which are excluded here: pod-side code that never runs on the
-# control plane and shouldn't ship in its image.
+# Context excludes for the control-plane image (BuildKit per-Dockerfile ignore: this file
+# REPLACES .dockerignore for builds of `Dockerfile`, so it repeats those rules).
 .git/
 .githooks/
 

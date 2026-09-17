@@ -1,15 +1,3 @@
-"""Export the NSFW image classifier as a self-contained local bundle.
-
-Run once on a box with Hugging Face access (pods never fetch from HF, so the worker loads the
-bundle from its model volume instead):
-
-    python scripts/export_safety_model.py <out_dir>
-
-Writes `model.pt` (state dict) + `config.json` (architecture, labels, preprocessing) — exactly
-what `worker/safety_vision.py` reads from SAFETY_MODEL_DIR. Ship the directory to the image
-worker's model tree as `safety/` (RunPod network volume, and the local ComfyUI models dir).
-"""
-
 import json
 import sys
 from pathlib import Path

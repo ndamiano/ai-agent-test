@@ -63,7 +63,7 @@ def _finish(queue, exec_seconds, *, game_id, gpu_type=None, build_id="b1"):
 def test_pod_ledger_counts_each_pods_jobs_and_what_its_games_were_debited():
     _game()
     workers.worker_created("wp", "p1", "llm", "A", 1.0)
-    workers.worker_seen("wp", "llm", gpu_type="A", source="runpod", pod_id="p1")
+    workers.worker_seen("wp", "llm", gpu_type="A", source="runpod")
     for game_id, error, secs in [("g1", None, 36.0), ("g1", "boom", 18.0), (None, None, 9.0)]:
         jobs.enqueue_job("llm", {}, game_id=game_id, build_id="b1")
         claimed = jobs.claim_job("llm", "wp", 60)
@@ -87,7 +87,7 @@ def test_pod_ledger_is_one_row_per_life_when_runpod_reuses_a_pod_id():
     with connection.platform_db() as conn:
         conn.execute("UPDATE workers SET started_at = started_at - 86400 WHERE id = 'tue'")
     for worker in ("tue", "wed"):
-        workers.worker_seen(worker, "llm", gpu_type="A", source="runpod", pod_id="p1")
+        workers.worker_seen(worker, "llm", gpu_type="A", source="runpod")
         jobs.enqueue_job("llm", {}, game_id="g1", build_id="b1")
         claimed = jobs.claim_job("llm", worker, 60)
         jobs.complete_job(claimed["id"], worker, {"ok": True}, None, exec_seconds=10.0)

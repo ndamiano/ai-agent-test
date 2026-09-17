@@ -72,7 +72,7 @@ def test_workers_report_state_and_the_job_they_hold(app_client):
     jid = jobs.enqueue_job("mesh", {}, game_id="g1", build_id="b1")
     workers.worker_created("busy", "p1", "mesh", "BIG", 0.99)
     workers.worker_created("idle", None, "mesh", "NVIDIA GeForce RTX 5090", 0.0)
-    workers.worker_seen("busy", "mesh", gpu_type="BIG", source="runpod", pod_id="p1")
+    workers.worker_seen("busy", "mesh", gpu_type="BIG", source="runpod")
     workers.worker_seen("idle", "mesh", gpu_type="NVIDIA GeForce RTX 5090", source="local")
     jobs.claim_job("mesh", "busy", 60)
 
@@ -94,7 +94,7 @@ def test_workers_report_state_and_the_job_they_hold(app_client):
 def test_a_created_pod_is_booting_until_its_worker_registers(app_client):
     workers.worker_created("w-new", "p-new", "llm", None, 1.89)
     workers.worker_created("w-live", "p-live", "llm", None, 1.89)
-    workers.worker_seen("w-live", "llm", gpu_type="BIG", source="runpod", pod_id="p-live")
+    workers.worker_seen("w-live", "llm", gpu_type="BIG", source="runpod")
     llm, _ = _queue(app_client, "llm")
 
     states = {w["id"]: w["state"] for w in llm["workers"]}
@@ -122,7 +122,7 @@ def test_costs_split_a_reused_pod_id_into_its_lives(app_client, monkeypatch):
     for worker, (pod, rate, started) in lives.items():
         workers.worker_created(worker, pod, "image", "NVIDIA GeForce RTX 5090", rate)
         workers.worker_seen(worker, "image", gpu_type="NVIDIA GeForce RTX 5090",
-                             source="runpod", pod_id=pod)
+                             source="runpod")
         with connection.platform_db() as conn:
             conn.execute("UPDATE workers SET started_at = ? WHERE id = ?", (started, worker))
 
@@ -179,8 +179,7 @@ def test_costs_without_a_reachable_ledger_still_reports_our_half(app_client, mon
     monkeypatch.setattr(admin, "_ledger", lambda _since, _now: None)
     admin._cost_cache.clear()
     workers.worker_created("w1", "p1", "llm", "NVIDIA GeForce RTX 5090", 1.0)
-    workers.worker_seen("w1", "llm", gpu_type="NVIDIA GeForce RTX 5090", source="runpod",
-                         pod_id="p1")
+    workers.worker_seen("w1", "llm", gpu_type="NVIDIA GeForce RTX 5090", source="runpod")
     jid = jobs.enqueue_job("llm", {"p": 1})
     jobs.claim_job("llm", "w1", lease_seconds=120)
     jobs.complete_job(jid, "w1", {"ok": True}, None, exec_seconds=60)

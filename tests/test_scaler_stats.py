@@ -48,7 +48,7 @@ def test_job_seconds_is_the_week_s_mean_with_the_slowest_tenth_left_out():
 def test_live_and_stale_filtering():
     src = SqliteStatsSource()
     workers.worker_created("w1", "p1", "mesh", None, 0.99)
-    workers.worker_seen("w1", "mesh", pod_id="p1")
+    workers.worker_seen("w1", "mesh")
     assert src.live_workers("mesh", 60) == [("w1", "p1")]
     assert src.stale_workers("mesh", 60, 900) == []
 
@@ -67,17 +67,18 @@ def test_home_box_workers_are_never_stale():
 def test_a_deregistered_worker_stays_terminated_when_it_claims_again():
     src = SqliteStatsSource()
     workers.worker_created("w1", "p1", "mesh", None, 0.99)
-    workers.worker_seen("w1", "mesh", pod_id="p1")
+    workers.worker_seen("w1", "mesh")
     src.mark_worker_terminated("w1")
-    workers.worker_seen("w1", "mesh", pod_id="p1")
+    workers.worker_seen("w1", "mesh")
     assert src.terminated_workers_with_pods("mesh") == [("w1", "p1")]
     assert src.live_workers("mesh", 60) == []
 
 
-def test_a_worker_id_is_bound_to_the_pod_it_was_created_for():
+def test_a_worker_keeps_the_pod_the_scaler_created_it_on():
     workers.worker_created("w1", "p1", "mesh", None, None)
-    assert workers.worker_seen("w1", "mesh", pod_id="p2") is False
-    assert workers.booting_workers("mesh")[0]["pod_id"] == "p1"
+    assert workers.worker_seen("w1", "mesh") is True
+    assert workers.live_workers("mesh", 60)[0]["pod_id"] == "p1"
+    assert workers.worker_seen("nobody", "mesh") is False
 
 
 def test_a_created_pod_is_booting_until_its_worker_registers():
@@ -88,7 +89,7 @@ def test_a_created_pod_is_booting_until_its_worker_registers():
     assert src.stale_workers("mesh", 60, 900) == []
     # The worker registers under the id it was started with: same row, now live, the card its
     # own report.
-    workers.worker_seen("w1", "mesh", gpu_type="NVIDIA RTX PRO 4500 Blackwell", source="runpod", pod_id="p1")
+    workers.worker_seen("w1", "mesh", gpu_type="NVIDIA RTX PRO 4500 Blackwell", source="runpod")
     assert src.booting_workers("mesh") == []
     assert src.live_workers("mesh", 60) == [("w1", "p1")]
     row = workers.live_workers("mesh", 60)[0]

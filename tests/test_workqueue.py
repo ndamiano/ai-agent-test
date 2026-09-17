@@ -260,10 +260,9 @@ def test_wait_seconds_is_capped_at_the_server_max(client):
     assert time.time() - t0 < 5
 
 
-def test_claim_records_the_pod_id(client):
+def test_claim_keeps_the_pod_id_the_scaler_recorded(client):
     workers.worker_created("w1", "pod-1", "llm", None, RATE)
-    client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1",
-                                       "pod_id": "pod-1"}, headers=_hdr())
+    client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1"}, headers=_hdr())
     assert workers.live_workers("llm", 60)[0]["pod_id"] == "pod-1"
 
 
@@ -282,8 +281,7 @@ def test_heartbeat_bumps_worker_last_seen(client):
 
 def test_deregister_terminates_the_worker_row(client):
     workers.worker_created("w1", "pod-1", "llm", None, RATE)
-    client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1",
-                                       "pod_id": "pod-1"}, headers=_hdr())
+    client.post("/worker/claim", json={"queue": "llm", "worker_id": "w1"}, headers=_hdr())
     r = client.post("/worker/deregister", json={"worker_id": "w1"}, headers=_hdr())
     assert r.json() == {"ok": True}
     assert workers.live_workers("llm", 60) == []

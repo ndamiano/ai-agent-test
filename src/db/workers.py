@@ -21,14 +21,14 @@ def worker_created(worker_id: str, pod_id: str, queue: str, gpu_type: Optional[s
 
 
 def worker_seen(worker_id: str, queue: str, gpu_type: Optional[str] = None,
-                source: Optional[str] = None, pod_id: Optional[str] = None) -> bool:
+                source: Optional[str] = None) -> bool:
     now = time.time()
     with platform_db() as conn:
         cur = conn.execute(
             "UPDATE workers SET queue = ?, last_seen_at = ?, registered_at = COALESCE(registered_at, ?), "
             "gpu_type = COALESCE(?, gpu_type), source = COALESCE(?, source) "
-            "WHERE id = ? AND pod_id IS ?",
-            (queue, now, now, gpu_type, source, worker_id, pod_id))
+            "WHERE id = ?",
+            (queue, now, now, gpu_type, source, worker_id))
     return cur.rowcount > 0
 
 

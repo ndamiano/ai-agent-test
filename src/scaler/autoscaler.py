@@ -82,7 +82,7 @@ class Autoscaler:
             del self._pod_first_seen[pod_id]
 
         for queue, qcfg in (rp.get("queues") or {}).items():
-            prefix = f"maestro-{queue}-"
+            prefix = f"{rp.get('pod_prefix', 'maestro')}-{queue}-"
             created = {b.pod_id: b.started_at for b in self._stats.booting_workers(queue)}
             qpods = [PodInfo(p["id"], p["name"],
                              now - created.get(p["id"], self._pod_first_seen[p["id"]]))
@@ -112,7 +112,7 @@ class Autoscaler:
                  now: float) -> None:
         try:
             if isinstance(action, StartPod):
-                name = f"maestro-{queue}-{uuid.uuid4().hex[:8]}"
+                name = f"{rp.get('pod_prefix', 'maestro')}-{queue}-{uuid.uuid4().hex[:8]}"
                 env = {
                     "CP_URL": rp.get("cp_url", ""),
                     "WORKER_TOKEN": token,

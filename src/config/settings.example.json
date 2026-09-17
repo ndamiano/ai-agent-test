@@ -23,6 +23,7 @@
     "network_volume_id": "",
     "cloud_type": "SECURE",
     "cp_url": "",
+    "pod_prefix": "maestro",
     "tick_seconds": 15,
     "stale_worker_seconds": 180,
     "queues": {

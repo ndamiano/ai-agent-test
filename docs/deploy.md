@@ -22,10 +22,8 @@ control-plane config, and prod never dials out. Contract details: `docs/architec
 - `scripts/provision.sh` — one-time host setup.
 - `scripts/deploy.sh` — ship dev → prod.
 
-The image build uses `Dockerfile.dockerignore`, which drops `src/worker/` +
-`src/tools/trellis_server.py` — pod-side code that never runs on the control plane. `settings.json`
-is dockerignored too and rides a host bind mount, so `runpod.queues` (which env can't express) is
-editable without a rebuild — but the file must exist before the first `up`.
+`settings.json` is dockerignored and rides a host bind mount, so `runpod.queues` (which env
+can't express) is editable without a rebuild — but the file must exist before the first `up`.
 
 ## The data invariant (critical)
 

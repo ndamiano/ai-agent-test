@@ -119,11 +119,13 @@ def touched_prose():
         capture_output=True, text=True, check=True,
     ).stdout
     touched = {}
+    path = None
     for line in diff.splitlines():
-        if line.startswith("+++ b/"):
-            path = line[6:]
-            touched.setdefault(path, set())
-        elif line.startswith("@@"):
+        if line.startswith("+++ "):
+            path = line[6:] if line.startswith("+++ b/") else None
+            if path is not None:
+                touched.setdefault(path, set())
+        elif line.startswith("@@") and path is not None:
             m = re.search(r"\+(\d+)(?:,(\d+))?", line)
             start = int(m.group(1))
             count = int(m.group(2)) if m.group(2) is not None else 1

@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 import requests
 
 BASE_URL = "https://api.runpod.io/v2"
+GRAPHQL_URL = "https://api.runpod.io/graphql"
 VOLUME_MOUNT_PATH = "/workspace"
 
 
@@ -50,6 +51,17 @@ class RunPodClient:
             except RunPodError as e:
                 errors.append(str(e))
         raise RunPodError(" | ".join(errors))
+
+    def gpu_prices(self, cloud_type: str = "SECURE") -> Dict[str, float]:
+        """RunPod's list price per hour for one card of each gpu type id"""
+        field = "securePrice" if cloud_type == "SECURE" else "communityPrice"
+        r = self._checked(self.session.post(
+            GRAPHQL_URL, json={"query": f"query {{ gpuTypes {{ id {field} }} }}"}, timeout=30))
+        body = r.json()
+        if body.get("errors"):
+            raise RunPodError(f"gpuTypes: {str(body['errors'])[:500]}")
+        return {g["id"]: float(g[field]) for g in body["data"]["gpuTypes"]
+                if g.get(field) is not None}
 
     def list_pods(self) -> List[Dict]:
         return self._checked(

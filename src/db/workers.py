@@ -11,13 +11,13 @@ _POD_REFUSAL_KEEP_SECONDS = 30 * _DAY
 
 
 def worker_created(worker_id: str, pod_id: str, queue: str, gpu_type: Optional[str],
-                   usd_per_hour: Optional[float]) -> None:
+                   usd_per_hour: Optional[float], source: str = "runpod") -> None:
     now = time.time()
     with platform_db() as conn:
         conn.execute(
             "INSERT INTO workers (id, queue, gpu_type, source, pod_id, usd_per_hour, started_at) "
-            "VALUES (?, ?, ?, 'runpod', ?, ?, ?)",
-            (worker_id, queue, gpu_type, pod_id, usd_per_hour, now))
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (worker_id, queue, gpu_type, source, pod_id, usd_per_hour, now))
 
 
 def worker_seen(worker_id: str, queue: str, gpu_type: Optional[str] = None,

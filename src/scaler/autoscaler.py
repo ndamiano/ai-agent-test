@@ -1,11 +1,6 @@
-"""The control-plane scaling loop: per tick, one list_pods(), then per queue gather stats →
-decide → execute. Errors are logged, never fatal — a bad tick is skipped, not a crash.
-
-A pod's age is its worker row's started_at — the create — and survives a control-plane restart.
-A listed pod with our prefix and no row (created before the row existed, or by hand) is aged
-from the tick that first saw it; a restart resets that to zero, which only delays reaping such
-a pod by one boot_deadline.
-"""
+"""The control-plane scaling loop: per tick every provider lists its machines, then per queue
+stats → decide → execute, a scale-up walking one ladder merged across the providers. A failed
+tick is logged and skipped, never fatal."""
 
 import logging
 import threading
@@ -22,31 +17,23 @@ from scaler.policy import (
     TerminatePod,
     decide,
 )
-from scaler.runpod_client import RunPodClient, RunPodError
+from scaler.providers import Machine, Provider, ProviderError, merge_ladders
 from scaler.stats import StatsSource
 
 logger = logging.getLogger("scaler")
 
-# Runpod returns a generic 400 error when out of stock, with details in the message.
-_STOCK_MARKERS = ("no instances currently available",
-                  "no longer any instances available",
-                  "could not find any pods with required specifications")
-
-
-def refusal_kind(errors: List[str]) -> str:
-    return "stock" if all(any(m in e.lower() for m in _STOCK_MARKERS) for e in errors) else "other"
-
 
 class Autoscaler:
-    def __init__(self, stats: StatsSource, client: RunPodClient,
+    def __init__(self, stats: StatsSource, providers: List[Provider],
                  settings_getter: Callable[[], Dict]):
         self._stats = stats
-        self._client = client
+        self._providers = list(providers)
         self._settings = settings_getter
         self._stop = threading.Event()
         self._thread = None
         self._last_scale_up: Dict[str, float] = {}
         self._pod_first_seen: Dict[str, float] = {}
+        self._owner: Dict[str, Provider] = {}
 
     def start(self) -> None:
         self._thread = threading.Thread(target=self._loop, name="autoscaler", daemon=True)
@@ -68,25 +55,34 @@ class Autoscaler:
             except Exception:
                 logger.exception("autoscaler tick failed")
 
+    def _machines(self, prefix: str) -> List[Machine]:
+        machines: List[Machine] = []
+        self._owner = {}
+        for provider in self._providers:
+            listed = provider.machines(prefix)
+            machines += listed
+            self._owner.update({m.id: provider for m in listed})
+        return machines
+
     def tick(self) -> None:
         settings = self._settings()
         rp = settings.get("runpod") or {}
         token = (settings.get("workqueue") or {}).get("token", "")
         now = time.time()
 
-        pods = self._client.list_pods()
-        listed = {p["id"] for p in pods}
+        pod_prefix = rp.get("pod_prefix", "maestro")
+        pods = self._machines(f"{pod_prefix}-")
+        listed = {p.id for p in pods}
         for pod_id in listed - self._pod_first_seen.keys():
             self._pod_first_seen[pod_id] = now
         for pod_id in self._pod_first_seen.keys() - listed:
             del self._pod_first_seen[pod_id]
 
         for queue, qcfg in (rp.get("queues") or {}).items():
-            prefix = f"{rp.get('pod_prefix', 'maestro')}-{queue}-"
+            prefix = f"{pod_prefix}-{queue}-"
             created = {b.pod_id: b.started_at for b in self._stats.booting_workers(queue)}
-            qpods = [PodInfo(p["id"], p["name"],
-                             now - created.get(p["id"], self._pod_first_seen[p["id"]]))
-                     for p in pods if (p.get("name") or "").startswith(prefix)]
+            qpods = [PodInfo(p.id, p.name, now - created.get(p.id, self._pod_first_seen[p.id]))
+                     for p in pods if p.name.startswith(prefix)]
             staleness = rp.get("stale_worker_seconds", 180)
             policy = ScalingPolicy(
                 max_workers=qcfg.get("max_workers", 2),
@@ -129,53 +125,43 @@ class Autoscaler:
                     env["LLM_N_CTX"] = str(llm["n_ctx"])
                     env["SGLANG_ARGS_EXTRA"] = llm.get("sglang_args") or ""
                     env["WORKER_SLOTS"] = str(llm.get("slots", 1))
-                self._start_pod(name, queue, qcfg, rp, env, uuid.uuid4().hex)
-                self._last_scale_up[queue] = now
+                if self._start_pod(name, queue, env, uuid.uuid4().hex):
+                    self._last_scale_up[queue] = now
             elif isinstance(action, TerminatePod):
-                self._client.terminate_pod(action.pod_id)
+                self._owner[action.pod_id].terminate(action.pod_id)
                 self._stats.mark_pod_terminated(action.pod_id)
                 logger.info("reaped pod %s (%s)", action.pod_id, action.reason)
             elif isinstance(action, MarkWorkerTerminated):
                 self._stats.mark_worker_terminated(action.worker_id)
-        except RunPodError as e:
+        except ProviderError as e:
             logger.error("action %r on queue %s failed: %s", action, queue, e)
 
-    def _start_pod(self, name: str, queue: str, qcfg: Dict, rp: Dict, env: Dict,
-                   worker_id: str) -> None:
-        """Create a GPU pod, preferring the first gpu_type_ids entry."""
-        ids = list(qcfg["gpu_type_ids"])
-        cuda = qcfg.get("allowed_cuda_versions")
-        gpu_asks = [ids[:1], ids] if len(ids) > 1 else [ids]
-        volumes = qcfg.get("network_volume_ids") or [rp.get("network_volume_id", "")]
-        attempts = [(v, ask) for v in volumes for ask in gpu_asks]
-        refused: List[Dict] = []
-        for i, (volume, attempt) in enumerate(attempts):
+    def _start_pod(self, name: str, queue: str, env: Dict, worker_id: str) -> bool:
+        by_name = {p.name: p for p in self._providers}
+        ladders = []
+        for provider in self._providers:
             try:
-                pod = self._client.create_pod(
-                    name=name,
-                    template_id=qcfg["template_id"],
-                    gpu_type_ids=attempt,
-                    network_volume_id=volume,
-                    env=env,
-                    args=f"--worker-id {worker_id}",
-                    cloud_type=rp.get("cloud_type", "SECURE"),
-                    allowed_cuda_versions=cuda,
-                )
-            except RunPodError as e:
-                refused.append({"volume": volume, "gpu_type_ids": attempt, "error": str(e)})
-                if i == len(attempts) - 1:
-                    self._stats.record_pod_refusal(
-                        queue, refusal_kind([r["error"] for r in refused]), refused, str(e))
-                    raise
-                logger.warning("scale-up %s: create on volume %s with %s (cuda %s) refused (%s) "
-                               "— next ask %s on %s", queue, volume, attempt, cuda, e,
-                               attempts[i + 1][1], attempts[i + 1][0])
+                ladders.append(provider.rungs(queue))
+            except ProviderError as e:
+                logger.error("scale-up %s: %s has no ladder: %s", queue, provider.name, e)
+        refused: List[Dict] = []
+        for rung in merge_ladders(ladders):
+            try:
+                launched = by_name[rung.provider].launch(rung, name, env, worker_id)
+            except ProviderError as e:
+                refused.append({"provider": rung.provider, **rung.ask, "error": str(e),
+                                "stock": e.stock})
+                logger.warning("scale-up %s: %s refused %s at $%.4f/hr (%s)", queue,
+                               rung.provider, rung.ask, rung.usd_per_hour, e)
                 continue
-            logger.info("scale-up %s: created pod %s (%s) on %s, volume %s (cuda %s)",
-                        queue, name, pod.get("id"), attempt, volume, cuda)
+            logger.info("scale-up %s: %s launched %s (%s) on %s at $%.4f/hr", queue,
+                        rung.provider, name, launched.id, rung.ask, rung.usd_per_hour)
             self._stats.record_pod_created(queue)
-            rate = pod.get("cost")
-            self._stats.record_worker_created(
-                worker_id, pod["id"], queue, (pod.get("gpu") or {}).get("id"),
-                float(rate) if rate is not None else None)
-            return
+            self._stats.record_worker_created(worker_id, launched.id, queue, launched.gpu_type,
+                                              launched.usd_per_hour, rung.provider)
+            return True
+        if refused:
+            kind = "stock" if all(r["stock"] for r in refused) else "other"
+            self._stats.record_pod_refusal(queue, kind, refused, refused[-1]["error"])
+            logger.error("scale-up %s: every rung refused (%s)", queue, kind)
+        return False

@@ -38,8 +38,11 @@ Our queues are simple queries on the jobs table in our sql database.
 
 ### Workers
 
-The workers are an autoscaled (managed by `src/scaler/autoscaler.py`) group of GPU pods hosted on
-a thid party provider's platform. Currently, we are using RTX PRO 6000s and 5090s on runpod.io.
+The workers are an autoscaled (managed by `src/scaler/autoscaler.py`) group of GPU machines rented
+from third party providers, each behind the same seam (`src/scaler/providers.py`): list, a priced
+ladder, launch, terminate. Currently RTX PRO 6000s and 5090s on runpod.io, and RTX PRO 6000s
+(g7e) on EC2 for the llm queue. A scale-up walks one ladder merged across providers, cheapest
+first, and the first rung that takes the launch wins.
 
 ### Frontend
 

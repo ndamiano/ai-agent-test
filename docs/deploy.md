@@ -209,7 +209,8 @@ every push, because RunPod caches images per host.
 
 ## Autoscaler (queue-driven pods)
 
-With `runpod.enabled` + `runpod.api_key` set and the workqueue on, the control plane runs a scaling
+With a provider enabled (`runpod.enabled` + `runpod.api_key`, `aws.enabled` + `aws.access_key`,
+or both) and the workqueue on, the control plane runs a scaling
 loop (`src/scaler/`): per tick it reaps dead pods and adds at most one pod per queue when the queue
 is backed up. Workers own scale-DOWN: `IDLE_EXIT_SECONDS` (delivered at pod create) is the
 worker's idle window — once every slot has been empty that long since its last job ended, the
@@ -238,6 +239,27 @@ Settings block (`settings.json` → `runpod`, the full key list in `docs/local_d
   (linger tuning: raise for chatty queues, 0 = never exit), `boot_deadline_seconds` (a pod this
   old that no worker has registered from is reaped as wedged). The `queues` dict in `settings.json` replaces the
   default wholesale — carry complete blocks.
+- `aws` — the EC2 provider's own block (key list in `docs/local_dev.md`): credentials, the
+  security group and instance profile, and per queue the `instance_types`, `markets` and `amis`
+  by region. Policy stays in `runpod.queues`; a queue with a block in both is served by both.
+  The IAM user needs `ec2:RunInstances`, `TerminateInstances`, `CancelSpotInstanceRequests`,
+  `DescribeInstances`, `DescribeSpotPriceHistory`, `DescribeInstanceTypeOfferings`,
+  `DescribeSpotInstanceRequests`, `pricing:GetProducts`, and `iam:PassRole` on `gs-gpu-worker`.
+- A scale-up walks ONE ladder. Each provider lists its rungs priced and in its own order of
+  preference (RunPod: per volume, the head card alone then the list, at RunPod's list price;
+  EC2: every zone that offers the type, spot and on-demand, cheapest first), the ladders merge
+  by always taking the cheapest head, and the first rung that takes the launch wins. No provider
+  knows its stock, only its prices, so the cheapest available machine is found by asking. A
+  provider whose prices cannot be read keeps its rungs, last. Every rung refused is one
+  `pod_refusals` row, `stock` only if every refusal was.
+- An EC2 box ends itself (the worker's idle exit powers it off, and it was launched to terminate
+  on shutdown). When the scaler reaps one instead, it cancels the instance's spot request before
+  terminating it, because a request left live holds the spot vCPU quota.
+- A provider that cannot list its machines skips the whole tick: a fleet counted short buys
+  machines it already has.
+- A machine's age is its worker row's `started_at`, so it survives a control-plane restart. A
+  listed machine under the prefix with no row is aged from the tick that first saw it, and a
+  restart only delays reaping it by one `boot_deadline_seconds`.
 - Scale-from-zero fires on ANY pending job with no cooldown. Past zero, a pod is added only when
   it is owed `min_jobs_per_pod` when it lands: the workers on hand (live and booting) eat
   `boot_seconds` ÷ seconds-per-job each while it boots, and what is left splits across the fleet

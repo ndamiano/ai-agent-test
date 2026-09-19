@@ -25,13 +25,20 @@ async def _lifespan(app: FastAPI):
     app.state.db_backup = DbBackup()
     app.state.db_backup.start()
 
-    _rp = settings_manager.get_settings().get("runpod") or {}
+    _settings = settings_manager.get_settings()
+    _rp, _aws = _settings.get("runpod") or {}, _settings.get("aws") or {}
+    _providers = []
     if _rp.get("enabled") and _rp.get("api_key"):
-        app.state.autoscaler = Autoscaler(
-            SqliteStatsSource(), RunPodClient(_rp["api_key"]),
-            settings_manager.get_settings)
+        _providers.append(RunPodProvider(RunPodClient(_rp["api_key"]),
+                                         settings_manager.get_settings))
+    if _aws.get("enabled") and _aws.get("access_key"):
+        _providers.append(Ec2Provider(Ec2Client(_aws["access_key"], _aws["secret_key"]),
+                                      settings_manager.get_settings))
+    if _providers:
+        app.state.autoscaler = Autoscaler(SqliteStatsSource(), _providers,
+                                          settings_manager.get_settings)
         app.state.autoscaler.start()
-        logging.info("RunPod autoscaler started")
+        logging.info("autoscaler started on %s", ", ".join(p.name for p in _providers))
 
     yield
 
@@ -78,6 +85,8 @@ from config.settings_manager import settings_manager
 from workqueue.reaper import Reaper
 from tools.db_backup import DbBackup
 from scaler.autoscaler import Autoscaler
+from scaler.ec2_client import Ec2Client
+from scaler.providers import Ec2Provider, RunPodProvider
 from scaler.runpod_client import RunPodClient
 from scaler.stats import SqliteStatsSource
 

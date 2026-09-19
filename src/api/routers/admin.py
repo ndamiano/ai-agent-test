@@ -27,8 +27,9 @@ _NEXT_LIMIT = 10
 
 def _max_workers(queue: str) -> int:
     """The maximum workers to spin up for a queue"""
-    rp = settings_manager.get_settings().get("runpod") or {}
-    if not rp.get("enabled"):
+    settings = settings_manager.get_settings()
+    rp = settings.get("runpod") or {}
+    if not (rp.get("enabled") or (settings.get("aws") or {}).get("enabled")):
         return 0
     return int((rp.get("queues") or {}).get(queue, {}).get("max_workers", 0))
 

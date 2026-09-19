@@ -85,6 +85,14 @@ class SettingsManager:
                 "tick_seconds": 15,
                 "stale_worker_seconds": 180,
                 "queues": {}
+            },
+            "aws": {
+                "enabled": False,
+                "access_key": "",
+                "secret_key": "",
+                "security_group": "gs-gpu-worker",
+                "instance_profile": "gs-gpu-worker",
+                "queues": {}
             }
         }
 

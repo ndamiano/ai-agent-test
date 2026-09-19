@@ -205,7 +205,7 @@ this box has to add is a URL a pod can reach.
    never registered with PROD inside `boot_deadline_seconds` — a pod that registered here dies
    at exactly five minutes. Set `runpod.pod_prefix` to something else (`gsdev`), and then prod
    cannot see these pods and this scaler cannot see prod's.
-4. Restart `run.py`; the log says `RunPod autoscaler started`. Then build exactly as usual —
+4. Restart `run.py`; the log says `autoscaler started on runpod`. Then build exactly as usual —
    `python -m maestro.codegen.run "<ask>"`, or a pinned prompt through `run_build`. Scale-from-
    zero fires on the first pending job (the `min_jobs_per_pod` rule only gates a second pod).
    Rent → claim is ~3 min on a warm image; a stock-out shows as `scale-up llm: ... refused`
@@ -214,6 +214,11 @@ this box has to add is a URL a pod can reach.
 The pod's own view: `GET /pods/<id>` on the RunPod API (`scaler.runpod_client`) has its env,
 uptime and GPU utilisation, and the control-plane log shows its claims and heartbeats arriving
 from a RunPod address.
+
+The same from EC2: add the `aws` block (below) with `enabled: true`, keep the llm policy block
+in `runpod.queues` (it needs no `template_id` or cards when `runpod.enabled` is false), and the
+log says `autoscaler started on aws`. A box is ~3 min from launch to its first claim and ends
+itself on idle; `pod_prefix` keeps this scaler and prod's apart in a shared account the same way.
 
 ---
 
@@ -331,7 +336,8 @@ only when RunPod refuses that create, since the cards are not substitutes. Which
 records its own request records the first list entry forever (measured 2026-08-01: 879 prod jobs
 stamped 5090, the bill entirely RTX PRO 4500).
 
-A pod's price is RunPod's own (`workers.usd_per_hour`, the pod's `costPerHr`, written at create),
+A pod's price is the provider's own (`workers.usd_per_hour`, written at create: RunPod's
+`costPerHr`, or the EC2 rung's spot or on-demand price),
 and it is what every job that pod runs debits (`docs/finance_information.md`); there is no rate
 table to keep. The admin fleet view shows it beside each queue's provider stock-outs
 (`pod_refusals`, see `docs/deploy.md` "Autoscaler"): the outage under way, the count over the last
@@ -340,6 +346,16 @@ nothing when zero.
 
 `llm.model` must be what the engine answers to: it reaches the pod as `LLM_MODEL`, and the
 autoscaled llm image serves `pennyroyal` and refuses to boot under any other name.
+
+### `aws`
+
+The scaler's second provider (`scaler.ec2_client`, `docs/deploy.md` "Autoscaler"): `enabled`,
+`access_key`, `secret_key`, `security_group` and `instance_profile` (both `gs-gpu-worker`, by
+name, in the default VPC), and `queues.<name>` launch blocks: `instance_types`, `markets`
+(`spot`, `on-demand`), and `amis` by region. Only a region with an ami is priced, launched in
+or listed. Scaling policy is not here: a queue scales by its `runpod.queues` block whichever
+provider its machines come from. `workers.source` says which provider a row's machine is on, and
+an EC2 row's `pod_id` is `<region>/<instance id>`.
 
 ### `payments`
 

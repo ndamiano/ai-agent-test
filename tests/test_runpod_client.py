@@ -58,6 +58,20 @@ def test_create_pod_refused_on_every_card_raises_every_refusal():
         c.create_pod("n", "tpl", ["a", "b"], "vol", {}, "")
 
 
+def test_gpu_prices_reads_the_list_price_of_the_cloud_asked_for_and_skips_unpriced_cards():
+    c = _client()
+    c.session.post.return_value = _resp(200, {"data": {"gpuTypes": [
+        {"id": "NVIDIA GeForce RTX 5090", "communityPrice": 0.69},
+        {"id": "unlisted", "communityPrice": None}]}})
+    assert c.gpu_prices("COMMUNITY") == {"NVIDIA GeForce RTX 5090": 0.69}
+    assert c.session.post.call_args.args[0] == "https://api.runpod.io/graphql"
+    assert c.session.post.call_args.kwargs["json"] == {
+        "query": "query { gpuTypes { id communityPrice } }"}
+    c.session.post.return_value = _resp(200, {"errors": [{"message": "bad field"}]})
+    with pytest.raises(RunPodError, match="bad field"):
+        c.gpu_prices()
+
+
 def test_list_pods_unwraps_the_envelope():
     c = _client()
     c.session.get.return_value = _resp(200, {"pods": [{"id": "p1"}]})

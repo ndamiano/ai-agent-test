@@ -83,8 +83,10 @@ def stale_workers(queue: str, staleness_seconds: float, boot_deadline_seconds: f
 def terminated_workers_with_pods(queue: str) -> List[Dict]:
     with platform_db() as conn:
         rows = conn.execute(
-            "SELECT * FROM workers WHERE queue = ? AND terminated_at IS NOT NULL "
-            "AND pod_id IS NOT NULL", (queue,)).fetchall()
+            "SELECT * FROM workers w WHERE queue = ? AND terminated_at IS NOT NULL "
+            "AND pod_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM workers later_life "
+            "WHERE later_life.pod_id = w.pod_id AND later_life.started_at > w.started_at)",
+            (queue,)).fetchall()
     return [dict(r) for r in rows]
 
 

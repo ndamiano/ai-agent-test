@@ -74,6 +74,26 @@ def test_a_deregistered_worker_stays_terminated_when_it_claims_again():
     assert src.live_workers("mesh", 60) == []
 
 
+def test_a_reused_pod_id_is_terminated_only_while_its_latest_life_is():
+    src = SqliteStatsSource()
+    workers.worker_created("w-tue", "qwieur", "mesh", None, 0.99)
+    workers.worker_created("w-other", "p2", "mesh", None, 0.99)
+    for worker in ("w-tue", "w-other"):
+        workers.worker_seen(worker, "mesh")
+        src.mark_worker_terminated(worker)
+    _backdate_worker("w-tue", 86400)
+    assert sorted(src.terminated_workers_with_pods("mesh")) == [("w-other", "p2"),
+                                                                 ("w-tue", "qwieur")]
+
+    workers.worker_created("w-wed", "qwieur", "mesh", None, 0.99)
+    assert src.terminated_workers_with_pods("mesh") == [("w-other", "p2")]
+
+    workers.worker_seen("w-wed", "mesh")
+    src.mark_worker_terminated("w-wed")
+    assert sorted(src.terminated_workers_with_pods("mesh")) == [("w-other", "p2"),
+                                                                 ("w-wed", "qwieur")]
+
+
 def test_a_worker_keeps_the_pod_the_scaler_created_it_on():
     workers.worker_created("w1", "p1", "mesh", None, None)
     assert workers.worker_seen("w1", "mesh") is True

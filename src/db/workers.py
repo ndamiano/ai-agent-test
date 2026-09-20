@@ -92,7 +92,7 @@ def pod_ledger(since: float) -> List[Dict]:
     """Returns each pod life (worker row) created since `since`, with its jobs and customer spend."""
     with platform_db() as conn:
         rows = conn.execute(
-            "SELECT w.id AS worker_id, w.pod_id, w.queue, w.gpu_type, w.usd_per_hour, "
+            "SELECT w.id AS worker_id, w.pod_id, w.source, w.queue, w.gpu_type, w.usd_per_hour, "
             "w.started_at, w.terminated_at, "
             "COUNT(j.id) AS jobs, "
             "COALESCE(SUM(j.status = 'failed'), 0) AS failed, "

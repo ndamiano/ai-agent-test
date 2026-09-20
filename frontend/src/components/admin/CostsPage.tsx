@@ -9,7 +9,7 @@ const usd = (n: number | null): string => n == null ? '—' : fmtUsd(n)
 const signedUsd = (n: number | null): string => n == null ? '—' : `${n < 0 ? '−' : ''}${fmtUsd(Math.abs(n))}`
 const pct = (n: number | null): string => n == null ? '—' : `${Math.round(n * 100)}%`
 const util = (p: CostPod): number | null => p.billed_seconds ? p.exec_seconds / p.billed_seconds : null
-const margin = (p: CostPod): number | null => p.runpod_usd == null ? null : p.customer_usd - p.runpod_usd
+const margin = (p: CostPod): number | null => p.provider_usd == null ? null : p.customer_usd - p.provider_usd
 
 interface Column {
     key: string
@@ -22,13 +22,13 @@ interface Column {
 const COLUMNS: Column[] = [
     { key: 'pod', label: 'pod', value: p => p.pod_id,
       show: p => <>{p.pod_id}{!p.tracked && <span className="text-slate"> ghost</span>}</> },
-    { key: 'runpod', label: 'runpod', title: "RunPod's bill for this pod", value: p => p.runpod_usd,
-      show: p => usd(p.runpod_usd) },
+    { key: 'cost', label: 'cost', title: "the provider's bill for this pod; EC2 is its launch rate over its lifetime",
+      value: p => p.provider_usd, show: p => usd(p.provider_usd) },
     { key: 'billed', label: 'billed', title: 'what customers were charged for its jobs', value: p => p.customer_usd,
       show: p => fmtUsd(p.customer_usd) },
     { key: 'jobs', label: 'jobs', value: p => p.jobs, show: p => p.jobs },
     { key: 'util', label: 'util', title: 'job time ÷ billed GPU time', value: util, show: p => pct(util(p)) },
-    { key: 'margin', label: 'margin', title: 'billed − runpod', value: margin,
+    { key: 'margin', label: 'margin', title: 'billed − cost', value: margin,
       show: p => { const m = margin(p); return <span className={m != null && m < 0 ? 'text-wait' : ''}>{signedUsd(m)}</span> } },
 ]
 
@@ -45,7 +45,7 @@ export const sortPods = (pods: CostPod[], { key, desc }: Sort): CostPod[] => {
 }
 
 export const CostSummary: React.FC<{ pods: CostPod[]; reachable: boolean }> = ({ pods, reachable }) => {
-    const runpod = pods.reduce((a, p) => a + (p.runpod_usd ?? 0), 0)
+    const cost = pods.reduce((a, p) => a + (p.provider_usd ?? 0), 0)
     const billed = pods.reduce((a, p) => a + p.customer_usd, 0)
     const billedSecs = pods.reduce((a, p) => a + (p.billed_seconds ?? 0), 0)
     const worked = pods.reduce((a, p) => a + p.exec_seconds, 0)
@@ -53,9 +53,9 @@ export const CostSummary: React.FC<{ pods: CostPod[]; reachable: boolean }> = ({
     const ghosts = pods.filter(p => !p.tracked)
     return (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-            <Stat label="runpod" value={reachable ? fmtUsd(runpod) : '—'} />
+            <Stat label="cost" value={reachable ? fmtUsd(cost) : '—'} hint="RunPod's ledger plus EC2 at launch rate" />
             <Stat label="billed" value={fmtUsd(billed)} hint="what customers were charged" />
-            <Stat label="margin" value={reachable ? signedUsd(billed - runpod) : '—'} />
+            <Stat label="margin" value={reachable ? signedUsd(billed - cost) : '—'} />
             <Stat label="pods" value={`${pods.length}${ghosts.length ? ` (${ghosts.length} ghost)` : ''}`}
                 hint="ghost: billed by RunPod, never named by a worker row" />
             <Stat label="jobs" value={jobs} />
@@ -83,7 +83,7 @@ export const PodTable: React.FC<{ pods: CostPod[]; sort: Sort; onSort: (s: Sort)
             <tbody className="text-bone">
                 {sortPods(pods, sort).map(p => (
                     <tr key={p.worker_id ?? `ghost-${p.pod_id}`} className={p.tracked ? '' : 'text-wait'}
-                        title={p.tracked ? `${p.queue} · ${p.gpu_type ? shortGpu(p.gpu_type) : '?'}` : undefined}>
+                        title={p.tracked ? `${p.source} · ${p.queue} · ${p.gpu_type ? shortGpu(p.gpu_type) : '?'}` : undefined}>
                         {COLUMNS.map((c, i) => (
                             <td key={c.key} className={`py-0.5 ${i === 0 ? 'pr-3' : 'pl-3 text-right'}`}>{c.show(p)}</td>
                         ))}
@@ -96,7 +96,7 @@ export const PodTable: React.FC<{ pods: CostPod[]; sort: Sort; onSort: (s: Sort)
 
 const CostsPage: React.FC = () => {
     const [days, setDays] = useState(7)
-    const [sort, setSort] = useState<Sort>({ key: 'runpod', desc: true })
+    const [sort, setSort] = useState<Sort>({ key: 'cost', desc: true })
     const [costs, setCosts] = useState<AdminCosts | null>(null)
     const [busy, setBusy] = useState(false)
 

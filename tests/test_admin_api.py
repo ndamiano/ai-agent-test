@@ -157,17 +157,17 @@ def test_costs_split_a_reused_pod_id_into_its_lives(app_client, monkeypatch):
     tracked = {p["worker_id"]: p for p in body["pods"] if p["tracked"]}
     assert set(tracked) == {"w-tue", "w-wed"}
     wed = tracked["w-wed"]
-    assert (wed["pod_id"], wed["runpod_usd"], wed["disk_usd"]) == ("qwieur", 0.6, 0.1)
+    assert (wed["pod_id"], wed["provider_usd"], wed["disk_usd"]) == ("qwieur", 0.6, 0.1)
     assert wed["billed_seconds"] == pytest.approx(1800.0)
     assert (wed["jobs"], wed["failed"], wed["exec_seconds"]) == (3, 1, 468.0)
     assert wed["customer_usd"] == round(calculate_job_cost(360.0, 1.0) / 1e6, 4)
     tue = tracked["w-tue"]
-    assert (tue["pod_id"], tue["runpod_usd"], tue["jobs"]) == ("qwieur", 2.0, 1)
+    assert (tue["pod_id"], tue["provider_usd"], tue["jobs"]) == ("qwieur", 2.0, 1)
     assert tue["billed_seconds"] == pytest.approx(3600.0)
     assert tue["customer_usd"] == round(calculate_job_cost(100.0, 2.0) / 1e6, 4)
 
     ghosts = {p["pod_id"]: p for p in body["pods"] if not p["tracked"]}
-    assert {pid: g["runpod_usd"] for pid, g in ghosts.items()} == {"boot-looper": 1.5,
+    assert {pid: g["provider_usd"] for pid, g in ghosts.items()} == {"boot-looper": 1.5,
                                                                    "qwieur": 0.25}
     assert all(g["worker_id"] is None and g["jobs"] == 0 for g in ghosts.values())
     assert body["games"]["n"] == 1
@@ -189,9 +189,34 @@ def test_costs_without_a_reachable_ledger_still_reports_our_half(app_client, mon
                           headers={"Authorization": f"Bearer {token}"}).json()
     assert (body["runpod_reachable"], body["days"]) == (False, 7)
     [pod] = body["pods"]
-    assert (pod["worker_id"], pod["pod_id"], pod["runpod_usd"]) == ("w1", "p1", None)
+    assert (pod["worker_id"], pod["pod_id"], pod["provider_usd"]) == ("w1", "p1", None)
     assert pod["billed_seconds"] is None
     assert (pod["jobs"], pod["exec_seconds"], pod["customer_usd"]) == (1, 60.0, 0.0)
+
+
+def test_costs_price_an_ec2_life_at_its_launch_rate_with_no_ledger(app_client, monkeypatch):
+    from api.routers import admin
+
+    now = time.time()
+    monkeypatch.setattr(admin, "_ledger", lambda _since, _now: [])
+    monkeypatch.setattr(admin.time, "time", lambda: now)
+    admin._cost_cache.clear()
+    lives = {"w-done": ("eu-north-1/i-done", 1.20, now - 7200, now - 5400),
+             "w-live": ("us-west-2/i-live", 3.36, now - 900, None)}
+    for worker, (machine, rate, started, ended) in lives.items():
+        workers.worker_created(worker, machine, "llm", "g7e.2xlarge", rate, source="aws")
+        with connection.platform_db() as conn:
+            conn.execute("UPDATE workers SET started_at = ?, terminated_at = ? WHERE id = ?",
+                         (started, ended, worker))
+
+    token = _token("root3", "admin")
+    body = app_client.get("/api/admin/costs",
+                          headers={"Authorization": f"Bearer {token}"}).json()
+    pods = {p["worker_id"]: p for p in body["pods"]}
+    assert {w: (p["source"], p["pod_id"], p["provider_usd"], p["disk_usd"], p["billed_seconds"])
+            for w, p in pods.items()} == {
+        "w-done": ("aws", "eu-north-1/i-done", 0.6, 0.0, pytest.approx(1800.0)),
+        "w-live": ("aws", "us-west-2/i-live", 0.84, 0.0, pytest.approx(900.0))}
 
 
 def test_ledger_reads_runpods_hour_buckets_and_fails_soft(monkeypatch):

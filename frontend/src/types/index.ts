@@ -124,13 +124,14 @@ export interface QueueRow {
 export interface CostPod {
     worker_id: string | null
     pod_id: string
+    source: string | null
     tracked: boolean
     queue: string | null
     gpu_type: string | null
     usd_per_hour: number | null
     started_at: number | null
     terminated_at: number | null
-    runpod_usd: number | null
+    provider_usd: number | null
     disk_usd: number | null
     billed_seconds: number | null
     jobs: number

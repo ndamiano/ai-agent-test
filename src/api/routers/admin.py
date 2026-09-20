@@ -167,14 +167,18 @@ def _attribute(records: List[Dict[str, Any]],
     by_life: Dict[str, Spend] = {}
     ghosts: Dict[str, Spend] = {}
     for r in records:
-        # RunPod reuses pod ids, so an hour belongs to the life that last started before it ended.
-        owner = next((wid for started, wid in reversed(lives.get(r["pod_id"], []))
-                      if started < r["end"]), None)
+        lives_newest_first = reversed(lives.get(r["pod_id"], []))
+        owner = next((wid for started, wid in lives_newest_first if started < r["end"]), None)
         slot = (by_life.setdefault(owner, {"total": 0.0, "gpu": 0.0, "disk": 0.0}) if owner
                 else ghosts.setdefault(r["pod_id"], {"total": 0.0, "gpu": 0.0, "disk": 0.0}))
         for k in slot:
             slot[k] += r[k]
     return by_life, ghosts
+
+
+def _launch_rate_over_lifetime(pod: Dict[str, Any], now: float) -> Spend:
+    usd = pod["usd_per_hour"] * ((pod["terminated_at"] or now) - pod["started_at"]) / 3600.0
+    return {"total": usd, "gpu": usd, "disk": 0.0}
 
 
 def _pod_row(pod: Dict[str, Any], spend: Optional[Spend]) -> Dict[str, Any]:
@@ -183,15 +187,15 @@ def _pod_row(pod: Dict[str, Any], spend: Optional[Spend]) -> Dict[str, Any]:
     return {
         "worker_id": pod.get("worker_id"),
         "pod_id": pod["pod_id"],
+        "source": pod.get("source"),
         "tracked": pod.get("worker_id") is not None,
         "queue": pod.get("queue"),
         "gpu_type": pod.get("gpu_type"),
         "usd_per_hour": rate,
         "started_at": pod.get("started_at"),
         "terminated_at": pod.get("terminated_at"),
-        "runpod_usd": round(spend["total"], 4) if spend else None,
+        "provider_usd": round(spend["total"], 4) if spend else None,
         "disk_usd": round(spend["disk"], 4) if spend else None,
-        # RunPod's v2 ledger bills money only.
         "billed_seconds": spend["gpu"] / rate * 3600.0 if spend and rate else None,
         "jobs": pod.get("jobs", 0),
         "failed": pod.get("failed", 0),
@@ -225,7 +229,8 @@ async def get_costs(days: int = 7, _: User = Depends(require_admin)) -> Dict[str
     since = now - days * _DAY_SECONDS
     records = await asyncio.to_thread(_ledger, since, now)
     by_life, ghosts = _attribute(records or [], workers.pod_lives())
-    pods = [_pod_row(p, by_life.get(p["worker_id"])) for p in workers.pod_ledger(since)]
+    pods = [_pod_row(p, _launch_rate_over_lifetime(p, now) if p["source"] == "aws" else by_life.get(p["worker_id"]))
+            for p in workers.pod_ledger(since)]
     pods += [_pod_row({"pod_id": pid}, spend)
              for pid, spend in sorted(ghosts.items(), key=lambda kv: -kv[1]["total"])]
 

@@ -242,9 +242,10 @@ Settings block (`settings.json` → `runpod`, the full key list in `docs/local_d
 - `aws` — the EC2 provider's own block (key list in `docs/local_dev.md`): credentials, the
   security group and instance profile, and per queue the `instance_types`, `markets` and `amis`
   by region. Policy stays in `runpod.queues`; a queue with a block in both is served by both.
-  The IAM user needs `ec2:RunInstances`, `TerminateInstances`, `CancelSpotInstanceRequests`,
-  `DescribeInstances`, `DescribeSpotPriceHistory`, `DescribeInstanceTypeOfferings`,
-  `DescribeSpotInstanceRequests`, `pricing:GetProducts`, and `iam:PassRole` on `gs-gpu-worker`.
+  The IAM user needs `ec2:RunInstances`, `CreateTags`, `TerminateInstances`,
+  `CancelSpotInstanceRequests`, `DescribeInstances`, `DescribeSpotPriceHistory`,
+  `DescribeInstanceTypeOfferings`, `DescribeSpotInstanceRequests`, `pricing:GetProducts`, and
+  `iam:PassRole` on `gs-gpu-worker`.
 - A scale-up walks ONE ladder. Each provider lists its rungs priced and in its own order of
   preference (RunPod: per volume, the head card alone then the list, at RunPod's list price;
   EC2: every zone that offers the type, spot and on-demand, cheapest first), the ladders merge

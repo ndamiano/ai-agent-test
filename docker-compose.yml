@@ -23,6 +23,7 @@ services:
       # Demo snapshots (runtime/demos/<id>, served at /play/demos) — copied once by
       # `python -m maestro.demos snapshot`, untouched by any later build of the same run.
       - maestro-demos:/app/runtime/demos
+      - maestro-shares:/app/runtime/shares
       # settings.json is dockerignored (never baked into the image), so structured config the
       # env can't express (runpod.queues) rides a host bind — create the file before first up.
       - ./src/config/settings.json:/app/src/config/settings.json
@@ -38,3 +39,4 @@ volumes:
   maestro-data:
   maestro-games:
   maestro-demos:
+  maestro-shares:

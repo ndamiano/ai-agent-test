@@ -23,15 +23,14 @@ GRANT_TTL_SECONDS = 4 * 3600
 MAX_LIVE = 10_000
 
 _lock = threading.Lock()
-SURFACES = ("games", "demos")
+SURFACES = ("games", "demos", "shares")
 
 _handoffs: Dict[str, Tuple[str, float]] = {}  # token -> (target, expires_at)
 _grants: Dict[str, Tuple[str, float]] = {}
 
 
 def target(surface: str, slug: str) -> str:
-    """What a token opens: one folder under /play — `games/<run_id>` (an owner's staged build)
-    or `demos/<run_id>` (a public snapshot). The two never share a grant."""
+    """What a token opens: one folder under /play, under one of SURFACES. No two share a grant."""
     if surface not in SURFACES:
         raise ValueError(surface)
     return f"{surface}/{slug}"

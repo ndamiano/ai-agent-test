@@ -76,7 +76,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from api.routers import (admin, billing, demos, events, games, grades, websocket,
+from api.routers import (admin, billing, demos, events, games, grades, shares, websocket,
                          workqueue)
 from api.websocket.event_bus import event_bus
 from auth.deps import install_auth
@@ -104,6 +104,7 @@ app.include_router(games.router, prefix="/api/games", tags=["games"])
 app.include_router(events.router, prefix="/api/events", tags=["events"])
 # Public by design (auth/deps.py PUBLIC_PREFIXES) — the landing page's demo games.
 app.include_router(demos.router, prefix="/api/demos", tags=["demos"])
+app.include_router(shares.router, prefix="/api/shares", tags=["shares"])
 app.include_router(billing.router, prefix="/api/billing", tags=["billing"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(grades.router, prefix="/api/admin/grades", tags=["admin"])
@@ -113,6 +114,7 @@ app.include_router(workqueue.router, prefix="/worker", tags=["workqueue"])
 # Serve the built frontend same-origin (one process, one Funnel port, no CORS). Mounted LAST so
 # the API routers above win; skipped when dist/ is absent (dev runs the Vite server instead).
 import re
+from html import escape
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -121,6 +123,7 @@ from fastapi.staticfiles import StaticFiles
 
 from auth import playgrants
 from auth.deps import PLAY_COOKIE
+from maestro import shares as share_store
 
 # Serve staged games so the SPA can open a built one (mounted before the SPA catch-all).
 # /play runs MODEL-AUTHORED JS, so every response carries a CSP that pins scripted loads and network
@@ -246,11 +249,33 @@ async def play_index(surface: str, run_id: str):
 if _runtime.is_dir():
     app.mount("/play", StaticFiles(directory=_runtime, html=True), name="play")
 
+_OG_META = re.compile(r'\s*<meta (?:property="og:(?:title|url|image)"|name="twitter:image")[^>]*>')
+
+
+def share_card(html: str, share_id: str, base: str) -> str:
+    base = base.rstrip("/")
+    title = escape(share_store.meta(share_id).get("title") or "A GameSummoner game", quote=True)
+    tags = [f'<meta property="og:title" content="{title} — made with GameSummoner" />',
+            f'<meta property="og:url" content="{base}/g/{share_id}" />']
+    if share_store.thumb(share_id):
+        image = f"{base}/api/shares/{share_id}/thumb"
+        tags += [f'<meta property="og:image" content="{image}" />',
+                 f'<meta name="twitter:image" content="{image}" />']
+    return _OG_META.sub("", html).replace("</head>", "    " + "\n    ".join(tags) + "\n  </head>", 1)
+
+
 _frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if _frontend_dist.is_dir():
     from fastapi.responses import FileResponse
 
     _dist_root = _frontend_dist.resolve()
+
+    @app.get("/g/{share_id}", include_in_schema=False)
+    async def shared_game_page(share_id: str, request: Request):
+        html = (_dist_root / "index.html").read_text(encoding="utf-8")
+        if not share_store.exists(share_id):
+            return HTMLResponse(html, status_code=404)
+        return HTMLResponse(share_card(html, share_id, _play_settings()[1] or str(request.base_url)))
 
     # The SPA routes by URL (/game/<id>, /settings, …), so a deep link or reload must get
     # index.html back, not a 404 — a plain StaticFiles mount only serves paths that exist on disk.

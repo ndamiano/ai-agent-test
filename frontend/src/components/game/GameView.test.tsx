@@ -20,7 +20,7 @@ const DESIGN = 'RACE LOOP: four snails crawl a lane each day.\n\nDAY CYCLE: the 
 
 const detail = (over: Partial<GameDetail> = {}): GameDetail => ({
     run_id: 'r1', ask: ASK, prompt: DESIGN, title: '', built: false, building: false, status: 'idle',
-    has_game: false, budget_pct_remaining: null, ...over,
+    has_game: false, budget_pct_remaining: null, share_id: null, ...over,
 })
 
 const mount = (first: GameDetail, ...later: GameDetail[]) => {

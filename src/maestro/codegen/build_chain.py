@@ -12,6 +12,7 @@ from typing import Dict, Optional
 
 from db import errors, games, jobs
 from llm_clients.connector import get_connector
+from maestro import shares
 from maestro.codegen import (
     artifact_screen,
     build_state,
@@ -263,6 +264,7 @@ def _finalize(run_id: str, rs: RunState, cursor: BuildCursor, ok: bool,
         path, violation = held
         log_violation(violation, run_id=run_id, source=f"artifact:{path}")
         games.set_status(run_id, "held")
+        shares.unshare(run_id)
         if cursor.build_id:
             games.build_finished(cursor.build_id, "held", steps=cursor.step)
         logger.warning("build %s held: artifact screen hit in %s", run_id, path)

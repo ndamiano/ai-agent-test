@@ -1,4 +1,4 @@
-import type { AdminAnalytics, AdminCosts, AdminQueues, AdminViolation, Demo, DurableEventRow, Game, GameAsset, GameDetail, Grade, GradeTarget } from '../types'
+import type { AdminAnalytics, AdminCosts, AdminQueues, AdminViolation, Demo, DurableEventRow, Game, GameAsset, GameDetail, Grade, GradeTarget, SharedGame } from '../types'
 
 let authToken: string | null = localStorage.getItem('maestro_token')
 let onUnauthorized: (() => void) | null = null
@@ -152,6 +152,14 @@ export const api = {
         request<Demo[]>('/api/demos'),
     demoPlaySession: (runId: string) =>
         request<{ url: string; origin: string }>(`/api/demos/${runId}/play-session`, { method: 'POST' }),
+    getShare: (shareId: string) =>
+        request<SharedGame>(`/api/shares/${shareId}`),
+    sharePlaySession: (shareId: string) =>
+        request<{ url: string; origin: string }>(`/api/shares/${shareId}/play-session`, { method: 'POST' }),
+    shareGame: (runId: string) =>
+        request<{ share_id: string }>(`/api/games/${runId}/share`, { method: 'POST' }),
+    unshareGame: (runId: string) =>
+        request<{ share_id: null }>(`/api/games/${runId}/share`, { method: 'DELETE' }),
     // Make a new game: the prompt becomes the run and the build starts. Nothing exists server-side
     // until this call, so an abandoned box leaves nothing behind.
     createGame: (prompt: string) =>

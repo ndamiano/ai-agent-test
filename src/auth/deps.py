@@ -24,7 +24,7 @@ PUBLIC_PATHS = {"/", "/auth/login", "/auth/signup", "/auth/forgot", "/auth/reset
                 "/api/billing/webhook", "/api/events/landing", "/handoff"}
 # The landing page's demo surface: list + per-game session mint, both read-only and limited
 # server-side to the owner-curated `demo_games` list (routers/demos.py).
-PUBLIC_PREFIXES = ("/api/demos",)
+PUBLIC_PREFIXES = ("/api/demos", "/api/shares")
 if os.getenv("MAESTRO_DEV") == "1":
     PUBLIC_PATHS |= {"/docs", "/redoc", "/openapi.json"}
 

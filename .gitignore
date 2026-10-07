@@ -36,6 +36,7 @@ runs/
 # Staged games (runtime/games/<run_id>/) — local build output, republished by staging on demand.
 runtime/games/
 runtime/demos/
+runtime/shares/
 
 # node deps (runtime/decimate.mjs: gltf-transform, meshoptimizer)
 node_modules/

@@ -33,6 +33,7 @@ from maestro.codegen.assets import (
     read_manifest,
     regenerate_asset,
 )
+from maestro import shares
 from maestro.codegen.run import create_run, propose_prompt, set_prompt
 from maestro.codegen.staging import (
     game_dir,
@@ -189,6 +190,7 @@ async def get_game(run_id: str, user: User = Depends(get_current_user)):
         # Whether a previous attempt left files behind — what the from-scratch build would discard.
         "has_game": has_authored_files(state.run_dir),
         "credits_spent": row.get("credits_spent", 0),
+        "share_id": shares.share_id_of(run_id),
         # Compute budget as a fraction remaining (0..1), never raw spend — spent_micros is
         # deliberately not surfaced (it would expose actual GPU spend). None ⇒ uncharged, no bar.
         "budget_pct_remaining": _budget_pct(row, run_id),
@@ -214,6 +216,25 @@ async def play_session(run_id: str, user: User = Depends(get_current_user)):
     if token is None:
         raise HTTPException(status_code=429, detail="too many open sessions — try again shortly")
     return {"url": f"{origin}/handoff?t={token}", "origin": origin}
+
+
+@router.post("/{run_id}/share", response_model=Dict)
+async def share_game(run_id: str, user: User = Depends(get_current_user)):
+    _require_state(run_id, user)
+    _require_not_held(run_id)
+    if (games.game(run_id) or {}).get("status") == "revoked":
+        raise HTTPException(status_code=410, detail="this game was refunded and revoked")
+    if not _built(run_id):
+        raise HTTPException(status_code=409, detail="not built yet")
+    await asyncio.to_thread(archive.ensure_local, run_id)
+    return {"share_id": await asyncio.to_thread(shares.share, run_id)}
+
+
+@router.delete("/{run_id}/share", response_model=Dict)
+async def unshare_game(run_id: str, user: User = Depends(get_current_user)):
+    _require_state(run_id, user)
+    await asyncio.to_thread(shares.unshare, run_id)
+    return {"share_id": None}
 
 
 def _budget_pct(row: Dict, run_id: str) -> Optional[float]:

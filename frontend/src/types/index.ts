@@ -26,6 +26,7 @@ export interface GameDetail {
     // Compute budget for the numberless bar: fraction remaining, 0..1, or null when the game is
     // uncharged (no bar). Raw spend — especially spent_micros — is deliberately never surfaced.
     budget_pct_remaining: number | null
+    share_id: string | null
 }
 
 // One row of the durable build/spec event log (GET /api/games/:id/events). Written by the backend's
@@ -210,6 +211,12 @@ export interface GradeTarget {
     run_id: string
     request: string
     previous: number
+}
+
+export interface SharedGame {
+    share_id: string
+    title: string
+    thumb_url: string | null
 }
 
 export interface Demo {

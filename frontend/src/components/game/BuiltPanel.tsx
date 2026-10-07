@@ -8,6 +8,7 @@ import { Sigil } from '../ui/Sigil'
 import { AssetGallery } from './AssetGallery'
 import { FixNote } from './FixNote'
 import { PromptBox } from './PromptBox'
+import { ShareLink } from './ShareLink'
 import { useAssetBlob } from './useAssets'
 
 // The staged game itself is the largest thing on the screen. Before Play it shows its own first
@@ -111,6 +112,7 @@ export const BuiltPanel: React.FC<{
             </div>
 
             <div className="flex flex-col gap-6 min-w-0">
+                <ShareLink runId={runId} initial={detail.share_id} />
                 {budget != null && (
                     <section className="flex flex-col gap-2">
                         <Meter value={budget} label="Mana left" />

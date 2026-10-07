@@ -27,7 +27,7 @@ can't express) is editable without a rebuild — but the file must exist before 
 
 ## The data invariant (critical)
 
-Durable state lives on **three named Docker volumes**, all outside the rsync'd source tree:
+Durable state lives on **four named Docker volumes**, all outside the rsync'd source tree:
 
 - `maestro-data` → `/data`: `runs/` (via `WORKING_DIRECTORY=/data`) + `auth.db` (accounts, credit
   ledger) + `platform.db` (games, builds, jobs, events) (via `MAESTRO_DATA_DIR=/data`, set in
@@ -36,8 +36,10 @@ Durable state lives on **three named Docker volumes**, all outside the rsync'd s
 - `maestro-demos` → `/app/runtime/demos`: the landing page's demo snapshots, served at
   `/play/demos`. A snapshot is a copy taken once; a rebuild, fix or change of the same run
   restages `runtime/games` and leaves the demo as it was.
+- `maestro-shares` → `/app/runtime/shares`: games their owners shared, served at `/play/shares`
+  and linked as `/g/<share_id>`. Frozen the same way; the owner refreshes or removes them.
 
-Both survive image rebuilds and `deploy.sh` runs. Never point `WORKING_DIRECTORY` or
+All survive image rebuilds and `deploy.sh` runs. Never point `WORKING_DIRECTORY` or
 `MAESTRO_DATA_DIR` off `/data`, and never `docker volume rm` any of them — that wipes accounts and
 games.
 

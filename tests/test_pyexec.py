@@ -107,6 +107,42 @@ for what, thunk in [("open", lambda: open("/etc/passwd")),
     assert out.stdout.count("blocked") == 3
 
 
+RAW_SYSCALLS = {
+    "creat": "85, outside_new, 0o644",
+    "truncate": "76, outside_old, 0",
+    "io_uring_setup": "425, 1, ctypes.byref((ctypes.c_char * 120)())",
+    "utimensat": "280, -100, outside_old, None, 0",
+    "setxattr": "188, outside_old, b'user.x', b'1', 1, 0",
+    "kill_parent": "62, os.getppid(), 0",
+    "tgkill_parent": "234, os.getppid(), os.getppid(), 0",
+}
+
+
+def test_the_filter_refuses_raw_syscalls_that_reach_a_path_or_another_process(
+        tmp_path, tools, monkeypatch):
+    monkeypatch.setattr(runner, "check", lambda code: None)
+    outside_old = tmp_path / "outside.txt"
+    outside_old.write_text("precious")
+    outside_new = tmp_path / "escaped.txt"
+    calls = "\n".join(f'    ("{name}", lambda: libc.syscall({args})),'
+                      for name, args in RAW_SYSCALLS.items())
+    out = runner.run(f'''
+import sys
+ctypes = sys.modules["maestro.codegen.pyexec.seccomp"].ctypes
+os = sys.modules["random"]._os
+libc = ctypes.CDLL(None, use_errno=True)
+outside_new, outside_old = {str(outside_new).encode()!r}, {str(outside_old).encode()!r}
+for name, call in [
+{calls}
+]:
+    print(name, "refused" if call() == -1 and ctypes.get_errno() == 1 else "ALLOWED")
+''', tools)
+    assert sorted(out.stdout.split()) == sorted(
+        word for name in RAW_SYSCALLS for word in (name, "refused")), out.stdout
+    assert not outside_new.exists()
+    assert outside_old.read_text() == "precious"
+
+
 def test_the_environment_carries_nothing_of_ours(tmp_path, tools, monkeypatch):
     monkeypatch.setattr(runner, "check", lambda code: None)
     monkeypatch.setenv("WORKER_TOKEN", "a-real-secret")

@@ -45,7 +45,16 @@ DENIED_X86_64 = {
     258: "mkdirat", 84: "rmdir", 86: "link", 265: "linkat", 88: "symlink", 266: "symlinkat",
     90: "chmod", 268: "fchmodat", 92: "chown", 260: "fchownat", 105: "setuid", 106: "setgid",
     308: "setns", 272: "unshare", 313: "finit_module", 175: "init_module",
-    319: "memfd_create", 447: "memfd_secret",
+    319: "memfd_create", 447: "memfd_secret", 85: "creat", 76: "truncate",
+    425: "io_uring_setup", 426: "io_uring_enter", 427: "io_uring_register",
+    303: "name_to_handle_at", 304: "open_by_handle_at", 134: "uselib",
+    188: "setxattr", 189: "lsetxattr", 190: "fsetxattr", 197: "removexattr",
+    198: "lremovexattr", 199: "fremovexattr", 132: "utime", 235: "utimes", 261: "futimesat",
+    280: "utimensat", 310: "process_vm_readv", 311: "process_vm_writev", 321: "bpf",
+    323: "userfaultfd", 248: "add_key", 249: "request_key", 250: "keyctl", 62: "kill",
+    200: "tkill", 234: "tgkill", 424: "pidfd_send_signal", 434: "pidfd_open",
+    438: "pidfd_getfd", 300: "fanotify_init", 428: "open_tree", 429: "move_mount",
+    430: "fsopen", 431: "fsconfig", 432: "fsmount", 433: "fspick", 442: "mount_setattr",
 }
 DENIED_AARCH64 = {
     56: "openat", 437: "openat2", 220: "clone", 435: "clone3", 221: "execve", 281: "execveat",
@@ -53,7 +62,15 @@ DENIED_AARCH64 = {
     117: "ptrace", 40: "mount", 39: "umount2", 51: "chroot", 41: "pivot_root", 35: "unlinkat",
     38: "renameat", 276: "renameat2", 34: "mkdirat", 37: "linkat", 36: "symlinkat",
     53: "fchmodat", 54: "fchownat", 146: "setuid", 144: "setgid", 268: "setns", 97: "unshare",
-    273: "finit_module", 105: "init_module", 279: "memfd_create",
+    273: "finit_module", 105: "init_module", 279: "memfd_create", 447: "memfd_secret",
+    33: "mknodat", 45: "truncate", 425: "io_uring_setup", 426: "io_uring_enter",
+    427: "io_uring_register", 264: "name_to_handle_at", 265: "open_by_handle_at",
+    5: "setxattr", 6: "lsetxattr", 7: "fsetxattr", 14: "removexattr", 15: "lremovexattr",
+    16: "fremovexattr", 88: "utimensat", 270: "process_vm_readv", 271: "process_vm_writev",
+    280: "bpf", 282: "userfaultfd", 217: "add_key", 218: "request_key", 219: "keyctl",
+    129: "kill", 130: "tkill", 131: "tgkill", 424: "pidfd_send_signal", 434: "pidfd_open",
+    438: "pidfd_getfd", 262: "fanotify_init", 428: "open_tree", 429: "move_mount",
+    430: "fsopen", 431: "fsconfig", 432: "fsmount", 433: "fspick", 442: "mount_setattr",
 }
 
 

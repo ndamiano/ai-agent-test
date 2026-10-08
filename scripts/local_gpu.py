@@ -22,12 +22,12 @@ sys.path.insert(0, str(ROOT / "src"))
 
 LOGS = Path(os.environ.get("MAESTRO_LOCAL_LOGS", "/tmp/maestro-local"))
 
-NINFER_DEFAULT = Path("/home/nick/Documents/ninfer/build/apps/ninfer-serve")
+NINFER_DEFAULT = Path(os.environ.get("NINFER_DIR", str(Path.home() / "Documents/ninfer"))) / "build/apps/ninfer-serve"
 NINFER_MODELS = Path(os.environ.get("NINFER_MODELS", "/var/lib/models/ninfer"))
 COMFY_PYTHON = Path(os.environ.get("COMFY_PYTHON",
-                                   "/home/nick/Documents/Comfy/comfy-env/bin/python"))
-COMFY_DIR = Path(os.environ.get("COMFY_DIR", "/home/nick/comfy/mess-with-comfy"))
-SAFETY_MODEL_DIR = os.environ.get("SAFETY_MODEL_DIR", "/home/nick/comfy-models/safety")
+                                   str(Path.home() / "Documents/Comfy/comfy-env/bin/python")))
+COMFY_DIR = Path(os.environ.get("COMFY_DIR", str(Path.home() / "comfy/mess-with-comfy")))
+SAFETY_MODEL_DIR = os.environ.get("SAFETY_MODEL_DIR", str(Path.home() / "comfy-models/safety"))
 IMAGES_DIR = Path(os.environ.get("IMAGES_REPO_DIR", str(Path.home() / "Documents/gamesummoner-images")))
 WORKER_DIR = Path(os.environ.get("WORKER_REPO_DIR", str(Path.home() / "Documents/gamesummoner-workers")))
 IMAGE_PORT = 8700
@@ -41,11 +41,11 @@ def _worker_python(queue: str) -> str:
         return str(TRELLIS_PYTHON)
     return sys.executable
 TRELLIS_PYTHON = Path(os.environ.get("TRELLIS_PYTHON",
-                                     "/home/nick/cube3d-lab/trellis2-venv/bin/python"))
+                                     str(Path.home() / "cube3d-lab/trellis2-venv/bin/python")))
 SPRITE_PYTHON = Path(os.environ.get("SPRITE_PYTHON",
     str(Path.home() / "Documents/Labs/rig-lab/venv-kimodo/bin/python")))
-TRELLIS_REPO = Path(os.environ.get("TRELLIS_REPO", "/home/nick/cube3d-lab/trellis2"))
-TRELLIS_WEIGHTS = Path(os.environ.get("TRELLIS_WEIGHTS", "/home/nick/cube3d-lab/trellis2-weights"))
+TRELLIS_REPO = Path(os.environ.get("TRELLIS_REPO", str(Path.home() / "cube3d-lab/trellis2")))
+TRELLIS_WEIGHTS = Path(os.environ.get("TRELLIS_WEIGHTS", str(Path.home() / "cube3d-lab/trellis2-weights")))
 
 IDLE_TICKS = 3          # empty polls before a queue counts as drained; a continuation
                         # is enqueued by the completion that just finished, so "empty

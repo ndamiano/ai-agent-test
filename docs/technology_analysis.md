@@ -67,6 +67,16 @@ whole category we do not produce at all, and it is wanted.
       NOTE: TRELLIS 2's image conditioner is DINOv3 under Meta's DINOv3 License, not MIT —
       commercial use allowed, "Built with DINOv3" attribution and license redistribution required.
       Pixal3D inherits the same encoder.
+- [ ] https://www.tripo3d.ai/blog/game-industry-character-workflow
+      A blog about how to create characters to game industry standards.
+- [ ] https://www.reddit.com/r/TopologyAI/comments/1wt9hxb/new_opensource_texttoanimation_ai_for_humans/
+      Open source text to animation thing. Worth taking a look at.
+- [ ] https://www.reddit.com/r/LocalLLaMA/comments/1ww09ab/new_architecture_from_percepta_spotlight/
+      New architecture from percepta? Can it maybe be used?
+- [ ] Hunyuan 3? https://www.reddit.com/r/StableDiffusion/comments/1wzclz5/hunyuanimage_30_80b_running_natively_in_comfyui/
+- [ ] https://www.reddit.com/r/TopologyAI/comments/1wzlljg/new_opensource_ai_texturing_for_3d_models_at_2k/
+      better textures for 3d?
+
 
 ## Previously investigated
 

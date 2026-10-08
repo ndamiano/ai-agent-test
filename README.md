@@ -50,6 +50,12 @@ queues, one at a time, as they populate on the local server.
 python scripts/local_gpu.py auto
 ```
 
+The workers and model servers it starts are not in this repository. They live in two sibling
+repos, `gamesummoner-workers` (the pull-side worker agent) and `gamesummoner-images` (the image,
+mesh and sprite engines), which `local_gpu.py` finds via `WORKER_REPO_DIR` and `IMAGES_REPO_DIR`.
+The llm leg serves through [ninfer](https://github.com/Neroued/ninfer) (`NINFER_DIR`). Without
+them the control plane, frontend and tests all run, but no build gets past its first queued job.
+
 ## First build
 
 Press **Make a new game** in the UI, or from the CLI:
@@ -96,15 +102,20 @@ src/
     codegen/    the build path: build_chain (driver), build_steps (turn machine), tools,
                 staging, assets, error_gate, snapshots, prompts/, run (CLI)
     worldgen/   the 3D world behind compose_world
-  scaler/       the RunPod autoscaler
+  scaler/       the autoscaler: rents RunPod and EC2 GPU pods per queue
   tools/        ComfyUI, TRELLIS, quilting, S3, DB backup, mailer, safety
-  worker/       the pull-side GPU worker agent
   workqueue/    the enqueue-side client + the queue reaper
 runtime/
   vendor/       three.js + loaders + world.js + lib/, copied into every game folder at seed
   games/        staged games, served at /play
+  demos/        demo snapshots, served at /play/demos
+  shares/       shared-by-link games
 frontend/       React + Vite UI
 tests/          pytest suite
-scripts/        local_gpu.py, ci.sh, githooks/, db.py, deploy + provision + pod entrypoints
+scripts/        local_gpu.py, ci.sh, githooks/, db.py, deploy + provision
 docs/           everything else
 ```
+
+## License
+
+MIT, see `LICENSE`. Vendored code under `runtime/vendor/` keeps its own license headers.
